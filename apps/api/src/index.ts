@@ -1,6 +1,7 @@
 import { login, logout, me } from "./routes/auth";
 import { createPatient, addMarker } from "./routes/patients";
 import { createOrOpenVisit } from "./routes/visits";
+import { uploadDocument } from "./routes/documents";
 import { requireRole } from "./middleware/roles";
 
 const server = Bun.serve({
@@ -18,6 +19,9 @@ const server = Bun.serve({
     },
     "/patients/:id/visits": {
       POST: requireRole(["staff", "oncologist"], createOrOpenVisit),
+    },
+    "/patients/:id/documents": {
+      POST: requireRole(["staff", "oncologist"], uploadDocument),
     },
   },
   development: {
