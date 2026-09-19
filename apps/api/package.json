@@ -1,0 +1,14 @@
+{
+  "name": "@opd/api",
+  "module": "src/index.ts",
+  "type": "module",
+  "private": true,
+  "scripts": {
+    "dev": "bun --hot src/index.ts",
+    "start": "bun src/index.ts",
+    "seed": "bun src/db/seed.ts"
+  },
+  "dependencies": {
+    "@opd/shared": "workspace:*"
+  }
+}
