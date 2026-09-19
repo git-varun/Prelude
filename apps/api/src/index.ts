@@ -1,4 +1,6 @@
 import { login, logout, me } from "./routes/auth";
+import { createPatient, addMarker } from "./routes/patients";
+import { requireRole } from "./middleware/roles";
 
 const server = Bun.serve({
   port: Number(process.env.PORT ?? 3001),
@@ -7,6 +9,12 @@ const server = Bun.serve({
     "/auth/login": { POST: login },
     "/auth/logout": { POST: logout },
     "/auth/me": { GET: me },
+    "/patients": {
+      POST: requireRole(["staff", "oncologist"], createPatient),
+    },
+    "/patients/:id/markers": {
+      POST: requireRole(["staff", "oncologist"], addMarker),
+    },
   },
   development: {
     hmr: true,
