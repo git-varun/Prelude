@@ -52,6 +52,47 @@ export async function createPatient(req: Request, user: AuthedUser): Promise<Res
   return Response.json({ ...patient, tracked_markers: trackedMarkers }, { status: 201 });
 }
 
+// Not in the frozen API contract table (docs/01 §11) — added to unblock the
+// Patient List screen (docs/01 §6), which the spec requires but never wires
+// to an endpoint. Confirmed with you before adding. Read-only, no new
+// business rules: staff/oncologist parity, no snapshot/delta computation.
+export async function listPatients(req: Request): Promise<Response> {
+  const url = new URL(req.url);
+  const search = url.searchParams.get("search")?.trim();
+
+  const rows = search
+    ? await sql`
+        SELECT id, name, cancer_type, created_at, created_by FROM patients
+        WHERE name ILIKE ${"%" + search + "%"}
+        ORDER BY created_at DESC
+      `
+    : await sql`
+        SELECT id, name, cancer_type, created_at, created_by FROM patients
+        ORDER BY created_at DESC
+      `;
+
+  return Response.json(rows);
+}
+
+export async function getPatient(req: Request & { params: { id: string } }): Promise<Response> {
+  const patientId = req.params.id;
+
+  const [patient] = await sql`
+    SELECT id, name, cancer_type, created_at, created_by FROM patients WHERE id = ${patientId}
+  `;
+  if (!patient) {
+    return jsonError(404, "not_found", "Patient not found.");
+  }
+
+  const trackedMarkers = await sql`
+    SELECT id, marker_name, is_custom, added_at, added_by FROM tracked_markers
+    WHERE patient_id = ${patientId}
+    ORDER BY added_at ASC
+  `;
+
+  return Response.json({ ...patient, tracked_markers: trackedMarkers });
+}
+
 export async function addMarker(req: Request & { params: { id: string } }, user: AuthedUser): Promise<Response> {
   const patientId = req.params.id;
 

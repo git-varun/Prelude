@@ -1,5 +1,5 @@
 import { login, logout, me } from "./routes/auth";
-import { createPatient, addMarker } from "./routes/patients";
+import { createPatient, listPatients, getPatient, addMarker } from "./routes/patients";
 import { createOrOpenVisit } from "./routes/visits";
 import { uploadDocument } from "./routes/documents";
 import { requireRole } from "./middleware/roles";
@@ -12,7 +12,11 @@ const server = Bun.serve({
     "/auth/logout": { POST: logout },
     "/auth/me": { GET: me },
     "/patients": {
+      GET: requireRole(["staff", "oncologist"], listPatients),
       POST: requireRole(["staff", "oncologist"], createPatient),
+    },
+    "/patients/:id": {
+      GET: requireRole(["staff", "oncologist"], getPatient),
     },
     "/patients/:id/markers": {
       POST: requireRole(["staff", "oncologist"], addMarker),
