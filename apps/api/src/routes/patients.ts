@@ -1,7 +1,7 @@
 import { sql } from "../db/client";
 import { jsonError } from "../middleware/auth";
 import type { AuthedUser } from "../middleware/auth";
-import { isControlledMarker } from "../services/markers";
+import { isControlledMarker } from "@opd/shared";
 
 interface MarkerInput {
   marker_name?: string;

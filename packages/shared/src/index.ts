@@ -1,3 +1,5 @@
+export { CONTROLLED_MARKERS, isControlledMarker } from "./markers";
+
 export type UserRole = "staff" | "oncologist";
 
 export interface User {
