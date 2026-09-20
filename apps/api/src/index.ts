@@ -3,30 +3,31 @@ import { createPatient, listPatients, getPatient, addMarker } from "./routes/pat
 import { createOrOpenVisit } from "./routes/visits";
 import { uploadDocument } from "./routes/documents";
 import { requireRole } from "./middleware/roles";
+import { cors } from "./middleware/cors";
 
 const server = Bun.serve({
   port: Number(process.env.PORT ?? 3001),
   routes: {
     "/health": () => Response.json({ ok: true }),
-    "/auth/login": { POST: login },
-    "/auth/logout": { POST: logout },
-    "/auth/me": { GET: me },
-    "/patients": {
+    "/auth/login": cors({ POST: login }),
+    "/auth/logout": cors({ POST: logout }),
+    "/auth/me": cors({ GET: me }),
+    "/patients": cors({
       GET: requireRole(["staff", "oncologist"], listPatients),
       POST: requireRole(["staff", "oncologist"], createPatient),
-    },
-    "/patients/:id": {
+    }),
+    "/patients/:id": cors({
       GET: requireRole(["staff", "oncologist"], getPatient),
-    },
-    "/patients/:id/markers": {
+    }),
+    "/patients/:id/markers": cors({
       POST: requireRole(["staff", "oncologist"], addMarker),
-    },
-    "/patients/:id/visits": {
+    }),
+    "/patients/:id/visits": cors({
       POST: requireRole(["staff", "oncologist"], createOrOpenVisit),
-    },
-    "/patients/:id/documents": {
+    }),
+    "/patients/:id/documents": cors({
       POST: requireRole(["staff", "oncologist"], uploadDocument),
-    },
+    }),
   },
   development: {
     hmr: true,
