@@ -1,7 +1,10 @@
 import { sql } from "../db/client";
 import { jsonError } from "../middleware/auth";
 import type { AuthedUser } from "../middleware/auth";
-import { deleteDocumentFile, saveDocumentFile } from "../services/storage";
+import { deleteDocumentFile, saveDocumentFile, saveOcrResult } from "../services/storage";
+import { getExtractionProvider, getOcrProvider } from "../services/providerFactory";
+import { persistExtractedFacts } from "../services/facts";
+import type { OcrResult } from "@opd/shared";
 
 const DOCUMENT_TYPES = ["prescription", "blood", "radiology"] as const;
 const SOURCE_ORIGINS = ["own_hospital", "outside_paper", "outside_cd", "whatsapp_pdf"] as const;
@@ -84,5 +87,82 @@ export async function uploadDocument(req: Request & { params: { id: string } }, 
     throw err;
   }
 
+  await sql`
+    INSERT INTO audit_log (actor_id, action, entity_type, entity_id, after_value)
+    VALUES (${user.id}, 'upload', 'document', ${document.id}, ${JSON.stringify(document)}::jsonb)
+  `;
+
+  document = await runOcr(document, file, documentType as (typeof DOCUMENT_TYPES)[number], user.id);
+
   return Response.json(document, { status: 201 });
+}
+
+// docs/02 M2: "on upload, run OCR and update ocr_status to done/failed."
+// Runs inline in the upload request rather than a background queue — no
+// queue infrastructure exists yet, and this matches the M2 checklist's
+// wording. Never fabricates source_page/source_location: the OCR pass only
+// captures page-level text here, real per-fact location comes from the
+// extraction step (services/extraction.ts) reading providerRaw, and is left
+// null wherever a provider doesn't supply it.
+async function runOcr(
+  document: any,
+  file: File,
+  documentType: (typeof DOCUMENT_TYPES)[number],
+  actorId: string,
+): Promise<any> {
+  try {
+    const provider = getOcrProvider();
+    const buffer = Buffer.from(await file.arrayBuffer());
+    const result = await provider.extractText(buffer, file.type);
+    const { file_ref: ocrTextRef } = await saveOcrResult(document.patient_id, document.id, result);
+
+    const [updated] = await sql`
+      UPDATE documents SET ocr_status = 'done', ocr_text_ref = ${ocrTextRef}
+      WHERE id = ${document.id}
+      RETURNING id, patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, uploaded_at, ocr_status, ocr_text_ref, needs_manual_date
+    `;
+
+    await runExtraction(updated, documentType, result, actorId);
+
+    // Re-fetch: runExtraction may have flipped needs_manual_date after the
+    // row above was captured, and the response should reflect that.
+    const [final] = await sql`
+      SELECT id, patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, uploaded_at, ocr_status, ocr_text_ref, needs_manual_date
+      FROM documents WHERE id = ${document.id}
+    `;
+    return final;
+  } catch (err) {
+    console.error(`OCR failed for document ${document.id}:`, err);
+    const [updated] = await sql`
+      UPDATE documents SET ocr_status = 'failed'
+      WHERE id = ${document.id}
+      RETURNING id, patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, uploaded_at, ocr_status, ocr_text_ref, needs_manual_date
+    `;
+    return updated;
+  }
+}
+
+// docs/02 M2: "wire the LLM extraction client ... run after OCR completes."
+// Runs the extraction pass and persists its output as FACT rows
+// (services/facts.ts — tracked_marker_id resolution, coverage_status via
+// the rules engine, audit logging). Extraction/persistence failure never
+// affects the upload response or ocr_status: OCR already succeeded, and
+// this is a downstream, independently retriable step.
+async function runExtraction(
+  document: any,
+  documentType: (typeof DOCUMENT_TYPES)[number],
+  ocr: OcrResult,
+  actorId: string,
+): Promise<void> {
+  try {
+    const provider = getExtractionProvider();
+    const candidates = await provider.extractFacts(ocr, documentType);
+    const result = await persistExtractedFacts(document, candidates, actorId);
+    console.log(
+      `Document ${document.id}: persisted ${result.createdFactIds.length} fact(s)` +
+        (result.heldForManualDate ? " (held — needs_manual_date set, no as_of_date in any candidate)." : "."),
+    );
+  } catch (err) {
+    console.error(`Extraction failed for document ${document.id}:`, err);
+  }
 }

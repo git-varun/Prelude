@@ -1,5 +1,6 @@
 import { mkdir, unlink } from "node:fs/promises";
 import path from "node:path";
+import type { OcrResult } from "@opd/shared";
 
 // Local filesystem for dev, per your instruction: file_ref is an abstracted
 // pointer ("local://<patient>/<name>") so swapping to a real S3-compatible
@@ -25,6 +26,23 @@ export async function saveDocumentFile(patientId: string, filename: string, data
   await Bun.write(filePath, data);
 
   return { file_ref: `local://${patientId}/${safeName}` };
+}
+
+// The OCR pass (M2) persists its raw page/text output here, referenced by
+// documents.ocr_text_ref, so downstream extraction can read it without
+// re-running OCR. Same "abstracted pointer" contract as saveDocumentFile.
+export async function saveOcrResult(patientId: string, documentId: string, result: OcrResult): Promise<StoredFile> {
+  if (driver !== "local") {
+    throw new Error(`Unsupported OBJECT_STORAGE_DRIVER: ${driver}`);
+  }
+
+  const dir = path.join(localBasePath, patientId, "ocr");
+  await mkdir(dir, { recursive: true });
+
+  const filePath = path.join(dir, `${documentId}.json`);
+  await Bun.write(filePath, JSON.stringify(result));
+
+  return { file_ref: `local://${patientId}/ocr/${documentId}.json` };
 }
 
 export function resolveLocalPath(fileRef: string): string {

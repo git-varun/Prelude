@@ -16,6 +16,7 @@ services:
       - opd_postgres_data:/var/lib/postgresql/data
       - ../apps/api/src/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
       - ../apps/api/src/db/migrations/001_sessions.sql:/docker-entrypoint-initdb.d/02-sessions.sql:ro
+      - ../apps/api/src/db/migrations/002_extraction_columns.sql:/docker-entrypoint-initdb.d/03-extraction-columns.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U opd -d opd_dev"]
       interval: 2s

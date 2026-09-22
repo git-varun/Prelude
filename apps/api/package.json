@@ -9,6 +9,11 @@
     "seed": "bun src/db/seed.ts"
   },
   "dependencies": {
-    "@opd/shared": "workspace:*"
+    "@anthropic-ai/sdk": "^0.127.0",
+    "@aws-sdk/client-textract": "^3.1137.0",
+    "@azure-rest/ai-document-intelligence": "^1.1.0",
+    "@azure/core-auth": "^1.11.0",
+    "@opd/shared": "workspace:*",
+    "zod": "^4.6.5"
   }
 }

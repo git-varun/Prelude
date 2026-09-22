@@ -91,5 +91,8 @@ test("uploadDocument succeeds for a valid PDF against the right visit", async ()
   expect(res.status).toBe(201);
   const body = (await res.json()) as any;
   expect(body.visit_id).toBe(visitId);
-  expect(body.ocr_status).toBe("pending");
+  // No OCR_PROVIDER is configured in the test environment, so the inline
+  // OCR step (documents.ts's runOcr) fails closed to 'failed' rather than
+  // leaving the row stuck on 'pending' or throwing out of the upload.
+  expect(body.ocr_status).toBe("failed");
 });
