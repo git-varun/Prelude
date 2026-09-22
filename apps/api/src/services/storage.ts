@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises";
+import { mkdir, unlink } from "node:fs/promises";
 import path from "node:path";
 
 // Local filesystem for dev, per your instruction: file_ref is an abstracted
@@ -32,4 +32,15 @@ export function resolveLocalPath(fileRef: string): string {
     throw new Error(`Cannot resolve non-local file_ref: ${fileRef}`);
   }
   return path.join(localBasePath, fileRef.slice("local://".length));
+}
+
+// Used to clean up a file already written to storage when the DB insert that
+// was meant to reference it fails (m1-backlog B4) — best-effort, since the
+// upload should still surface the original DB error either way.
+export async function deleteDocumentFile(fileRef: string): Promise<void> {
+  try {
+    await unlink(resolveLocalPath(fileRef));
+  } catch {
+    // Nothing to clean up, or cleanup itself failed — not worth failing the request over.
+  }
 }

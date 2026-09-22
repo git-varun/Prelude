@@ -13,6 +13,10 @@ export async function createSession(userId: string): Promise<{ token: string; ex
     INSERT INTO sessions (token, user_id, expires_at)
     VALUES (${token}, ${userId}, ${expiresAt})
   `;
+  // Piggyback expired-row cleanup on the login path (m1-backlog B2) rather
+  // than a separate cron — at MVP login volume this keeps the table bounded
+  // without any new infrastructure.
+  await sql`DELETE FROM sessions WHERE expires_at <= now()`;
   return { token, expiresAt };
 }
 

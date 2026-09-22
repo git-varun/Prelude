@@ -56,19 +56,33 @@ export async function createPatient(req: Request, user: AuthedUser): Promise<Res
 // Patient List screen (docs/01 §6), which the spec requires but never wires
 // to an endpoint. Confirmed with you before adding. Read-only, no new
 // business rules: staff/oncologist parity, no snapshot/delta computation.
+const DEFAULT_PATIENT_LIST_LIMIT = 100;
+const MAX_PATIENT_LIST_LIMIT = 500;
+
+// m1-backlog B5: fine as a bare array at "tens of patients" scale (§7 N6),
+// so this stays additive (?limit=&offset=, default 100) rather than
+// wrapping the response — a shape change would break PatientList.tsx and
+// api.listPatients' PatientSummary[] contract for no benefit yet.
 export async function listPatients(req: Request): Promise<Response> {
   const url = new URL(req.url);
   const search = url.searchParams.get("search")?.trim();
+  const limit = Math.min(
+    Math.max(1, Number(url.searchParams.get("limit")) || DEFAULT_PATIENT_LIST_LIMIT),
+    MAX_PATIENT_LIST_LIMIT,
+  );
+  const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);
 
   const rows = search
     ? await sql`
         SELECT id, name, cancer_type, created_at, created_by FROM patients
         WHERE name ILIKE ${"%" + search + "%"}
         ORDER BY created_at DESC
+        LIMIT ${limit} OFFSET ${offset}
       `
     : await sql`
         SELECT id, name, cancer_type, created_at, created_by FROM patients
         ORDER BY created_at DESC
+        LIMIT ${limit} OFFSET ${offset}
       `;
 
   return Response.json(rows);

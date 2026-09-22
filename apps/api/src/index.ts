@@ -1,4 +1,5 @@
 import { login, logout, me } from "./routes/auth";
+import { createUser } from "./routes/users";
 import { createPatient, listPatients, getPatient, addMarker } from "./routes/patients";
 import { createOrOpenVisit } from "./routes/visits";
 import { uploadDocument } from "./routes/documents";
@@ -7,11 +8,17 @@ import { cors } from "./middleware/cors";
 
 const server = Bun.serve({
   port: Number(process.env.PORT ?? 3001),
+  // m1-backlog B3: hard cap on request body size (documents.ts enforces the
+  // same 25MB limit earlier via Content-Length/file.size for a clean 400).
+  maxRequestBodySize: 25 * 1024 * 1024,
   routes: {
     "/health": () => Response.json({ ok: true }),
     "/auth/login": cors({ POST: login }),
     "/auth/logout": cors({ POST: logout }),
     "/auth/me": cors({ GET: me }),
+    "/users": cors({
+      POST: requireRole(["oncologist"], createUser),
+    }),
     "/patients": cors({
       GET: requireRole(["staff", "oncologist"], listPatients),
       POST: requireRole(["staff", "oncologist"], createPatient),
