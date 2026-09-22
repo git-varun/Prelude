@@ -4,31 +4,31 @@ Living tracker for the M1 (Foundation) milestone, maintained alongside the
 frozen spec docs (01–03). Unlike those, **this document is not frozen** —
 update it as items get resolved or new ones surface.
 
-Last updated: 2026-09-22, after M1 completion + first code review pass.
+Last updated: 2026-09-22, after resolving the M1 findings (Q1–Q4, B1–B8) below.
 
 ---
 
-## Open questions (need your decision)
+## Open questions — resolved 2026-09-22
 
-| # | Question | Why it matters |
+| # | Question | Decision |
 | --- | --- | --- |
-| Q1 | How do real staff/oncologist accounts get created before pilot? Right now the only way is running `apps/api/src/db/seed.ts` (two hardcoded dev accounts) or a raw SQL insert — there is no signup endpoint or admin UI, by design (spec has no admin/IT role). | Someone needs to provision the partner oncologist's and their staff's real accounts before go-live. Is a one-off seed script + manual password handoff acceptable for a single-hospital informal deployment, or do we want a minimal `POST /users` (oncologist-only, or CLI-only) path? |
-| Q2 | Should local Postgres setup be scripted (e.g. a `docker-compose.yml` in `/infra`) instead of the ad hoc `docker run` command used to stand up `opd_postgres` during M1? | Right now a new developer cloning the repo has no reproducible way to get a working local DB matching `.env.example`'s `DATABASE_URL`. Low effort, but currently undocumented outside this file. |
-| Q3 | `requireRole` returns `401` for unauthenticated requests. The frozen spec's error convention (§11) only enumerates `400/403/404/409/422` — it doesn't mention `401`. Is `401` an acceptable addition, or should unauthenticated collapse into `403` to stay strictly within the documented set? | Affects every protected endpoint's contract. Low risk either way, but it's an assumption I made unilaterally and should be confirmed rather than silently kept. |
-| Q4 | Object storage: only the `local` driver is implemented. `OBJECT_STORAGE_DRIVER=s3` (or similar) will throw at runtime — there's no actual S3-compatible client written yet. When staging setup happens, who picks the vendor and writes that driver — is that an M8 (Pilot Readiness) task, or should it move earlier? | Confirmed at M1 kickoff that vendor choice is a "staging-time decision," but the driver code itself still needs to exist before staging can deploy. |
+| Q1 | How do real staff/oncologist accounts get created before pilot? | Added a minimal `POST /users` (oncologist-only) endpoint (`apps/api/src/routes/users.ts`) instead of relying solely on `db/seed.ts`/raw SQL. Not in the frozen API contract table (docs/01 §11) — same precedent as `GET /patients` below. |
+| Q2 | Should local Postgres setup be scripted? | Added `infra/docker-compose.yml`, matching `.env.example`'s `DATABASE_URL` (port 5434, db `opd_dev`, user `opd`). Mounts `schema.sql` and `migrations/001_sessions.sql` as init scripts. Run with `docker compose -f infra/docker-compose.yml up -d`. |
+| Q3 | Is `401` for unauthenticated requests an acceptable addition to §11's `400/403/404/409/422` set? | Kept `401` — correct HTTP semantics for "not authenticated" vs. `403` "authenticated but forbidden." Recorded here as the confirmed addition to §11's error set, alongside `429` (see B6). |
+| Q4 | Who builds the S3-compatible object storage driver, and when? | Deferred to M8 (Pilot Readiness), per the original M1-kickoff decision that vendor choice is staging-time. No code change; `OBJECT_STORAGE_DRIVER=s3` still throws at runtime by design until then. |
 
-## Known issues / gaps (not blocking M1, but real)
+## Known issues / gaps — resolved 2026-09-22
 
-| # | Issue | Severity | Notes |
-| --- | --- | --- | --- |
-| B1 | No persisted automated test suite beyond `apps/api/src/middleware/roles.test.ts`. Every other verification (patients, markers, visits, documents, CORS, list/search) was an ad hoc `bun test` file written, run, and **deleted** before committing, per how each task was verified in the moment. | Medium | Regressions in patient/visit/document logic won't be caught automatically. Should write and keep a real test suite before M2 builds on top of this surface. |
-| B2 | No cleanup job for expired `sessions` rows — they accumulate forever. | Low | Fine at MVP scale; a cron/sweep is a pre-Phase-2 nicety. |
-| B3 | Document upload has no file size limit, no MIME-type/document_type cross-check, no malware scanning. | Medium (security) | Acceptable for an informal single-hospital pilot per §12, but should be revisited before any expansion. |
-| B4 | If the DB insert in `uploadDocument` fails after the file is already written to local storage, the file is orphaned (no transactional coordination between file write and DB row). | Low | Rare failure path; worth a cleanup-on-error someday, not urgent. |
-| B5 | `GET /patients` has no pagination. | Low | Fine at "tens of patients" scale (§7 N6); would need addressing before any Phase 3 multi-centre expansion. |
-| B6 | No rate-limiting / brute-force protection on `POST /auth/login`. | Low (security) | Consistent with the "no formal SLA/informal deployment" posture (§12), but worth a line item before real patient data is involved. |
-| B7 | `AuthContext`'s initial `GET /auth/me` failure is indistinguishable from "not logged in" vs. "API unreachable" — user just sees the Login screen either way, no connectivity error shown. | Low (UX) | Minor polish item. |
-| B8 | The Upload screen calls `POST /patients/:id/visits` on every mount. Harmless (idempotent by date), but causes a redundant network round-trip on every screen visit/navigation. | Low | Could cache per-session if it becomes noticeable. |
+| # | Issue | Resolution |
+| --- | --- | --- |
+| B1 | No persisted automated test suite beyond `roles.test.ts`. | Added a kept `bun test` suite: `patients.test.ts`, `visits.test.ts`, `documents.test.ts`, `users.test.ts`, `auth.test.ts` (routes) and `cors.test.ts` (middleware), plus a shared `test-helpers.ts`. 35 tests total, run with `bun test`. |
+| B2 | No cleanup job for expired `sessions` rows. | `createSession` now deletes expired rows (`expires_at <= now()`) on every login — no cron needed at MVP login volume. |
+| B3 | Document upload had no file size limit or MIME-type check. | Added a 25MB size cap (checked via `Content-Length` pre-parse, `file.size` post-parse, and `Bun.serve`'s `maxRequestBodySize` as the hard server-level backstop) and a MIME-type allowlist (`application/pdf`, `image/jpeg`, `image/png`, `image/heic`) shared across all three document types — a UX guard, not a security control, since `file.type` is client-supplied. Malware scanning intentionally still out of scope (§12). |
+| B4 | Orphaned file on DB-insert failure after file write. | `storage.ts` now exports `deleteDocumentFile`; `uploadDocument` calls it (best-effort) if the `INSERT` throws, before re-throwing. |
+| B5 | `GET /patients` had no pagination. | Added optional `?limit=` (default 100, max 500) and `?offset=` query params. Kept the bare-array response shape — a wrapped `{items, total}` shape would have broken `PatientList.tsx`/`api.listPatients`'s `PatientSummary[]` contract for no benefit yet at "tens of patients" scale. |
+| B6 | No rate-limiting on `POST /auth/login`. | Added an in-memory, per-email limiter (5 failed attempts / 15 min window → `429 too_many_requests`). Keyed on email, not IP, since `login`'s call site has no access to the request's source IP; single-instance only, noted in code. `429` is a confirmed addition to §11's error set alongside `401` (Q3). |
+| B7 | `AuthContext`'s initial `GET /auth/me` failure couldn't distinguish "not logged in" from "API unreachable." | `AuthContext` now exposes `connectivityError` (true for anything other than a `401` from `/auth/me`); `Login` renders a distinct "Couldn't reach the server" banner when set. |
+| B8 | Upload screen re-POSTs `/patients/:id/visits` on every mount. | Added a module-level cache keyed by `patientId:today's-date`, so remounting the Upload screen for the same patient on the same day reuses the already-open visit instead of re-opening it. |
 
 ## Backlog (explicitly deferred, tracked for later milestones)
 

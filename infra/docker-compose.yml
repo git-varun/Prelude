@@ -1,0 +1,26 @@
+# Local Postgres matching .env.example's DATABASE_URL. Replaces the ad hoc
+# `docker run` command used to stand up opd_postgres during M1 (m1-backlog Q2).
+#
+# Usage: docker compose -f infra/docker-compose.yml up -d
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: opd_postgres
+    environment:
+      POSTGRES_USER: opd
+      POSTGRES_PASSWORD: opd_dev_local
+      POSTGRES_DB: opd_dev
+    ports:
+      - "5434:5432"
+    volumes:
+      - opd_postgres_data:/var/lib/postgresql/data
+      - ../apps/api/src/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ../apps/api/src/db/migrations/001_sessions.sql:/docker-entrypoint-initdb.d/02-sessions.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U opd -d opd_dev"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  opd_postgres_data:
