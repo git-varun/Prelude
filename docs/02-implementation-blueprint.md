@@ -201,10 +201,10 @@ No dependencies — start here.
 
 Depends on M1.
 
-- [ ] Wire the OCR service client (`services/ocr.ts`); on upload, run OCR and update `ocr_status` to `done`/`failed`; capture page number and line/char location or bounding box where the provider supports it — never fabricate location data if unavailable
-- [ ] Wire the LLM extraction client (`services/extraction.ts`) with prompt templates per `field_type`; extraction never sets `verification_state` beyond `unverified` — the LLM cannot self-authorize trust
-- [ ] Implement the rules engine (`services/rules.ts`) for initial `coverage_status` assignment per the deterministic rules: no value → `not_assessed`; value found → `value_found`; source states test not performed → `not_applicable`; low-confidence/ambiguous → `extraction_uncertain`
-- [ ] Persist extracted facts with `source_page`/`source_location`/`source_snippet` populated where available, `NULL` otherwise — UI must show "source detail unavailable" rather than a broken link when these are null
+- [x] Wire the OCR service client (`services/ocr.ts`); on upload, run OCR and update `ocr_status` to `done`/`failed`; capture page number and line/char location or bounding box where the provider supports it — never fabricate location data if unavailable
+- [x] Wire the LLM extraction client (`services/extraction.ts`) with prompt templates per `field_type`; extraction never sets `verification_state` beyond `unverified` — the LLM cannot self-authorize trust
+- [x] Implement the rules engine (`services/rules.ts`) for initial `coverage_status` assignment per the deterministic rules: no value → `not_assessed`; value found → `value_found`; source states test not performed → `not_applicable`; low-confidence/ambiguous → `extraction_uncertain`
+- [x] Persist extracted facts with `source_page`/`source_location`/`source_snippet` populated where available, `NULL` otherwise — UI must show "source detail unavailable" rather than a broken link when these are null
 - [ ] Test against real or realistic scanned/photographed paper, not just clean digital PDFs (this is the actual expected input mix for outside reports)
 - [ ] Build the Extraction Review (staff) screen showing raw extracted text next to the structured fact for low-confidence cases
 
