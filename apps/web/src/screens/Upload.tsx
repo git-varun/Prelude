@@ -8,6 +8,7 @@ const SOURCE_ORIGINS = ["own_hospital", "outside_paper", "outside_cd", "whatsapp
 export function Upload({ patientId }: { patientId: string }) {
   const [patient, setPatient] = useState<PatientDetail | null>(null);
   const [visit, setVisit] = useState<Visit | null>(null);
+  const [loadingPatient, setLoadingPatient] = useState(true);
   const [documentType, setDocumentType] = useState<(typeof DOCUMENT_TYPES)[number]>("blood");
   const [sourceOrigin, setSourceOrigin] = useState<(typeof SOURCE_ORIGINS)[number]>("own_hospital");
   const [uploaded, setUploaded] = useState<DocumentRecord[]>([]);
@@ -16,14 +17,36 @@ export function Upload({ patientId }: { patientId: string }) {
   const fileInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
+    // Guards against a stale response overwriting state if patientId changes
+    // (hash navigation to a different patient) before this request settles.
+    let current = true;
+    setLoadingPatient(true);
+    setPatient(null);
+    setVisit(null);
+
     api
       .getPatient(patientId)
-      .then(setPatient)
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load patient."));
+      .then((p) => {
+        if (current) setPatient(p);
+      })
+      .catch((err) => {
+        if (current) setError(err instanceof ApiError ? err.message : "Failed to load patient.");
+      })
+      .finally(() => {
+        if (current) setLoadingPatient(false);
+      });
     api
       .createOrOpenVisit(patientId)
-      .then(setVisit)
-      .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to open visit."));
+      .then((v) => {
+        if (current) setVisit(v);
+      })
+      .catch((err) => {
+        if (current) setError(err instanceof ApiError ? err.message : "Failed to open visit.");
+      });
+
+    return () => {
+      current = false;
+    };
   }, [patientId]);
 
   async function handleUpload(e: FormEvent) {
@@ -48,7 +71,7 @@ export function Upload({ patientId }: { patientId: string }) {
     <div>
       <div className="page-heading">
         <div>
-          <h1>{patient?.name || "Loading patient..."}</h1>
+          <h1>{loadingPatient ? "Loading patient..." : patient?.name || "(unnamed patient)"}</h1>
           <p className="muted" style={{ margin: 0 }}>
             {patient?.cancer_type}
             {visit && ` · Visit ${visit.visit_date}`}

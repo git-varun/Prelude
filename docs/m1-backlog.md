@@ -56,10 +56,15 @@ alongside the backlog, rather than only buried in commit messages.
 
 ---
 
-## Code review status
+## Code review findings (2026-09-22, `/code-review --level high`)
 
-A `/code-review --level high` pass over the full M1 diff is running as a
-background task. Once it reports back, its findings will be triaged into
-the tables above (confirmed bugs → "Known issues," false positives or
-already-covered items dropped, anything needing your input → "Open
-questions").
+Both confirmed and fixed directly (small, low-risk UI fixes) rather than
+just logged — kept here for the record.
+
+| # | Finding | Fix |
+| --- | --- | --- |
+| R1 | `Upload.tsx` showed "Loading patient..." based on `patient?.name` being falsy — but `PatientDetail.name` is nullable, so a patient created with no name would show "Loading patient..." forever even after the page finished loading. | Added an explicit `loadingPatient` boolean state instead of overloading `patient?.name` for two different meanings. |
+| R2 | The data-loading `useEffect` in `Upload.tsx` had no guard against `patientId` changing (hash-navigating to a different patient) before an in-flight `getPatient`/`createOrOpenVisit` request resolved — a stale response could overwrite state for the wrong patient, and a subsequent upload could pair the new `patientId` with an old `visit.id` from a different patient, failing the server's visit-ownership check. | Added a `current` flag captured per-effect-run that gates every `setState` call, plus resetting `patient`/`visit` to `null` at the start of each run so a screen never shows another patient's stale data while the new one loads. |
+
+Both fixes are in the working tree, verified via `tsc --noEmit`, ready to
+commit.
