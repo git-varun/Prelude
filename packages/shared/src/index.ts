@@ -1,4 +1,6 @@
 export { CONTROLLED_MARKERS, isControlledMarker } from "./markers";
+export type { OcrPage, OcrResult, OcrProvider } from "./providers/ocr";
+export type { ExtractedCoverageStatus, ExtractedFactCandidate, ExtractionProvider } from "./providers/extraction";
 
 export type UserRole = "staff" | "oncologist";
 
