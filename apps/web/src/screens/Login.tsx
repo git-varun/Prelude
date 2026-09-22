@@ -3,7 +3,7 @@ import { useAuth } from "../auth/AuthContext";
 import { ApiError } from "../api/client";
 import { navigate } from "../router";
 
-export function Login() {
+export function Login({ connectivityError = false }: { connectivityError?: boolean }) {
   const { login } = useAuth();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -28,6 +28,9 @@ export function Login() {
     <div style={{ maxWidth: 360, margin: "80px auto" }}>
       <h1 style={{ textAlign: "center", marginBottom: 24 }}>OPD Snapshot</h1>
       <div className="card">
+        {connectivityError && (
+          <div className="error-banner">Couldn't reach the server. Check your connection and try again.</div>
+        )}
         {error && <div className="error-banner">{error}</div>}
         <form onSubmit={handleSubmit}>
           <div className="field">

@@ -5,6 +5,16 @@ import { navigate } from "../router";
 const DOCUMENT_TYPES = ["prescription", "blood", "radiology"] as const;
 const SOURCE_ORIGINS = ["own_hospital", "outside_paper", "outside_cd", "whatsapp_pdf"] as const;
 
+// m1-backlog B8: createOrOpenVisit is idempotent per patient/day, but the
+// screen re-mounts (and re-POSTs) every time staff navigate back to it in
+// the same session. Cache per patient+day (module-level, so it survives
+// remounts but not a page reload) to skip the redundant round-trip; keyed
+// by day so it self-invalidates across a midnight rollover.
+const visitCache = new Map<string, Visit>();
+function visitCacheKey(patientId: string): string {
+  return `${patientId}:${new Date().toISOString().slice(0, 10)}`;
+}
+
 export function Upload({ patientId }: { patientId: string }) {
   const [patient, setPatient] = useState<PatientDetail | null>(null);
   const [visit, setVisit] = useState<Visit | null>(null);
@@ -35,14 +45,21 @@ export function Upload({ patientId }: { patientId: string }) {
       .finally(() => {
         if (current) setLoadingPatient(false);
       });
-    api
-      .createOrOpenVisit(patientId)
-      .then((v) => {
-        if (current) setVisit(v);
-      })
-      .catch((err) => {
-        if (current) setError(err instanceof ApiError ? err.message : "Failed to open visit.");
-      });
+    const cacheKey = visitCacheKey(patientId);
+    const cachedVisit = visitCache.get(cacheKey);
+    if (cachedVisit) {
+      setVisit(cachedVisit);
+    } else {
+      api
+        .createOrOpenVisit(patientId)
+        .then((v) => {
+          visitCache.set(cacheKey, v);
+          if (current) setVisit(v);
+        })
+        .catch((err) => {
+          if (current) setError(err instanceof ApiError ? err.message : "Failed to open visit.");
+        });
+    }
 
     return () => {
       current = false;

@@ -1,10 +1,14 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
 import type { UserRole } from "@opd/shared";
-import { api, type SessionUser } from "../api/client";
+import { api, ApiError, type SessionUser } from "../api/client";
 
 interface AuthState {
   user: SessionUser | null;
   loading: boolean;
+  // m1-backlog B7: distinguishes "not logged in" (show Login screen) from
+  // "API unreachable / errored" (show a connectivity error) instead of
+  // collapsing every GET /auth/me failure into "logged out".
+  connectivityError: boolean;
   login: (email: string, password: string) => Promise<void>;
   logout: () => Promise<void>;
 }
@@ -14,12 +18,21 @@ const AuthContext = createContext<AuthState | null>(null);
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(null);
   const [loading, setLoading] = useState(true);
+  const [connectivityError, setConnectivityError] = useState(false);
 
   useEffect(() => {
     api
       .me()
-      .then(setUser)
-      .catch(() => setUser(null))
+      .then((u) => {
+        setUser(u);
+        setConnectivityError(false);
+      })
+      .catch((err) => {
+        setUser(null);
+        // A 401 means "not authenticated" — expected, not an error. Anything
+        // else (network failure, 5xx) means we couldn't actually tell.
+        setConnectivityError(!(err instanceof ApiError && err.status === 401));
+      })
       .finally(() => setLoading(false));
   }, []);
 
@@ -33,7 +46,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     setUser(null);
   }, []);
 
-  return <AuthContext.Provider value={{ user, loading, login, logout }}>{children}</AuthContext.Provider>;
+  return (
+    <AuthContext.Provider value={{ user, loading, connectivityError, login, logout }}>{children}</AuthContext.Provider>
+  );
 }
 
 export function useAuth(): AuthState {

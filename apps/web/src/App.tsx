@@ -8,11 +8,11 @@ import { Upload } from "./screens/Upload";
 import { useHashRoute, matchPatientUpload } from "./router";
 
 function Routed() {
-  const { user, loading } = useAuth();
+  const { user, loading, connectivityError } = useAuth();
   const route = useHashRoute();
 
   if (loading) return null;
-  if (!user) return <Login />;
+  if (!user) return <Login connectivityError={connectivityError} />;
 
   const uploadPatientId = matchPatientUpload(route);
 
