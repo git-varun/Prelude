@@ -4,7 +4,7 @@ import type { AuthedUser } from "../middleware/auth";
 import { deleteDocumentFile, saveDocumentFile, saveOcrResult } from "../services/storage";
 import { getExtractionProvider, getOcrProvider } from "../services/providerFactory";
 import { persistExtractedFacts } from "../services/facts";
-import type { OcrResult } from "@opd/shared";
+import type { ExtractionProvider, OcrResult } from "@opd/shared";
 
 const DOCUMENT_TYPES = ["prescription", "blood", "radiology"] as const;
 const SOURCE_ORIGINS = ["own_hospital", "outside_paper", "outside_cd", "whatsapp_pdf"] as const;
@@ -78,7 +78,7 @@ export async function uploadDocument(req: Request & { params: { id: string } }, 
     [document] = await sql`
       INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, ocr_status)
       VALUES (${patientId}, ${visitId}, ${file_ref}, ${documentType}, ${sourceOrigin}, ${user.id}, 'pending')
-      RETURNING id, patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, uploaded_at, ocr_status, ocr_text_ref
+      RETURNING *
     `;
   } catch (err) {
     // m1-backlog B4: don't orphan the file already written to storage if the
@@ -119,7 +119,7 @@ async function runOcr(
     const [updated] = await sql`
       UPDATE documents SET ocr_status = 'done', ocr_text_ref = ${ocrTextRef}
       WHERE id = ${document.id}
-      RETURNING id, patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, uploaded_at, ocr_status, ocr_text_ref, needs_manual_date
+      RETURNING *
     `;
 
     await runExtraction(updated, documentType, result, actorId);
@@ -127,7 +127,7 @@ async function runOcr(
     // Re-fetch: runExtraction may have flipped needs_manual_date after the
     // row above was captured, and the response should reflect that.
     const [final] = await sql`
-      SELECT id, patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, uploaded_at, ocr_status, ocr_text_ref, needs_manual_date
+      SELECT *
       FROM documents WHERE id = ${document.id}
     `;
     return final;
@@ -136,7 +136,7 @@ async function runOcr(
     const [updated] = await sql`
       UPDATE documents SET ocr_status = 'failed'
       WHERE id = ${document.id}
-      RETURNING id, patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, uploaded_at, ocr_status, ocr_text_ref, needs_manual_date
+      RETURNING *
     `;
     return updated;
   }
@@ -146,23 +146,33 @@ async function runOcr(
 // Runs the extraction pass and persists its output as FACT rows
 // (services/facts.ts — tracked_marker_id resolution, coverage_status via
 // the rules engine, audit logging). Extraction/persistence failure never
-// affects the upload response or ocr_status: OCR already succeeded, and
-// this is a downstream, independently retriable step.
-async function runExtraction(
+// affects the upload response or ocr_status (OCR already succeeded, and this
+// is a downstream, independently retriable step) — but it is always recorded
+// on the document as extraction_status, so "the pass failed" is never
+// mistaken for "nothing extractable". `provider` exists so tests can inject
+// one; it defaults to the env-configured provider, resolved inside the try so
+// a missing/invalid EXTRACTION_PROVIDER is recorded as 'failed' too.
+export async function runExtraction(
   document: any,
   documentType: (typeof DOCUMENT_TYPES)[number],
   ocr: OcrResult,
   actorId: string,
+  provider?: ExtractionProvider,
 ): Promise<void> {
   try {
-    const provider = getExtractionProvider();
-    const candidates = await provider.extractFacts(ocr, documentType);
+    const candidates = await (provider ?? getExtractionProvider()).extractFacts(ocr, documentType);
     const result = await persistExtractedFacts(document, candidates, actorId);
+    await sql`UPDATE documents SET extraction_status = 'done' WHERE id = ${document.id}`;
     console.log(
       `Document ${document.id}: persisted ${result.createdFactIds.length} fact(s)` +
-        (result.heldForManualDate ? " (held — needs_manual_date set, no as_of_date in any candidate)." : "."),
+        (result.needsManualDate ? " (some need a manual as_of_date)." : "."),
     );
   } catch (err) {
     console.error(`Extraction failed for document ${document.id}:`, err);
+    try {
+      await sql`UPDATE documents SET extraction_status = 'failed' WHERE id = ${document.id}`;
+    } catch (statusErr) {
+      console.error(`Could not record extraction_status='failed' for document ${document.id}:`, statusErr);
+    }
   }
 }

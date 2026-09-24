@@ -10,7 +10,7 @@ interface DocumentContext {
 
 export interface PersistExtractionResult {
   createdFactIds: string[];
-  heldForManualDate: boolean;
+  needsManualDate: boolean;
 }
 
 /**
@@ -31,13 +31,15 @@ export interface PersistExtractionResult {
  *   as extracted, including nulls — never invented here.
  * - verification_state is hardcoded 'unverified' at creation, never taken
  *   from the extraction pass.
- * - as_of_date is NOT NULL on facts and is never fabricated: if NONE of a
- *   document's candidates carry an extractable date, nothing is persisted
- *   and documents.needs_manual_date is set instead, for the (future)
- *   Extraction Review screen to resolve with a manual date. If only *some*
- *   candidates lack a date, those individual ones are dropped (logged) since
- *   the document-level hold condition doesn't apply to them — the rest are
- *   persisted normally.
+ * - A candidate with no extractable as_of_date is never dropped and never
+ *   given a fabricated date: it is persisted with as_of_date NULL and
+ *   facts.needs_manual_date = true, for staff to supply a date in review.
+ *   documents.needs_manual_date is set as a derived summary when any fact of
+ *   the document needs one.
+ *
+ * All inserts for the document run in one transaction: either every fact
+ * and its audit_log row lands, or none do (and the error propagates so the
+ * caller can record extraction_status='failed').
  *
  * Logs an audit_log row (action='upload', entity_type='fact') per fact
  * created, attributed to the uploading user.
@@ -48,70 +50,65 @@ export async function persistExtractedFacts(
   actorId: string,
 ): Promise<PersistExtractionResult> {
   if (candidates.length === 0) {
-    return { createdFactIds: [], heldForManualDate: false };
+    return { createdFactIds: [], needsManualDate: false };
   }
 
-  const dated = candidates.filter((c) => c.asOfDate !== null);
-  const undated = candidates.filter((c) => c.asOfDate === null);
-
-  if (dated.length === 0) {
-    await sql`UPDATE documents SET needs_manual_date = true WHERE id = ${document.id}`;
-    return { createdFactIds: [], heldForManualDate: true };
-  }
-
-  if (undated.length > 0) {
-    console.warn(
-      `Document ${document.id}: dropping ${undated.length} extracted candidate(s) with no as_of_date ` +
-        `(the document has other dated candidates, so needs_manual_date was not set for the whole document).`,
+  return sql.begin(async (tx) => {
+    const trackedMarkerRows = await tx`
+      SELECT id, marker_name FROM tracked_markers WHERE patient_id = ${document.patient_id}
+    `;
+    const trackedMarkerIdByName = new Map<string, string>(
+      trackedMarkerRows.map((row: any) => [String(row.marker_name).trim().toLowerCase(), row.id as string]),
     );
-  }
 
-  const trackedMarkerRows = await sql`
-    SELECT id, marker_name FROM tracked_markers WHERE patient_id = ${document.patient_id}
-  `;
-  const trackedMarkerIdByName = new Map<string, string>(
-    trackedMarkerRows.map((row: any) => [String(row.marker_name).trim().toLowerCase(), row.id as string]),
-  );
+    const createdFactIds: string[] = [];
+    let needsManualDate = false;
 
-  const createdFactIds: string[] = [];
+    for (const candidate of candidates) {
+      let trackedMarkerId: string | null = null;
+      let rawMarkerLabel: string | null = null;
+      let coverageStatus = assignCoverageStatus(candidate);
 
-  for (const candidate of dated) {
-    let trackedMarkerId: string | null = null;
-    let rawMarkerLabel: string | null = null;
-    let coverageStatus = assignCoverageStatus(candidate);
-
-    if (candidate.trackedMarkerLabel) {
-      const matchId = trackedMarkerIdByName.get(candidate.trackedMarkerLabel.trim().toLowerCase());
-      if (matchId) {
-        trackedMarkerId = matchId;
-      } else {
-        rawMarkerLabel = candidate.trackedMarkerLabel;
-        coverageStatus = "extraction_uncertain";
+      if (candidate.trackedMarkerLabel) {
+        const matchId = trackedMarkerIdByName.get(candidate.trackedMarkerLabel.trim().toLowerCase());
+        if (matchId) {
+          trackedMarkerId = matchId;
+        } else {
+          rawMarkerLabel = candidate.trackedMarkerLabel;
+          coverageStatus = "extraction_uncertain";
+        }
       }
+
+      const undated = candidate.asOfDate === null;
+      if (undated) needsManualDate = true;
+
+      const [fact] = await tx`
+        INSERT INTO facts (
+          patient_id, visit_id, document_id, tracked_marker_id, raw_marker_label,
+          field_type, value, unit, reference_range, as_of_date, needs_manual_date,
+          coverage_status, verification_state,
+          source_page, source_location, source_snippet
+        )
+        VALUES (
+          ${document.patient_id}, ${document.visit_id}, ${document.id}, ${trackedMarkerId}, ${rawMarkerLabel},
+          ${candidate.fieldType}, ${candidate.value}, ${candidate.unit}, ${candidate.referenceRange}, ${candidate.asOfDate}, ${undated},
+          ${coverageStatus}, 'unverified',
+          ${candidate.sourcePage}, ${candidate.sourceLocation}, ${candidate.sourceSnippet}
+        )
+        RETURNING *
+      `;
+      createdFactIds.push(fact.id);
+
+      await tx`
+        INSERT INTO audit_log (actor_id, action, entity_type, entity_id, after_value)
+        VALUES (${actorId}, 'upload', 'fact', ${fact.id}, ${JSON.stringify(fact)}::jsonb)
+      `;
     }
 
-    const [fact] = await sql`
-      INSERT INTO facts (
-        patient_id, visit_id, document_id, tracked_marker_id, raw_marker_label,
-        field_type, value, unit, reference_range, as_of_date,
-        coverage_status, verification_state,
-        source_page, source_location, source_snippet
-      )
-      VALUES (
-        ${document.patient_id}, ${document.visit_id}, ${document.id}, ${trackedMarkerId}, ${rawMarkerLabel},
-        ${candidate.fieldType}, ${candidate.value}, ${candidate.unit}, ${candidate.referenceRange}, ${candidate.asOfDate},
-        ${coverageStatus}, 'unverified',
-        ${candidate.sourcePage}, ${candidate.sourceLocation}, ${candidate.sourceSnippet}
-      )
-      RETURNING *
-    `;
-    createdFactIds.push(fact.id);
+    if (needsManualDate) {
+      await tx`UPDATE documents SET needs_manual_date = true WHERE id = ${document.id}`;
+    }
 
-    await sql`
-      INSERT INTO audit_log (actor_id, action, entity_type, entity_id, after_value)
-      VALUES (${actorId}, 'upload', 'fact', ${fact.id}, ${JSON.stringify(fact)}::jsonb)
-    `;
-  }
-
-  return { createdFactIds, heldForManualDate: false };
+    return { createdFactIds, needsManualDate };
+  });
 }

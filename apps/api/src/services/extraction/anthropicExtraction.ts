@@ -129,14 +129,31 @@ export class AnthropicExtractionProvider implements ExtractionProvider {
     const ocrText = pageAnnotatedText(ocr);
     const fieldTypes = FIELD_TYPES_BY_DOCUMENT_TYPE[documentType];
 
-    const perFieldType = await Promise.all(
+    const settled = await Promise.allSettled(
       fieldTypes.map((fieldType) => this.extractForFieldType(client, fieldType, documentType, ocrText)),
     );
 
-    return perFieldType.flat();
+    const candidates: ExtractedFactCandidate[] = [];
+    const failures: unknown[] = [];
+    settled.forEach((outcome, index) => {
+      if (outcome.status === "fulfilled") {
+        candidates.push(...outcome.value);
+      } else {
+        failures.push(outcome.reason);
+        console.error(`Extraction of field type '${fieldTypes[index]}' failed for ${documentType} document:`, outcome.reason);
+      }
+    });
+
+    // If every call failed, returning [] would look identical to "nothing
+    // extractable" — throw so the caller records extraction_status='failed'.
+    if (failures.length === fieldTypes.length) {
+      throw new AggregateError(failures, `All ${fieldTypes.length} field-type extraction call(s) failed.`);
+    }
+
+    return candidates;
   }
 
-  private async extractForFieldType(
+  protected async extractForFieldType(
     client: Anthropic,
     fieldType: FieldType,
     documentType: DocumentType,

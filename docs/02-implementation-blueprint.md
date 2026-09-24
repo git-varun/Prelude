@@ -56,6 +56,7 @@ CREATE TYPE user_role AS ENUM ('staff', 'oncologist');
 CREATE TYPE document_type AS ENUM ('prescription', 'blood', 'radiology');
 CREATE TYPE source_origin AS ENUM ('own_hospital', 'outside_paper', 'outside_cd', 'whatsapp_pdf');
 CREATE TYPE ocr_status AS ENUM ('pending', 'done', 'failed');
+CREATE TYPE extraction_status AS ENUM ('pending', 'done', 'failed');
 CREATE TYPE field_type AS ENUM ('marker_value', 'reference_range', 'treatment_regimen', 'radiology_impression', 'disease_status_trend');
 CREATE TYPE coverage_status AS ENUM ('value_found', 'not_assessed', 'not_found_in_document_set', 'extraction_uncertain', 'conflicting_sources', 'not_applicable');
 CREATE TYPE verification_state AS ENUM ('unverified', 'staff_corrected', 'oncologist_signed_off', 'reopened_by_oncologist');
@@ -103,7 +104,9 @@ CREATE TABLE documents (
   uploaded_by UUID NOT NULL REFERENCES users(id),
   uploaded_at TIMESTAMPTZ NOT NULL DEFAULT now(),
   ocr_status ocr_status NOT NULL DEFAULT 'pending',
-  ocr_text_ref TEXT
+  ocr_text_ref TEXT,
+  needs_manual_date BOOLEAN NOT NULL DEFAULT false,  -- derived summary: any fact of this document needs a date
+  extraction_status extraction_status NOT NULL DEFAULT 'pending'  -- outcome of the LLM extraction + persistence pass
 );
 
 CREATE TABLE facts (
@@ -112,11 +115,13 @@ CREATE TABLE facts (
   visit_id UUID NOT NULL REFERENCES visits(id),
   document_id UUID NOT NULL REFERENCES documents(id),
   tracked_marker_id UUID REFERENCES tracked_markers(id),
+  raw_marker_label TEXT,      -- set when the extracted marker name has no confident tracked-marker match
   field_type field_type NOT NULL,
   value TEXT,
   unit TEXT,
   reference_range TEXT,
-  as_of_date DATE NOT NULL,
+  as_of_date DATE,            -- NULL only while needs_manual_date; never fabricated
+  needs_manual_date BOOLEAN NOT NULL DEFAULT false,
   coverage_status coverage_status NOT NULL DEFAULT 'not_assessed',
   verification_state verification_state NOT NULL DEFAULT 'unverified',
   delta_status delta_status,
@@ -130,6 +135,9 @@ CREATE TABLE facts (
   reopened_at TIMESTAMPTZ,
   CONSTRAINT signed_off_requires_oncologist CHECK (
     verification_state != 'oncologist_signed_off' OR signed_off_by IS NOT NULL
+  ),
+  CONSTRAINT no_signoff_while_undated CHECK (
+    verification_state != 'oncologist_signed_off' OR as_of_date IS NOT NULL
   )
 );
 
