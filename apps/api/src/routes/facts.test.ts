@@ -1,6 +1,6 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { sql } from "../db/client";
-import { getDocumentFacts } from "./facts";
+import { getDocumentFacts, patchFact } from "./facts";
 import { createTestUser, deleteTestUsers, createTestPatient, deleteTestPatients, asAuthedUser, type TestUser } from "../test-helpers";
 
 let staff: TestUser;
@@ -84,4 +84,102 @@ test("GET returns the document, its facts (dates as YYYY-MM-DD, marker name join
 test("GET returns 404 for an unknown or malformed document id", async () => {
   expect((await getDocumentFacts(getReq("00000000-0000-0000-0000-000000000000"))).status).toBe(404);
   expect((await getDocumentFacts(getReq("not-a-uuid"))).status).toBe(404);
+});
+
+async function factRow(id: string) {
+  const [row] = await sql`SELECT * FROM facts WHERE id = ${id}`;
+  return row;
+}
+
+test("PATCH value on an extraction_uncertain fact stores it, flips coverage to value_found, marks staff_corrected, audits", async () => {
+  const docId = await newDocument();
+  const id = await newFact(docId, { coverage: "extraction_uncertain", value: "4.?" });
+  const res = await patchFact(patchReq(id, { value: "4.2" }), asAuthedUser(staff));
+  expect(res.status).toBe(200);
+  const row = await factRow(id);
+  expect(row.value).toBe("4.2");
+  expect(row.coverage_status).toBe("value_found");
+  expect(row.verification_state).toBe("staff_corrected");
+  expect(row.corrected_by).toBe(staff.id);
+
+  const [audit] = await sql`SELECT * FROM audit_log WHERE entity_type = 'fact' AND entity_id = ${id} AND action = 'correct'`;
+  expect(audit.actor_id).toBe(staff.id);
+  expect(JSON.parse(audit.before_value).value).toBe("4.?");
+  expect(JSON.parse(audit.after_value).value).toBe("4.2");
+});
+
+test("PATCH value does not change coverage_status when it was not extraction_uncertain", async () => {
+  const docId = await newDocument();
+  const id = await newFact(docId, { coverage: "not_applicable" });
+  await patchFact(patchReq(id, { value: "x" }), asAuthedUser(staff));
+  expect((await factRow(id)).coverage_status).toBe("not_applicable");
+});
+
+test("PATCH tracked_marker_id maps the marker, clears raw_marker_label, leaves coverage_status alone", async () => {
+  const docId = await newDocument();
+  const id = await newFact(docId, { rawLabel: "Carcino Embryonic", coverage: "extraction_uncertain" });
+  const res = await patchFact(patchReq(id, { tracked_marker_id: ceaMarkerId }), asAuthedUser(staff));
+  expect(res.status).toBe(200);
+  const row = await factRow(id);
+  expect(row.tracked_marker_id).toBe(ceaMarkerId);
+  expect(row.raw_marker_label).toBeNull();
+  expect(row.coverage_status).toBe("extraction_uncertain");
+  expect(row.verification_state).toBe("staff_corrected");
+  expect(((await res.json()) as any).tracked_marker_name).toBe("CEA");
+});
+
+test("PATCH rejects a tracked_marker_id that belongs to another patient", async () => {
+  const docId = await newDocument();
+  const id = await newFact(docId);
+  const res = await patchFact(patchReq(id, { tracked_marker_id: otherPatientMarkerId }), asAuthedUser(staff));
+  expect(res.status).toBe(400);
+  expect((await factRow(id)).tracked_marker_id).toBeNull();
+});
+
+test("PATCH as_of_date clears the fact's needs_manual_date and recomputes the document flag", async () => {
+  const docId = await newDocument();
+  const a = await newFact(docId, { asOf: null, needsDate: true });
+  const b = await newFact(docId, { asOf: null, needsDate: true });
+  await sql`UPDATE documents SET needs_manual_date = true WHERE id = ${docId}`;
+
+  await patchFact(patchReq(a, { as_of_date: "2026-03-05" }), asAuthedUser(staff));
+  let [doc] = await sql`SELECT needs_manual_date FROM documents WHERE id = ${docId}`;
+  expect(doc.needs_manual_date).toBe(true); // b is still undated
+  expect((await factRow(a)).needs_manual_date).toBe(false);
+
+  await patchFact(patchReq(b, { as_of_date: "2026-03-06" }), asAuthedUser(staff));
+  [doc] = await sql`SELECT needs_manual_date FROM documents WHERE id = ${docId}`;
+  expect(doc.needs_manual_date).toBe(false);
+});
+
+test("PATCH returns 409 for an oncologist_signed_off fact and changes nothing", async () => {
+  const docId = await newDocument();
+  const id = await newFact(docId, { verification: "oncologist_signed_off" });
+  const res = await patchFact(patchReq(id, { value: "9.9" }), asAuthedUser(oncologist));
+  expect(res.status).toBe(409);
+  expect((await factRow(id)).value).toBe("4.2");
+});
+
+test("PATCH is allowed from reopened_by_oncologist and lands in staff_corrected, not signed off", async () => {
+  const docId = await newDocument();
+  const id = await newFact(docId, { verification: "reopened_by_oncologist" });
+  const res = await patchFact(patchReq(id, { value: "5.0" }), asAuthedUser(staff));
+  expect(res.status).toBe(200);
+  expect((await factRow(id)).verification_state).toBe("staff_corrected");
+});
+
+test("PATCH validates the body", async () => {
+  const docId = await newDocument();
+  const id = await newFact(docId);
+  for (const body of [{}, { value: "" }, { value: "   " }, { value: 5 }, { as_of_date: "2026-13-45" }, { as_of_date: "03/05/2026" }, { tracked_marker_id: "nope" }]) {
+    expect((await patchFact(patchReq(id, body), asAuthedUser(staff))).status).toBe(400);
+  }
+  const bad = new Request("http://localhost/facts/x", { method: "PATCH", body: "{not json" }) as Request & { params: { id: string } };
+  bad.params = { id };
+  expect((await patchFact(bad, asAuthedUser(staff))).status).toBe(400);
+});
+
+test("PATCH 404s for an unknown or malformed fact id", async () => {
+  expect((await patchFact(patchReq("00000000-0000-0000-0000-000000000000", { value: "1" }), asAuthedUser(staff))).status).toBe(404);
+  expect((await patchFact(patchReq("nope", { value: "1" }), asAuthedUser(staff))).status).toBe(404);
 });
