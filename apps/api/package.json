@@ -15,5 +15,8 @@
     "@azure/core-auth": "^1.11.0",
     "@opd/shared": "workspace:*",
     "zod": "^4.6.5"
+  },
+  "devDependencies": {
+    "pdf-lib": "^1.17.1"
   }
 }

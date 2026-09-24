@@ -33,5 +33,8 @@ report.[0-9]_.[0-9]_.[0-9]_.[0-9]_.json
 # local object storage (dev-only document uploads)
 apps/api/.data
 
+# generated synthetic samples for the ingestion eval script (regeneratable)
+apps/api/.eval-samples
+
 # Finder (MacOS) folder config
 .DS_Store

@@ -7,6 +7,10 @@
     "apps/*",
     "packages/*"
   ],
+  "scripts": {
+    "eval:generate-samples": "bun apps/api/src/scripts/generateSampleDocs.ts",
+    "eval:ingestion": "bun apps/api/src/scripts/evalIngestion.ts"
+  },
   "devDependencies": {
     "@types/bun": "latest"
   },
