@@ -15,6 +15,7 @@ export interface User {
 export type DocumentType = "prescription" | "blood" | "radiology";
 export type SourceOrigin = "own_hospital" | "outside_paper" | "outside_cd" | "whatsapp_pdf";
 export type OcrStatus = "pending" | "done" | "failed";
+export type ExtractionStatus = "pending" | "done" | "failed";
 
 export type FieldType =
   | "marker_value"
@@ -78,6 +79,8 @@ export interface Document {
   uploaded_at: string;
   ocr_status: OcrStatus;
   ocr_text_ref: string | null;
+  needs_manual_date: boolean;
+  extraction_status: ExtractionStatus;
 }
 
 export interface Fact {
@@ -90,7 +93,9 @@ export interface Fact {
   value: string | null;
   unit: string | null;
   reference_range: string | null;
-  as_of_date: string;
+  as_of_date: string | null;
+  needs_manual_date: boolean;
+  raw_marker_label: string | null;
   coverage_status: CoverageStatus;
   verification_state: VerificationState;
   delta_status: DeltaStatus | null;

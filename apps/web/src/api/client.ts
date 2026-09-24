@@ -77,6 +77,8 @@ export interface DocumentRecord {
   uploaded_at: string;
   ocr_status: string;
   ocr_text_ref: string | null;
+  needs_manual_date: boolean;
+  extraction_status: "pending" | "done" | "failed";
 }
 
 export const api = {
