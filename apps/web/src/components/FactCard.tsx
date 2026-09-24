@@ -1,0 +1,167 @@
+import { useState } from "react";
+import { api, ApiError, type ReviewFact, type TrackedMarker } from "../api/client";
+
+const COVERAGE_LABELS: Record<string, string> = {
+  value_found: "Value found",
+  not_assessed: "Not assessed",
+  not_applicable: "Not applicable per source",
+  extraction_uncertain: "Needs review",
+  conflicting_sources: "Conflicting values, see sources",
+};
+
+const FIELD_LABELS: Record<string, string> = {
+  marker_value: "Marker value",
+  reference_range: "Reference range",
+  treatment_regimen: "Treatment regimen",
+  radiology_impression: "Radiology impression",
+  disease_status_trend: "Disease status / trend",
+};
+
+interface Props {
+  fact: ReviewFact;
+  trackedMarkers: TrackedMarker[];
+  onChanged: () => void;
+}
+
+export function FactCard({ fact, trackedMarkers, onChanged }: Props) {
+  const [value, setValue] = useState(fact.value ?? "");
+  const [markerId, setMarkerId] = useState("");
+  const [customName, setCustomName] = useState("");
+  const [date, setDate] = useState("");
+  const [busy, setBusy] = useState<string | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  async function run(label: string, action: () => Promise<unknown>) {
+    setError(null);
+    setBusy(label);
+    try {
+      await action();
+      onChanged();
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "Save failed.");
+    } finally {
+      setBusy(null);
+    }
+  }
+
+  const heading = fact.tracked_marker_name ?? fact.raw_marker_label ?? FIELD_LABELS[fact.field_type] ?? fact.field_type;
+  const needsReview = fact.coverage_status === "extraction_uncertain";
+
+  return (
+    <div className="card">
+      <div className="page-heading" style={{ marginBottom: 8 }}>
+        <h2 style={{ margin: 0 }}>{heading}</h2>
+        <span className={`tag ${needsReview ? "tag--pending" : ""}`}>{COVERAGE_LABELS[fact.coverage_status] ?? fact.coverage_status}</span>
+      </div>
+      <p className="muted" style={{ marginTop: 0 }}>
+        {FIELD_LABELS[fact.field_type] ?? fact.field_type} · {fact.verification_state.replace(/_/g, " ")} ·{" "}
+        {fact.as_of_date ? `as of ${fact.as_of_date}` : "no as-of date"}
+      </p>
+
+      {error && <div className="error-banner">{error}</div>}
+
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+        <div>
+          <h3 style={{ marginTop: 0 }}>Raw text from document</h3>
+          {fact.source_snippet ? <blockquote style={{ margin: 0 }}>{fact.source_snippet}</blockquote> : <p className="muted">Source detail unavailable</p>}
+          {(fact.source_page !== null || fact.source_location) && (
+            <p className="field-hint">
+              {fact.source_page !== null && `Page ${fact.source_page}`}
+              {fact.source_page !== null && fact.source_location && " · "}
+              {fact.source_location}
+            </p>
+          )}
+        </div>
+        <div>
+          <h3 style={{ marginTop: 0 }}>Extracted value</h3>
+          <p style={{ marginTop: 0 }}>
+            {fact.value ?? <span className="muted">(no value)</span>}
+            {fact.unit && ` ${fact.unit}`}
+            {fact.reference_range && <span className="muted"> · ref {fact.reference_range}</span>}
+          </p>
+          <form
+            className="field"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void run("value", () => api.patchFact(fact.id, { value }));
+            }}
+          >
+            <label htmlFor={`value-${fact.id}`}>Correct value (saving confirms it)</label>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input id={`value-${fact.id}`} value={value} onChange={(e) => setValue(e.target.value)} />
+              <button className="btn btn--secondary" type="submit" disabled={busy !== null || value.trim() === ""}>
+                {busy === "value" ? "Saving..." : "Save value"}
+              </button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+      {fact.raw_marker_label && (
+        <div className="field" style={{ marginTop: 16 }}>
+          <label>
+            Marker "{fact.raw_marker_label}" isn't mapped to a tracked marker
+          </label>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+            <select value={markerId} onChange={(e) => setMarkerId(e.target.value)} aria-label="Existing tracked marker">
+              <option value="">Map to existing marker...</option>
+              {trackedMarkers.map((m) => (
+                <option key={m.id} value={m.id}>
+                  {m.marker_name}
+                </option>
+              ))}
+            </select>
+            <button
+              className="btn btn--secondary"
+              type="button"
+              disabled={busy !== null || !markerId}
+              onClick={() => void run("map", () => api.patchFact(fact.id, { tracked_marker_id: markerId }))}
+            >
+              {busy === "map" ? "Mapping..." : "Map"}
+            </button>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <input
+              value={customName}
+              onChange={(e) => setCustomName(e.target.value)}
+              placeholder="Or add as a new marker"
+              aria-label="New custom marker name"
+            />
+            <button
+              className="btn btn--secondary"
+              type="button"
+              disabled={busy !== null || customName.trim() === ""}
+              onClick={() =>
+                void run("add", async () => {
+                  const created = await api.addMarker(fact.patient_id, customName.trim());
+                  await api.patchFact(fact.id, { tracked_marker_id: created.id });
+                })
+              }
+            >
+              {busy === "add" ? "Adding..." : "Add and map"}
+            </button>
+          </div>
+        </div>
+      )}
+
+      {fact.needs_manual_date && (
+        <form
+          className="field"
+          style={{ marginTop: 16 }}
+          onSubmit={(e) => {
+            e.preventDefault();
+            void run("date", () => api.patchFact(fact.id, { as_of_date: date }));
+          }}
+        >
+          <label htmlFor={`date-${fact.id}`}>As-of date (not found in the document)</label>
+          <div style={{ display: "flex", gap: 8 }}>
+            <input id={`date-${fact.id}`} type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+            <button className="btn btn--secondary" type="submit" disabled={busy !== null || !date}>
+              {busy === "date" ? "Saving..." : "Save date"}
+            </button>
+          </div>
+        </form>
+      )}
+    </div>
+  );
+}
