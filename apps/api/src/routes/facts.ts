@@ -84,6 +84,9 @@ export async function patchFact(req: Request & { params: { id: string } }, user:
       if (!marker) return "bad_marker" as const;
     }
 
+    // Serialize PATCHes per document so the needs_manual_date recompute sees committed siblings.
+    await tx`SELECT 1 FROM documents WHERE id = ${before.document_id} FOR UPDATE`;
+
     const [updated] = await tx`
       UPDATE facts SET
         value = COALESCE(${newValue}::text, value),
