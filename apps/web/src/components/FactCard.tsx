@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { api, ApiError, type ReviewFact, type TrackedMarker } from "../api/client";
 
 const COVERAGE_LABELS: Record<string, string> = {
@@ -30,6 +30,11 @@ export function FactCard({ fact, trackedMarkers, onChanged }: Props) {
   const [date, setDate] = useState("");
   const [busy, setBusy] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [createdMarker, setCreatedMarker] = useState<{ id: string; marker_name: string } | null>(null);
+
+  useEffect(() => {
+    setValue(fact.value ?? "");
+  }, [fact.value]);
 
   async function run(label: string, action: () => Promise<unknown>) {
     setError(null);
@@ -133,8 +138,27 @@ export function FactCard({ fact, trackedMarkers, onChanged }: Props) {
               disabled={busy !== null || customName.trim() === ""}
               onClick={() =>
                 void run("add", async () => {
-                  const created = await api.addMarker(fact.patient_id, customName.trim());
-                  await api.patchFact(fact.id, { tracked_marker_id: created.id });
+                  let newMarker: { id: string; marker_name: string } | null = null;
+                  let markerId: string;
+
+                  if (createdMarker && createdMarker.marker_name === customName.trim()) {
+                    markerId = createdMarker.id;
+                  } else {
+                    const created = await api.addMarker(fact.patient_id, customName.trim());
+                    newMarker = { id: created.id, marker_name: created.marker_name };
+                    setCreatedMarker(newMarker);
+                    markerId = created.id;
+                  }
+
+                  try {
+                    await api.patchFact(fact.id, { tracked_marker_id: markerId });
+                  } catch (err) {
+                    // If marker was just created, reload parent before re-throwing
+                    if (newMarker) {
+                      onChanged();
+                    }
+                    throw err;
+                  }
                 })
               }
             >
