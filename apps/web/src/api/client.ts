@@ -81,6 +81,33 @@ export interface DocumentRecord {
   extraction_status: "pending" | "done" | "failed";
 }
 
+export interface ReviewFact {
+  id: string;
+  patient_id: string;
+  visit_id: string;
+  document_id: string;
+  tracked_marker_id: string | null;
+  tracked_marker_name: string | null;
+  raw_marker_label: string | null;
+  field_type: string;
+  value: string | null;
+  unit: string | null;
+  reference_range: string | null;
+  as_of_date: string | null;
+  needs_manual_date: boolean;
+  coverage_status: string;
+  verification_state: string;
+  source_page: number | null;
+  source_location: string | null;
+  source_snippet: string | null;
+}
+
+export interface DocumentReview {
+  document: DocumentRecord;
+  facts: ReviewFact[];
+  tracked_markers: TrackedMarker[];
+}
+
 export const api = {
   login: (email: string, password: string) =>
     request<SessionUser>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
@@ -120,4 +147,9 @@ export const api = {
     form.set("file", input.file);
     return request<DocumentRecord>(`/patients/${patientId}/documents`, { method: "POST", body: form });
   },
+
+  getDocumentFacts: (documentId: string) => request<DocumentReview>(`/documents/${documentId}/facts`),
+
+  patchFact: (factId: string, patch: { value?: string; tracked_marker_id?: string; as_of_date?: string }) =>
+    request<ReviewFact>(`/facts/${factId}`, { method: "PATCH", body: JSON.stringify(patch) }),
 };
