@@ -100,6 +100,18 @@ status in value.`;
   }
 }
 
+// The LLM's asOfDate is untrusted: it goes into a DATE column, where Postgres
+// would silently reinterpret "01/08/2026" or reject garbage. Only a real
+// YYYY-MM-DD calendar date survives; anything else becomes null (needs manual date).
+export function normalizeAsOfDate(value: string | null): string | null {
+  if (value === null) return null;
+  const s = value.trim();
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(s) || s.startsWith("0000")) return null;
+  const d = new Date(`${s}T00:00:00Z`);
+  if (Number.isNaN(d.getTime()) || d.toISOString().slice(0, 10) !== s) return null;
+  return s;
+}
+
 function toExtractedFactCandidate(fieldType: FieldType, candidate: RawCandidate): ExtractedFactCandidate {
   // No verification_state field exists on ExtractedFactCandidate at all —
   // the extraction pass cannot self-authorize trust (docs/02 M2), so there
@@ -110,7 +122,7 @@ function toExtractedFactCandidate(fieldType: FieldType, candidate: RawCandidate)
     value: candidate.value,
     unit: candidate.unit,
     referenceRange: candidate.referenceRange,
-    asOfDate: candidate.asOfDate,
+    asOfDate: normalizeAsOfDate(candidate.asOfDate),
     coverageStatus: candidate.coverageStatus,
     sourcePage: candidate.sourcePage,
     sourceLocation: candidate.sourceLocation,
@@ -144,10 +156,13 @@ export class AnthropicExtractionProvider implements ExtractionProvider {
       }
     });
 
-    // If every call failed, returning [] would look identical to "nothing
-    // extractable" — throw so the caller records extraction_status='failed'.
-    if (failures.length === fieldTypes.length) {
-      throw new AggregateError(failures, `All ${fieldTypes.length} field-type extraction call(s) failed.`);
+    // If any call failed and nothing survived, returning [] would look identical
+    // to "nothing extractable" — throw so the caller records extraction_status='failed'.
+    if (failures.length > 0 && candidates.length === 0) {
+      throw new AggregateError(
+        failures,
+        `${failures.length} of ${fieldTypes.length} field-type extraction call(s) failed and no candidates were extracted.`,
+      );
     }
 
     return candidates;
