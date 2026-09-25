@@ -41,7 +41,7 @@ const ISO_DATE = /^\d{4}-\d{2}-\d{2}$/;
 function isRealDate(s: string): boolean {
   if (!ISO_DATE.test(s)) return false;
   const d = new Date(`${s}T00:00:00Z`);
-  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s;
+  return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === s && !s.startsWith("0000");
 }
 
 export async function patchFact(req: Request & { params: { id: string } }, user: AuthedUser): Promise<Response> {

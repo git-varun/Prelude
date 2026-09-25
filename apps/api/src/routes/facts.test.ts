@@ -193,7 +193,7 @@ test("PATCH is allowed from reopened_by_oncologist and lands in staff_corrected,
 test("PATCH validates the body", async () => {
   const docId = await newDocument();
   const id = await newFact(docId);
-  for (const body of [{}, { value: "" }, { value: "   " }, { value: 5 }, { as_of_date: "2026-13-45" }, { as_of_date: "03/05/2026" }, { tracked_marker_id: "nope" }]) {
+  for (const body of [{}, { value: "" }, { value: "   " }, { value: 5 }, { as_of_date: "2026-13-45" }, { as_of_date: "03/05/2026" }, { as_of_date: "0000-01-01" }, { tracked_marker_id: "nope" }]) {
     expect((await patchFact(patchReq(id, body), asAuthedUser(staff))).status).toBe(400);
   }
   const bad = new Request("http://localhost/facts/x", { method: "PATCH", body: "{not json" }) as Request & { params: { id: string } };
