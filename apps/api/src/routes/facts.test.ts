@@ -231,3 +231,110 @@ test("concurrent date PATCHes on sibling facts leave the document flag false", a
   expect((await factRow(a)).needs_manual_date).toBe(false);
   expect((await factRow(b)).needs_manual_date).toBe(false);
 });
+
+// --- extraction_uncertain correction transitions: the reviewer states which outcome they mean via `resolution` ---
+
+async function uncertainFact(): Promise<string> {
+  return newFact(await newDocument(), { coverage: "extraction_uncertain", value: "4.?", rawLabel: "Lbl" });
+}
+
+test("PATCH resolution=value_found with a verified value, unit and range → value_found, all stored, audited", async () => {
+  const id = await uncertainFact();
+  const res = await patchFact(
+    patchReq(id, { resolution: "value_found", value: "4.2", unit: "ng/mL", reference_range: "0-5" }),
+    asAuthedUser(staff),
+  );
+  expect(res.status).toBe(200);
+  const row = await factRow(id);
+  expect(row.coverage_status).toBe("value_found");
+  expect(row.value).toBe("4.2");
+  expect(row.unit).toBe("ng/mL");
+  expect(row.reference_range).toBe("0-5");
+  expect(row.verification_state).toBe("staff_corrected");
+  expect(row.corrected_by).toBe(staff.id);
+  const [audit] = await sql`SELECT * FROM audit_log WHERE entity_type = 'fact' AND entity_id = ${id} AND action = 'correct'`;
+  expect(audit.actor_id).toBe(staff.id);
+  expect(JSON.parse(audit.before_value).unit).toBeNull();
+  expect(JSON.parse(audit.after_value).unit).toBe("ng/mL");
+  expect(JSON.parse(audit.after_value).reference_range).toBe("0-5");
+});
+
+test("PATCH resolution=no_usable_value → not_assessed, value cleared", async () => {
+  const id = await uncertainFact();
+  const res = await patchFact(patchReq(id, { resolution: "no_usable_value" }), asAuthedUser(staff));
+  expect(res.status).toBe(200);
+  const row = await factRow(id);
+  expect(row.coverage_status).toBe("not_assessed");
+  expect(row.value).toBeNull();
+  expect(row.verification_state).toBe("staff_corrected");
+  expect(await correctAuditCount(id)).toBe(1);
+});
+
+test("PATCH resolution=source_states_not_performed → not_applicable, value cleared", async () => {
+  const id = await uncertainFact();
+  const res = await patchFact(patchReq(id, { resolution: "source_states_not_performed" }), asAuthedUser(staff));
+  expect(res.status).toBe(200);
+  const row = await factRow(id);
+  expect(row.coverage_status).toBe("not_applicable");
+  expect(row.value).toBeNull();
+  expect(row.verification_state).toBe("staff_corrected");
+});
+
+test("PATCH resolution is never inferred from value: value_found without a value, or a 'no value' resolution with a value, is 400", async () => {
+  const id = await uncertainFact();
+  for (const body of [
+    { resolution: "value_found" },
+    { resolution: "no_usable_value", value: "4.2" },
+    { resolution: "source_states_not_performed", value: "4.2" },
+  ]) {
+    expect((await patchFact(patchReq(id, body), asAuthedUser(staff))).status).toBe(400);
+  }
+  const row = await factRow(id);
+  expect(row.coverage_status).toBe("extraction_uncertain");
+  expect(row.verification_state).toBe("unverified");
+  expect(await correctAuditCount(id)).toBe(0);
+});
+
+test("PATCH can never set conflicting_sources or not_found_in_document_set", async () => {
+  const id = await uncertainFact();
+  for (const body of [
+    { resolution: "conflicting_sources" },
+    { resolution: "not_found_in_document_set" },
+    { coverage_status: "conflicting_sources", value: "1" },
+    { coverage_status: "not_found_in_document_set", value: "1" },
+    { coverage_status: "value_found", value: "1" },
+  ]) {
+    expect((await patchFact(patchReq(id, body), asAuthedUser(staff))).status).toBe(400);
+  }
+  expect((await factRow(id)).coverage_status).toBe("extraction_uncertain");
+  expect(await correctAuditCount(id)).toBe(0);
+});
+
+test("PATCH with a resolution on a fact that is not extraction_uncertain is 409 and changes nothing", async () => {
+  const id = await newFact(await newDocument(), { coverage: "value_found" });
+  const res = await patchFact(patchReq(id, { resolution: "no_usable_value" }), asAuthedUser(staff));
+  expect(res.status).toBe(409);
+  const row = await factRow(id);
+  expect(row.coverage_status).toBe("value_found");
+  expect(row.value).toBe("4.2");
+  expect(await correctAuditCount(id)).toBe(0);
+});
+
+test("PATCH unit and reference_range alone update those fields without touching coverage", async () => {
+  const id = await newFact(await newDocument());
+  const res = await patchFact(patchReq(id, { unit: "mg/dL", reference_range: "1-2" }), asAuthedUser(staff));
+  expect(res.status).toBe(200);
+  const row = await factRow(id);
+  expect(row.unit).toBe("mg/dL");
+  expect(row.reference_range).toBe("1-2");
+  expect(row.coverage_status).toBe("value_found");
+  expect(row.verification_state).toBe("staff_corrected");
+  expect(await correctAuditCount(id)).toBe(1);
+});
+
+test("PATCH with a resolution on an oncologist_signed_off fact is 409 even for an oncologist", async () => {
+  const id = await newFact(await newDocument(), { coverage: "extraction_uncertain", verification: "oncologist_signed_off" });
+  const res = await patchFact(patchReq(id, { resolution: "no_usable_value" }), asAuthedUser(oncologist));
+  expect(res.status).toBe(409);
+  expect((await factRow(id)).coverage_status).toBe("extraction_uncertain");
+});
