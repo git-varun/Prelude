@@ -14,9 +14,11 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
   // documentId change/unmount so in-flight work for a stale screen is ignored.
   const latestLoad = useRef(0);
   const generation = useRef(0);
+  const currentDocumentId = useRef<string | null>(null);
   const [bulkError, setBulkError] = useState<string | null>(null);
 
   const load = useCallback(async () => {
+    if (currentDocumentId.current !== documentId) return;
     const token = ++latestLoad.current;
     try {
       const result = await api.getDocumentFacts(documentId);
@@ -32,16 +34,18 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
   }, [documentId]);
 
   useEffect(() => {
+    currentDocumentId.current = documentId;
     setLoading(true);
     setData(null);
     setBulkError(null);
     setBulkBusy(false);
     void load();
     return () => {
+      currentDocumentId.current = null;
       generation.current++;
       latestLoad.current++;
     };
-  }, [load]);
+  }, [load, documentId]);
 
   async function applyDateToAll(e: FormEvent) {
     e.preventDefault();
