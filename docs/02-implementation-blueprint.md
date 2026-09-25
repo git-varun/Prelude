@@ -214,7 +214,7 @@ Depends on M1.
 - [x] Implement the rules engine (`services/rules.ts`) for initial `coverage_status` assignment per the deterministic rules: no value → `not_assessed`; value found → `value_found`; source states test not performed → `not_applicable`; low-confidence/ambiguous → `extraction_uncertain`
 - [x] Persist extracted facts with `source_page`/`source_location`/`source_snippet` populated where available, `NULL` otherwise — UI must show "source detail unavailable" rather than a broken link when these are null
 - [ ] Test against real or realistic scanned/photographed paper, not just clean digital PDFs (this is the actual expected input mix for outside reports)
-- [x] Build the Extraction Review (staff) screen showing raw extracted text next to the structured fact for low-confidence cases (built 2026-09-25 on branch `m2-extraction-review`: `GET /documents/:id/facts`, `PATCH /facts/:id`, `apps/web/src/screens/ExtractionReview.tsx`; scope also covers marker mapping and per-fact date entry, see docs/m2-backlog.md)
+- [x] Build the Extraction Review (staff) screen showing raw extracted text next to the structured fact for low-confidence cases (built 2026-09-25 on branch `m2-extraction-review`: `GET /documents/:id/facts`, `PATCH /facts/:id`, `apps/web/src/screens/ExtractionReview.tsx`; scope also covers marker mapping and per-fact date entry, see docs/m2-backlog.md); note: the web app currently cannot render in a browser because of the pre-existing M1 bug E1 in docs/m2-backlog.md
 
 ## M3 — Review & Sign-off
 

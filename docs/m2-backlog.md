@@ -6,8 +6,8 @@ checklist. Unlike those, **this document is not frozen** — update it as
 items get resolved or new ones surface. Mirrors the pattern established in
 `docs/m1-backlog.md` for M1.
 
-Last updated: 2026-09-24, after implementing C4–C7 (undated-fact persistence,
-transactional inserts, partial-failure-tolerant extraction, extraction_status).
+Last updated: 2026-09-25, after the Extraction Review (staff) screen and its final fix wave (previously: C4–C7 —
+undated-fact persistence, transactional inserts, partial-failure-tolerant extraction, extraction_status).
 
 ---
 
@@ -15,7 +15,7 @@ transactional inserts, partial-failure-tolerant extraction, extraction_status).
 
 | # | Issue | Severity | Notes |
 | --- | --- | --- | --- |
-| C1 | OCR runs synchronously inside the `POST /patients/:id/documents` request (`documents.ts`'s `runOcr`), per docs/02 M2's "on upload, run OCR and update ocr_status" wording. There's no queue/background-job infrastructure yet, so a slow OCR call — especially Azure Document Intelligence's long-running poller — holds the HTTP response open for however long that call takes. | Medium | Fine at pilot volume/latency tolerance, but will need to move to a background job (queue + polling or webhook) before this scales past occasional single-document uploads, and especially before multi-page documents are common (see C2). Extraction + FACT persistence (`runExtraction`, added 2026-09-23) run in the same synchronous chain, compounding this — a document now blocks on OCR *and* up to 2 sequential LLM extraction calls before the upload response returns. |
+| C1 | OCR runs synchronously inside the `POST /patients/:id/documents` request (`documents.ts`'s `runOcr`), per docs/02 M2's "on upload, run OCR and update ocr_status" wording. There's no queue/background-job infrastructure yet, so a slow OCR call — especially Azure Document Intelligence's long-running poller — holds the HTTP response open for however long that call takes. | Medium | Fine at pilot volume/latency tolerance, but will need to move to a background job (queue + polling or webhook) before this scales past occasional single-document uploads, and especially before multi-page documents are common (see C2). Extraction + FACT persistence (`runExtraction`, added 2026-09-23) run in the same synchronous chain, compounding this — a document now blocks on OCR *and* the per-field-type LLM extraction calls (run in parallel via `Promise.allSettled`, so the wait is the slowest call, not the sum) before the upload response returns. |
 | C2 | `AwsTextractProvider` (`apps/api/src/services/ocr/awsTextract.ts`) uses Textract's synchronous `DetectDocumentTextCommand`, which only supports single-page PDFs (plus JPEG/PNG/TIFF). A multi-page PDF upload with `OCR_PROVIDER=aws_textract` will get whatever error Textract itself returns for that case — not silently mishandled, but not handled either. | Medium | Multi-page PDF support requires Textract's async `StartDocumentTextDetection` + S3 flow (the input must live in S3, not be passed as inline bytes), a materially bigger integration than the sync path. Azure Document Intelligence's `prebuilt-read` model (the other adapter) already handles multi-page documents natively, so this is AWS-specific. This limitation also shaped the ingestion eval's sample set (see below) — every synthetic sample is single-page so both providers can be compared on equal footing. |
 | C8 | The oncologist-approved controlled marker list is still a placeholder: `packages/shared/src/markers.ts`'s `CONTROLLED_MARKERS = ["CEA", "CA-125", "CA 19-9", "PSA"]` was seeded illustratively during scoping, never locked by an oncologist. | Low (product, not code) | Blocks nothing technically, but every "confident match" in the extraction prompt and every `tracked_marker_id` resolution is only as good as this list. Tracked in the blueprint's M5 backlog too. |
 
@@ -24,10 +24,23 @@ transactional inserts, partial-failure-tolerant extraction, extraction_status).
 | # | Item | Severity | Notes |
 | --- | --- | --- | --- |
 | E1 | **Existing M1 bug:** `apps/web/src/api/client.ts:3` reads `process.env.OPD_API_URL`; in the browser this throws `process is not defined` under `bun apps/web/src/server.ts` (no `bunfig.toml`, so nothing inlines it), so the app renders only an error overlay. Present since commit `314b7c0` (M1). | High | Found only when the review screen was first driven in a real browser; tests and typecheck can't see it. All browser testing used a temporary hardcoded URL that was reverted. Needs a real fix (e.g. hardcode/inline a public URL, or configure Bun's `serve.static.env` for a `PUBLIC_` variable) — not inlining all env vars, which would leak secrets into the bundle. |
-| E2 | Review cards reorder after a marker is mapped: `GET /documents/:id/facts` sorts by `tracked_marker_name NULLS LAST`, then a random uuid. | Low | The card you just acted on can jump to the top. Give facts a stable order (e.g. extraction order via a created-at/sequence column) — facts currently have no creation timestamp. |
+| E2 | Review cards reorder after a marker is mapped: `GET /documents/:id/facts` sorts by `source_page NULLS LAST, tracked_marker_name NULLS LAST, field_type, id`. | Low | The card you just acted on can jump to the top. Give facts a stable order (e.g. extraction order via a created-at/sequence column) — facts currently have no creation timestamp. |
 | E3 | Oncologist-signed-off facts show editable inputs; the 409 message appears only after a save attempt. | Low | Disable/hide the correction controls when `verification_state='oncologist_signed_off'` (sign-off UI is M3). |
 | E4 | Several cards can share the same heading (e.g. four "CEA" cards); "Save value" wraps to two lines. | Low | Cosmetic; distinguish cards by page/snippet or an index. |
-| E5 | Deferred minors from the per-task reviews are listed in the branch history's review ledger (not committed): response read after commit in `patchFact`; `isRealDate` accepts year `0000` (→ 500 instead of 400); audit snapshots store `as_of_date` as an ISO timestamp; a value PATCH on a `not_applicable`/`not_assessed` fact keeps that coverage; `GET /documents/:id/facts` returns `SELECT *` documents (incl. `file_ref`); label/`htmlFor` and layout nits in `FactCard`/`ExtractionReview`; one commit trailer says "Claude Haiku 4.5". | Low | Triage before merge if desired. |
+| E5 | Deferred minors from the per-task reviews (bullets below). | Low | Triage before merge if desired. |
+| E6 | Fix wave note: a *partial* field-type failure with surviving candidates still ends as `extraction_status='done'` (C6 residual, unchanged); the no-survivors case (any call failed, zero candidates) now throws and is recorded `failed`. LLM-provided `asOfDate` values are now validated to real ISO `YYYY-MM-DD` or null (null becomes `needs_manual_date`). | Info | No action. |
+
+E5 deferred minors:
+  - response read after commit in `patchFact`
+  - audit snapshots store `as_of_date` as an ISO timestamp
+  - value PATCH on `not_applicable`/`not_assessed`/`conflicting_sources` keeps that coverage and edits a value an open CONFLICT describes (product decision needed before the Snapshot)
+  - the whole-document "apply date" marks every fact `staff_corrected` although no value was reviewed (decide before M3 treats `staff_corrected` as "reviewed")
+  - `extraction_status='done'` is written outside the persist transaction, so a failing status UPDATE after commit would show real facts as "extraction failed"
+  - no HTTP-level tests of route registration/authz for the two new routes
+  - `GET /documents/:id/facts` returns `SELECT *` documents including `file_ref`
+  - `bun.lock` top-level `tslib` moved 2.8.1 -> 1.14.1 via `pdf-lib`
+  - label/layout nits in `FactCard`/`ExtractionReview`
+  - commit ec6ee4e's trailer says Claude Haiku 4.5
 
 ## Resolved (2026-09-25): Extraction Review (staff) screen
 

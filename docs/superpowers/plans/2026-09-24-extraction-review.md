@@ -8,7 +8,7 @@
 
 **Tech Stack:** Bun (`Bun.serve`, `bun:test`, built-in `SQL`), Postgres 16, React 19, TypeScript.
 
-**Spec:** `docs/m2-backlog.md` section "Design decisions captured, not yet implemented" (revised 2026-09-24). State rules: `docs/03-implementation-invariants.md` §1 (coverage transitions) and §2 (verification transitions). Schema: `docs/02-implementation-blueprint.md` DDL + `apps/api/src/db/migrations/003_undated_facts_and_extraction_status.sql`.
+**Spec:** `docs/m2-backlog.md` section "Resolved (2026-09-25): Extraction Review (staff) screen". State rules: `docs/03-implementation-invariants.md` §1 (coverage transitions) and §2 (verification transitions). Schema: `docs/02-implementation-blueprint.md` DDL + `apps/api/src/db/migrations/003_undated_facts_and_extraction_status.sql`.
 
 ## Global Constraints
 
