@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, ApiError, type DocumentReview } from "../api/client";
 import { FactCard } from "../components/FactCard";
 import { navigate } from "../router";
@@ -10,38 +10,64 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
   const [bulkDate, setBulkDate] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
 
+  // latestLoad: only the newest load() may set state. generation: bumped on
+  // documentId change/unmount so in-flight work for a stale screen is ignored.
+  const latestLoad = useRef(0);
+  const generation = useRef(0);
+  const [bulkError, setBulkError] = useState<string | null>(null);
+
   const load = useCallback(async () => {
+    const token = ++latestLoad.current;
     try {
-      setData(await api.getDocumentFacts(documentId));
+      const result = await api.getDocumentFacts(documentId);
+      if (token !== latestLoad.current) return;
+      setData(result);
       setError(null);
     } catch (err) {
+      if (token !== latestLoad.current) return;
       setError(err instanceof ApiError ? err.message : "Failed to load document.");
     } finally {
-      setLoading(false);
+      if (token === latestLoad.current) setLoading(false);
     }
   }, [documentId]);
 
   useEffect(() => {
     setLoading(true);
     setData(null);
+    setBulkError(null);
+    setBulkBusy(false);
     void load();
+    return () => {
+      generation.current++;
+      latestLoad.current++;
+    };
   }, [load]);
 
   async function applyDateToAll(e: FormEvent) {
     e.preventDefault();
     if (!data) return;
+    const gen = generation.current;
+    const targets = data.facts.filter((f) => f.needs_manual_date);
     setBulkBusy(true);
     setError(null);
-    try {
-      for (const fact of data.facts.filter((f) => f.needs_manual_date)) {
+    setBulkError(null);
+    let failure: string | null = null;
+    let done = 0;
+    for (const fact of targets) {
+      try {
         await api.patchFact(fact.id, { as_of_date: bulkDate });
+        done++;
+      } catch (err) {
+        const base = err instanceof ApiError ? err.message : "Failed to save the date for every fact.";
+        failure = `${base} (${targets.length - done} of ${targets.length} fact(s) were left undated.)`;
+        break;
       }
-    } catch (err) {
-      setError(err instanceof ApiError ? err.message : "Failed to save the date for every fact.");
-    } finally {
-      setBulkBusy(false);
-      await load();
+      if (gen !== generation.current) return;
     }
+    if (gen !== generation.current) return;
+    if (failure) setBulkError(failure);
+    setBulkBusy(false);
+    await load();
   }
 
   if (loading) return <p className="muted">Loading...</p>;
@@ -66,6 +92,7 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {bulkError && <div className="error-banner">{bulkError}</div>}
 
       {document.ocr_status !== "done" ? (
         <div className="card">
