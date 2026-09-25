@@ -214,13 +214,13 @@ Depends on M1.
 - [x] Implement the rules engine (`services/rules.ts`) for initial `coverage_status` assignment per the deterministic rules: no value → `not_assessed`; value found → `value_found`; source states test not performed → `not_applicable`; low-confidence/ambiguous → `extraction_uncertain`
 - [x] Persist extracted facts with `source_page`/`source_location`/`source_snippet` populated where available, `NULL` otherwise — UI must show "source detail unavailable" rather than a broken link when these are null
 - [ ] Test against real or realistic scanned/photographed paper, not just clean digital PDFs (this is the actual expected input mix for outside reports)
-- [ ] Build the Extraction Review (staff) screen showing raw extracted text next to the structured fact for low-confidence cases
+- [x] Build the Extraction Review (staff) screen showing raw extracted text next to the structured fact for low-confidence cases (built 2026-09-25 on branch `m2-extraction-review`: `GET /documents/:id/facts`, `PATCH /facts/:id`, `apps/web/src/screens/ExtractionReview.tsx`; scope also covers marker mapping and per-fact date entry, see docs/m2-backlog.md)
 
 ## M3 — Review & Sign-off
 
 Depends on M2.
 
-- [ ] Implement `PATCH /facts/:id`: allowed when `verification_state` is `unverified`, `staff_corrected`, or `reopened_by_oncologist`; return `403` if `oncologist_signed_off`
+- [ ] Implement `PATCH /facts/:id`: allowed when `verification_state` is `unverified`, `staff_corrected`, or `reopened_by_oncologist`; return `409` if `oncologist_signed_off` (Invariants §2 governs: a state-precondition violation, not a permission error; `PATCH /facts/:id` is already implemented this way for staff correction)
 - [ ] Implement `POST /facts/:id/sign-off` (oncologist only): sets `verification_state = oncologist_signed_off`, `signed_off_by`, `signed_off_at`
 - [ ] Implement `POST /facts/:id/reopen` (oncologist only): sets `verification_state = reopened_by_oncologist`; staff or the oncologist can then correct it, returning it to `oncologist_signed_off`
 - [ ] Wire audit logging on every correct/sign-off/reopen action: actor, before/after value, timestamp

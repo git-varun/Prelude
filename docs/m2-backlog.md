@@ -19,43 +19,27 @@ transactional inserts, partial-failure-tolerant extraction, extraction_status).
 | C2 | `AwsTextractProvider` (`apps/api/src/services/ocr/awsTextract.ts`) uses Textract's synchronous `DetectDocumentTextCommand`, which only supports single-page PDFs (plus JPEG/PNG/TIFF). A multi-page PDF upload with `OCR_PROVIDER=aws_textract` will get whatever error Textract itself returns for that case — not silently mishandled, but not handled either. | Medium | Multi-page PDF support requires Textract's async `StartDocumentTextDetection` + S3 flow (the input must live in S3, not be passed as inline bytes), a materially bigger integration than the sync path. Azure Document Intelligence's `prebuilt-read` model (the other adapter) already handles multi-page documents natively, so this is AWS-specific. This limitation also shaped the ingestion eval's sample set (see below) — every synthetic sample is single-page so both providers can be compared on equal footing. |
 | C8 | The oncologist-approved controlled marker list is still a placeholder: `packages/shared/src/markers.ts`'s `CONTROLLED_MARKERS = ["CEA", "CA-125", "CA 19-9", "PSA"]` was seeded illustratively during scoping, never locked by an oncologist. | Low (product, not code) | Blocks nothing technically, but every "confident match" in the extraction prompt and every `tracked_marker_id` resolution is only as good as this list. Tracked in the blueprint's M5 backlog too. |
 
-## Design decisions captured, not yet implemented
+## Open items from the Extraction Review build (2026-09-25)
 
-**Extraction Review (staff) screen** — brainstormed 2026-09-23, revised
-2026-09-24 after C4 changed how undated facts are stored. Not yet built; this
-is the agreed design so it isn't lost before an implementation plan is written:
+| # | Item | Severity | Notes |
+| --- | --- | --- | --- |
+| E1 | **Existing M1 bug:** `apps/web/src/api/client.ts:3` reads `process.env.OPD_API_URL`; in the browser this throws `process is not defined` under `bun apps/web/src/server.ts` (no `bunfig.toml`, so nothing inlines it), so the app renders only an error overlay. Present since commit `314b7c0` (M1). | High | Found only when the review screen was first driven in a real browser; tests and typecheck can't see it. All browser testing used a temporary hardcoded URL that was reverted. Needs a real fix (e.g. hardcode/inline a public URL, or configure Bun's `serve.static.env` for a `PUBLIC_` variable) — not inlining all env vars, which would leak secrets into the bundle. |
+| E2 | Review cards reorder after a marker is mapped: `GET /documents/:id/facts` sorts by `tracked_marker_name NULLS LAST`, then a random uuid. | Low | The card you just acted on can jump to the top. Give facts a stable order (e.g. extraction order via a created-at/sequence column) — facts currently have no creation timestamp. |
+| E3 | Oncologist-signed-off facts show editable inputs; the 409 message appears only after a save attempt. | Low | Disable/hide the correction controls when `verification_state='oncologist_signed_off'` (sign-off UI is M3). |
+| E4 | Several cards can share the same heading (e.g. four "CEA" cards); "Save value" wraps to two lines. | Low | Cosmetic; distinguish cards by page/snippet or an index. |
+| E5 | Deferred minors from the per-task reviews are listed in the branch history's review ledger (not committed): response read after commit in `patchFact`; `isRealDate` accepts year `0000` (→ 500 instead of 400); audit snapshots store `as_of_date` as an ISO timestamp; a value PATCH on a `not_applicable`/`not_assessed` fact keeps that coverage; `GET /documents/:id/facts` returns `SELECT *` documents (incl. `file_ref`); label/`htmlFor` and layout nits in `FactCard`/`ExtractionReview`; one commit trailer says "Claude Haiku 4.5". | Low | Triage before merge if desired. |
 
-- Undated facts already exist in the database (`facts.as_of_date IS NULL`,
-  `facts.needs_manual_date = true`), so there is nothing to "resubmit" or
-  replay. The earlier `documents.pending_extraction_candidates` /
-  `POST /documents/:id/resubmit-date` design is **withdrawn**.
-- Endpoints: `GET /documents/:id/facts` (staff+oncologist; the document row —
-  including `extraction_status` and the derived `needs_manual_date` — plus its
-  facts, joined to `tracked_markers.marker_name`); `PATCH /facts/:id`
-  (staff+oncologist; body `{ value?, tracked_marker_id?, as_of_date? }`, at
-  least one required). Any edit sets `verification_state='staff_corrected'` and
-  `corrected_by`, and writes an `audit_log` row (`action='correct'`). A value
-  edit on an `extraction_uncertain` fact auto-flips `coverage_status` to
-  `value_found`; a `tracked_marker_id` edit clears `raw_marker_label`; an
-  `as_of_date` edit sets `facts.needs_manual_date=false` and recomputes
-  `documents.needs_manual_date` (true iff any sibling fact still needs one).
-- Per-fact date entry: each fact with `needs_manual_date` shows its own date
-  input in the review list (covers a single undated fact in an otherwise-dated
-  document as well as a fully undated document). Undated facts can be
-  corrected but never signed off — enforced in the database by
-  `no_signoff_while_undated`, so the sign-off UI (M3) must surface that
-  constraint rather than assume any fact is signable.
-- Correction scope otherwise value-only; unit/reference_range/coverage_status
-  direct edits were decided against for now (YAGNI).
-- Adding a custom marker reuses the existing `POST /patients/:id/markers`
-  (`api.addMarker`), then PATCHes the fact with the new marker's id.
-- If `extraction_status='failed'`, the screen should say the document was
-  never analyzed (as opposed to "nothing found") and, eventually, offer a
-  retry — the retry action itself is out of scope until designed.
-- Frontend: `apps/web/src/screens/ExtractionReview.tsx`, hash route
-  `/documents/:id/review`, following existing screen conventions
-  (`apps/web/src/api/client.ts` fetch wrapper, plain `useState` forms).
-  Sign-off stays oncologist-only and out of scope here.
+## Resolved (2026-09-25): Extraction Review (staff) screen
+
+Built as designed (2026-09-23, revised 2026-09-24) on branch `m2-extraction-review`:
+
+- `GET /documents/:id/facts` (staff+oncologist): document + facts (dates as `YYYY-MM-DD`, marker name joined) + the patient's tracked markers.
+- `PATCH /facts/:id` (staff+oncologist): body `{ value?, tracked_marker_id?, as_of_date? }`. One transaction; locks the fact and its document row (so concurrent date edits on sibling facts recompute `documents.needs_manual_date` correctly); any edit sets `staff_corrected` + `corrected_by` and writes an `audit_log` row (`action='correct'`, before/after); a value edit flips `extraction_uncertain` to `value_found`; a marker edit clears `raw_marker_label`; a date edit clears the fact's `needs_manual_date`. **409** on `oncologist_signed_off` facts (Invariants §2; the Blueprint's M3 line said 403 and was corrected).
+- Web: hash route `#/documents/:id/review`, `ExtractionReview.tsx` + `FactCard.tsx`, and a "Review extraction" button on the Upload screen for OCR-done documents.
+- Fixed design details: saving a value unchanged still confirms it (staff-corrected, uncertain → found); marker mapping alone doesn't change coverage; if **every** fact lacks a date the screen shows only one "apply date to all" form (sequential PATCHes; a partial failure stays visible with the count left undated), otherwise each undated card has its own date input; failed/pending extraction, zero facts and OCR-not-done each get a distinct message. Sign-off is out of scope; undated facts stay unsignable via `no_signoff_while_undated`.
+- The withdrawn `pending_extraction_candidates` / `resubmit-date` design is not built (undated facts persist directly).
+- Verification: `bun test` 73/73, `tsc` clean, 22 real-HTTP checks (auth, roles, CORS, validation, state rules, audit rows), and a Playwright walkthrough of every screen state including the bulk-failure path and a fast document switch (stale-load guard). Review found and fixed real issues along the way: a document-row lock race (PATCH), orphan/duplicate custom markers on partial "Add and map" failure, stale value drafts, a swallowed bulk-date error, and stale-document responses (ExtractionReview).
+- Not verified: the Upload → "Review extraction" click path (needs an OCR-complete upload, i.e. real provider credentials) and the oncologist role in the browser.
 
 ## Resolved (2026-09-23)
 
