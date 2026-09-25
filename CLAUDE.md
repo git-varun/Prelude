@@ -104,3 +104,7 @@ bun --hot ./index.ts
 ```
 
 For more information, read the Bun API docs in `node_modules/bun-types/docs/**.mdx`.
+
+## Definition of done for web changes
+
+`tsc --noEmit` is not enough for anything under `apps/web`: run `bun run --cwd apps/web test:e2e` (Playwright smoke test: real server + real browser, login renders, no console errors). Browser-only failures like `process is not defined` are invisible to typecheck and unit tests. First time on a machine: `bunx playwright install chromium`.

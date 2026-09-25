@@ -1,6 +1,10 @@
 import type { UserRole } from "@opd/shared";
 
-const API_BASE_URL = process.env.OPD_API_URL ?? "http://localhost:3001";
+// Runtime config from server.ts (PUBLIC_API_URL). `process.env` doesn't exist in
+// the browser, so the client asks the server for its one public setting.
+const { apiUrl: API_BASE_URL } = (await (await fetch("/config.json")).json()) as {
+  apiUrl: string;
+};
 
 export class ApiError extends Error {
   status: number;

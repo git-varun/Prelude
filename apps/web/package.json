@@ -4,7 +4,8 @@
   "private": true,
   "scripts": {
     "dev": "bun --hot src/server.ts",
-    "start": "bun src/server.ts"
+    "start": "bun src/server.ts",
+    "test:e2e": "bun test e2e"
   },
   "dependencies": {
     "@opd/shared": "workspace:*",
@@ -13,6 +14,7 @@
   },
   "devDependencies": {
     "@types/react": "^19",
-    "@types/react-dom": "^19"
+    "@types/react-dom": "^19",
+    "playwright": "^1.63.0"
   }
 }
