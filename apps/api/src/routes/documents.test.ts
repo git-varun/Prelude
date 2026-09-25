@@ -5,6 +5,10 @@ import { createOrOpenVisit } from "./visits";
 import { sql } from "../db/client";
 import { createTestUser, deleteTestUsers, createTestPatient, deleteTestPatients, asAuthedUser, type TestUser } from "../test-helpers";
 
+// Keep tests hermetic: a developer .env with real providers must not send dummy uploads to paid vendors.
+delete process.env.OCR_PROVIDER;
+delete process.env.EXTRACTION_PROVIDER;
+
 let staff: TestUser;
 let patientId: string;
 let otherPatientId: string;
