@@ -133,3 +133,12 @@ test("review screen: done with zero facts shows 'ran and found nothing' as an em
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);
+
+test("a failing /config.json shows the connectivity error instead of a blank screen", async () => {
+  const page = await browser.newPage();
+  await page.route(`${BASE}/config.json`, (route) => route.abort());
+  await page.goto(BASE);
+  await page.getByText("Couldn't reach the server").waitFor();
+  expect(await page.getByRole("heading", { name: "OPD Snapshot" }).count()).toBeGreaterThan(0);
+  await page.close();
+}, 30_000);

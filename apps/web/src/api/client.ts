@@ -2,9 +2,23 @@ import type { UserRole } from "@opd/shared";
 
 // Runtime config from server.ts (PUBLIC_API_URL). `process.env` doesn't exist in
 // the browser, so the client asks the server for its one public setting.
-const { apiUrl: API_BASE_URL } = (await (await fetch("/config.json")).json()) as {
-  apiUrl: string;
-};
+// Resolved lazily inside request() rather than at module load: a failed or slow
+// /config.json then surfaces as an ordinary failed request (the app's
+// "couldn't reach the server" state) instead of stopping React from mounting.
+let apiBaseUrl: Promise<string> | null = null;
+function getApiBaseUrl(): Promise<string> {
+  apiBaseUrl ??= fetch("/config.json")
+    .then((res) => {
+      if (!res.ok) throw new Error(`/config.json returned ${res.status}`);
+      return res.json() as Promise<{ apiUrl: string }>;
+    })
+    .then((config) => config.apiUrl)
+    .catch((err) => {
+      apiBaseUrl = null; // don't cache a failure; the next request retries
+      throw err;
+    });
+  return apiBaseUrl;
+}
 
 export class ApiError extends Error {
   status: number;
@@ -17,7 +31,7 @@ export class ApiError extends Error {
 }
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
-  const res = await fetch(`${API_BASE_URL}${path}`, {
+  const res = await fetch(`${await getApiBaseUrl()}${path}`, {
     ...init,
     credentials: "include",
     headers:
