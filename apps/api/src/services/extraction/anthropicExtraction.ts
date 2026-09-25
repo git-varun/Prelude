@@ -2,7 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import { CONTROLLED_MARKERS } from "@opd/shared";
-import type { DocumentType, ExtractedFactCandidate, ExtractionProvider, FieldType, OcrResult } from "@opd/shared";
+import type { DocumentType, ExtractedFactCandidate, ExtractionProvider, ExtractionResult, FieldType, OcrResult } from "@opd/shared";
 
 const MODEL = "claude-opus-5";
 
@@ -136,7 +136,7 @@ export class AnthropicExtractionProvider implements ExtractionProvider {
 
   constructor(private readonly apiKey: string) {}
 
-  async extractFacts(ocr: OcrResult, documentType: DocumentType): Promise<ExtractedFactCandidate[]> {
+  async extractFacts(ocr: OcrResult, documentType: DocumentType): Promise<ExtractionResult> {
     const client = new Anthropic({ apiKey: this.apiKey });
     const ocrText = pageAnnotatedText(ocr);
     const fieldTypes = FIELD_TYPES_BY_DOCUMENT_TYPE[documentType];
@@ -146,26 +146,22 @@ export class AnthropicExtractionProvider implements ExtractionProvider {
     );
 
     const candidates: ExtractedFactCandidate[] = [];
-    const failures: unknown[] = [];
+    const failedFieldTypes: FieldType[] = [];
+    const failureMessages: Partial<Record<FieldType, string>> = {};
     settled.forEach((outcome, index) => {
+      const fieldType = fieldTypes[index]!;
       if (outcome.status === "fulfilled") {
         candidates.push(...outcome.value);
       } else {
-        failures.push(outcome.reason);
-        console.error(`Extraction of field type '${fieldTypes[index]}' failed for ${documentType} document:`, outcome.reason);
+        failedFieldTypes.push(fieldType);
+        failureMessages[fieldType] = outcome.reason instanceof Error ? outcome.reason.message : String(outcome.reason);
+        console.error(`Extraction of field type '${fieldType}' failed for ${documentType} document:`, outcome.reason);
       }
     });
 
-    // If any call failed and nothing survived, returning [] would look identical
-    // to "nothing extractable" — throw so the caller records extraction_status='failed'.
-    if (failures.length > 0 && candidates.length === 0) {
-      throw new AggregateError(
-        failures,
-        `${failures.length} of ${fieldTypes.length} field-type extraction call(s) failed and no candidates were extracted.`,
-      );
-    }
-
-    return candidates;
+    // Failures are reported, never swallowed or thrown: the caller derives
+    // done/partial/failed from candidates + failedFieldTypes.
+    return { candidates, failedFieldTypes, failureMessages };
   }
 
   protected async extractForFieldType(

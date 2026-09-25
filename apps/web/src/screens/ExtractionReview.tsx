@@ -98,6 +98,13 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
       {error && <div className="error-banner">{error}</div>}
       {bulkError && <div className="error-banner">{bulkError}</div>}
 
+      {document.extraction_status === "partial" && (
+        <div className="error-banner">
+          Extraction was only partial — some field types failed and were not analyzed, so facts may be missing.
+          {document.extraction_error ? ` (${document.extraction_error})` : ""}
+        </div>
+      )}
+
       {document.ocr_status !== "done" ? (
         <div className="card">
           <p className="muted">

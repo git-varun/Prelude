@@ -1,6 +1,6 @@
 export { CONTROLLED_MARKERS, isControlledMarker } from "./markers";
 export type { OcrPage, OcrResult, OcrProvider } from "./providers/ocr";
-export type { ExtractedCoverageStatus, ExtractedFactCandidate, ExtractionProvider } from "./providers/extraction";
+export type { ExtractedCoverageStatus, ExtractedFactCandidate, ExtractionProvider, ExtractionResult } from "./providers/extraction";
 
 export type UserRole = "staff" | "oncologist";
 
@@ -14,7 +14,7 @@ export interface User {
 
 export type DocumentType = "prescription" | "blood" | "radiology";
 export type SourceOrigin = "own_hospital" | "outside_paper" | "outside_cd" | "whatsapp_pdf";
-export type OcrStatus = "pending" | "done" | "failed";
+export type OcrStatus = "pending" | "done" | "partial" | "failed";
 export type ExtractionStatus = "pending" | "done" | "failed";
 
 export type FieldType =

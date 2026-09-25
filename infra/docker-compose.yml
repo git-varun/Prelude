@@ -18,6 +18,7 @@ services:
       - ../apps/api/src/db/migrations/001_sessions.sql:/docker-entrypoint-initdb.d/02-sessions.sql:ro
       - ../apps/api/src/db/migrations/002_extraction_columns.sql:/docker-entrypoint-initdb.d/03-extraction-columns.sql:ro
       - ../apps/api/src/db/migrations/003_undated_facts_and_extraction_status.sql:/docker-entrypoint-initdb.d/04-undated-facts-and-extraction-status.sql:ro
+      - ../apps/api/src/db/migrations/004_extraction_partial_status.sql:/docker-entrypoint-initdb.d/05-extraction-partial-status.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U opd -d opd_dev"]
       interval: 2s

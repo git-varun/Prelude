@@ -160,17 +160,31 @@ export async function runExtraction(
   provider?: ExtractionProvider,
 ): Promise<void> {
   try {
-    const candidates = await (provider ?? getExtractionProvider()).extractFacts(ocr, documentType);
+    const { candidates, failedFieldTypes, failureMessages } = await (provider ?? getExtractionProvider()).extractFacts(
+      ocr,
+      documentType,
+    );
     const result = await persistExtractedFacts(document, candidates, actorId);
-    await sql`UPDATE documents SET extraction_status = 'done' WHERE id = ${document.id}`;
+    // Nothing surviving only counts as 'failed' if a call actually failed;
+    // an empty result with no failures is a legitimate "nothing extractable".
+    const status =
+      failedFieldTypes.length === 0 ? "done" : candidates.length > 0 ? "partial" : "failed";
+    const error =
+      status === "done"
+        ? null
+        : `Field type(s) failed: ${failedFieldTypes
+            .map((f) => (failureMessages?.[f] ? `${f} (${failureMessages[f]})` : f))
+            .join("; ")}`.slice(0, 1000);
+    await sql`UPDATE documents SET extraction_status = ${status}, extraction_error = ${error} WHERE id = ${document.id}`;
     console.log(
-      `Document ${document.id}: persisted ${result.createdFactIds.length} fact(s)` +
+      `Document ${document.id}: extraction ${status}, persisted ${result.createdFactIds.length} fact(s)` +
         (result.needsManualDate ? " (some need a manual as_of_date)." : "."),
     );
   } catch (err) {
     console.error(`Extraction failed for document ${document.id}:`, err);
     try {
-      await sql`UPDATE documents SET extraction_status = 'failed' WHERE id = ${document.id}`;
+      const message = (err instanceof Error ? err.message : String(err)).slice(0, 1000);
+      await sql`UPDATE documents SET extraction_status = 'failed', extraction_error = ${message} WHERE id = ${document.id}`;
     } catch (statusErr) {
       console.error(`Could not record extraction_status='failed' for document ${document.id}:`, statusErr);
     }

@@ -36,26 +36,32 @@ class FakeProvider extends AnthropicExtractionProvider {
 
 const ocr = { fullText: "x", pages: [], providerName: "test" };
 
-test("keeps the successful field types' candidates when another field type's call fails", async () => {
+test("keeps the successful field types' candidates and reports the failed field type", async () => {
   const provider = new FakeProvider({ marker_value: "ok", reference_range: "fail" });
-  const candidates = await provider.extractFacts(ocr, "blood");
-  expect(candidates.map((c) => c.fieldType)).toEqual(["marker_value"]);
+  const result = await provider.extractFacts(ocr, "blood");
+  expect(result.candidates.map((c) => c.fieldType)).toEqual(["marker_value"]);
+  expect(result.failedFieldTypes).toEqual(["reference_range"]);
+  expect(result.failureMessages?.reference_range).toContain("reference_range call failed");
 });
 
-test("throws when every field type's call fails, so a total outage is not mistaken for an empty document", async () => {
+test("reports every field type as failed, without throwing, when all calls fail", async () => {
   const provider = new FakeProvider({ marker_value: "fail", reference_range: "fail" });
-  await expect(provider.extractFacts(ocr, "blood")).rejects.toThrow();
+  const result = await provider.extractFacts(ocr, "blood");
+  expect(result.candidates).toEqual([]);
+  expect(result.failedFieldTypes).toEqual(["marker_value", "reference_range"]);
 });
 
-test("throws when one field type fails and the other returns nothing, so a partial failure is not shown as 'no facts'", async () => {
+test("one field type failing and the other returning nothing is reported as a failure, not 'no facts'", async () => {
   const provider = new FakeProvider({ marker_value: "fail", reference_range: "empty" });
-  await expect(provider.extractFacts(ocr, "blood")).rejects.toThrow();
+  const result = await provider.extractFacts(ocr, "blood");
+  expect(result.candidates).toEqual([]);
+  expect(result.failedFieldTypes).toEqual(["marker_value"]);
 });
 
-test("returns surviving candidates when one field type fails and the other returns candidates", async () => {
-  const provider = new FakeProvider({ radiology_impression: "ok", disease_status_trend: "fail" });
-  const candidates = await provider.extractFacts(ocr, "radiology");
-  expect(candidates.map((c) => c.fieldType)).toEqual(["radiology_impression"]);
+test("reports no failures when every call succeeds, including with nothing extracted", async () => {
+  const provider = new FakeProvider({ radiology_impression: "empty", disease_status_trend: "empty" });
+  const result = await provider.extractFacts(ocr, "radiology");
+  expect(result).toMatchObject({ candidates: [], failedFieldTypes: [] });
 });
 
 test("normalizeAsOfDate keeps valid ISO dates (trimmed) and nulls everything else", () => {

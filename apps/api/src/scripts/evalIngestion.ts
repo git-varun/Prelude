@@ -32,7 +32,7 @@ interface DocResult {
   documentType: string;
   provider: string;
   ocrStatus: "done" | "failed";
-  extractionStatus: "pending" | "done" | "failed";
+  extractionStatus: "pending" | "done" | "partial" | "failed";
   factCount: number;
   extractionUncertainCount: number;
   needsManualDateCount: number;
@@ -96,9 +96,12 @@ async function run(): Promise<void> {
       }
 
       try {
-        const candidates = await extractionProvider.extractFacts(ocrResult, documentType);
+        const { candidates, failedFieldTypes } = await extractionProvider.extractFacts(ocrResult, documentType);
         const persisted = await persistExtractedFacts(document, candidates, staff.id);
-        await sql`UPDATE documents SET extraction_status = 'done' WHERE id = ${document.id}`;
+        const extractionStatus =
+          failedFieldTypes.length === 0 ? "done" : candidates.length > 0 ? "partial" : "failed";
+        const extractionError = extractionStatus === "done" ? null : `Field type(s) failed: ${failedFieldTypes.join(", ")}`;
+        await sql`UPDATE documents SET extraction_status = ${extractionStatus}, extraction_error = ${extractionError} WHERE id = ${document.id}`;
 
         const facts = await sql`SELECT coverage_status, needs_manual_date FROM facts WHERE document_id = ${document.id}`;
         results.push({
@@ -106,7 +109,7 @@ async function run(): Promise<void> {
           documentType,
           provider: ocrProvider.name,
           ocrStatus: "done",
-          extractionStatus: "done",
+          extractionStatus,
           factCount: persisted.createdFactIds.length,
           extractionUncertainCount: facts.filter((f: any) => f.coverage_status === "extraction_uncertain").length,
           needsManualDateCount: facts.filter((f: any) => f.needs_manual_date).length,
@@ -162,7 +165,7 @@ async function run(): Promise<void> {
   console.log(
     `\nTotals: ${results.length} documents, ` +
       `${sum((r) => (r.ocrStatus === "done" ? 1 : 0))} ocr done / ${sum((r) => (r.ocrStatus === "failed" ? 1 : 0))} ocr failed, ` +
-      `${sum((r) => (r.extractionStatus === "done" ? 1 : 0))} extraction done / ${sum((r) => (r.extractionStatus === "failed" ? 1 : 0))} extraction failed, ` +
+      `${sum((r) => (r.extractionStatus === "done" ? 1 : 0))} extraction done / ${sum((r) => (r.extractionStatus === "partial" ? 1 : 0))} partial / ${sum((r) => (r.extractionStatus === "failed" ? 1 : 0))} extraction failed, ` +
       `${sum((r) => r.factCount)} facts persisted, ${sum((r) => r.extractionUncertainCount)} extraction_uncertain, ` +
       `${sum((r) => r.needsManualDateCount)} facts needing a manual date.`,
   );

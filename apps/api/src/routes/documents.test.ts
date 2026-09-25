@@ -1,6 +1,6 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { uploadDocument, runExtraction } from "./documents";
-import type { ExtractedFactCandidate, ExtractionProvider } from "@opd/shared";
+import type { ExtractedFactCandidate, ExtractionProvider, FieldType } from "@opd/shared";
 import { createOrOpenVisit } from "./visits";
 import { sql } from "../db/client";
 import { createTestUser, deleteTestUsers, createTestPatient, deleteTestPatients, asAuthedUser, type TestUser } from "../test-helpers";
@@ -148,8 +148,17 @@ function datedCandidate(overrides: Partial<ExtractedFactCandidate> = {}): Extrac
   };
 }
 
-function providerReturning(candidates: ExtractedFactCandidate[]): ExtractionProvider {
-  return { name: "fake", extractFacts: async () => candidates };
+function providerReturning(
+  candidates: ExtractedFactCandidate[],
+  failedFieldTypes: FieldType[] = [],
+  failureMessages: Partial<Record<FieldType, string>> = {},
+): ExtractionProvider {
+  return { name: "fake", extractFacts: async () => ({ candidates, failedFieldTypes, failureMessages }) };
+}
+
+async function extractionErrorOf(documentId: string): Promise<string | null> {
+  const [row] = await sql`SELECT extraction_error FROM documents WHERE id = ${documentId}`;
+  return row.extraction_error;
 }
 
 async function extractionStatusOf(documentId: string): Promise<string> {
@@ -169,6 +178,58 @@ test("runExtraction marks the document 'done' when the pass legitimately finds n
   const doc = await newDocumentRow();
   await runExtraction(doc, "blood", ocrResult, staff.id, providerReturning([]));
   expect(await extractionStatusOf(doc.id)).toBe("done");
+});
+
+test("runExtraction marks the document 'partial' (not 'done') when a field type failed but others survived", async () => {
+  const doc = await newDocumentRow();
+  await runExtraction(
+    doc,
+    "blood",
+    ocrResult,
+    staff.id,
+    providerReturning([datedCandidate()], ["reference_range"], { reference_range: "LLM timeout" }),
+  );
+  expect(await extractionStatusOf(doc.id)).toBe("partial");
+  const error = await extractionErrorOf(doc.id);
+  expect(error).toContain("reference_range");
+  expect(error).toContain("LLM timeout");
+  const facts = await sql`SELECT id FROM facts WHERE document_id = ${doc.id}`;
+  expect(facts).toHaveLength(1);
+});
+
+test("runExtraction marks the document 'failed' with an error when every field type failed and nothing survived", async () => {
+  const doc = await newDocumentRow();
+  await runExtraction(
+    doc,
+    "blood",
+    ocrResult,
+    staff.id,
+    providerReturning([], ["marker_value", "reference_range"], { marker_value: "LLM API down" }),
+  );
+  expect(await extractionStatusOf(doc.id)).toBe("failed");
+  const error = await extractionErrorOf(doc.id);
+  expect(error).toContain("marker_value");
+  expect(error).toContain("reference_range");
+  expect(error).toContain("LLM API down");
+});
+
+test("runExtraction leaves extraction_error null on a clean 'done'", async () => {
+  const doc = await newDocumentRow();
+  await runExtraction(doc, "blood", ocrResult, staff.id, providerReturning([datedCandidate()]));
+  expect(await extractionErrorOf(doc.id)).toBeNull();
+});
+
+test("runExtraction records the thrown error message when the provider throws", async () => {
+  const doc = await newDocumentRow();
+  const failing: ExtractionProvider = {
+    name: "fake",
+    extractFacts: async () => {
+      throw new Error("provider exploded");
+    },
+  };
+  await runExtraction(doc, "blood", ocrResult, staff.id, failing);
+  expect(await extractionStatusOf(doc.id)).toBe("failed");
+  expect(await extractionErrorOf(doc.id)).toContain("provider exploded");
 });
 
 test("runExtraction marks the document 'failed' when the extraction provider throws", async () => {

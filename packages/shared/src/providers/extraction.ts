@@ -24,7 +24,18 @@ export interface ExtractedFactCandidate {
   confidence: number;
 }
 
+export interface ExtractionResult {
+  // Candidates from the field-type calls that succeeded.
+  candidates: ExtractedFactCandidate[];
+  // Field types whose call failed. Empty candidates with no failed field
+  // types means "nothing extractable"; empty candidates WITH failures means
+  // the pass didn't actually analyze the document.
+  failedFieldTypes: FieldType[];
+  // Error message per failed field type, for the document's extraction_error.
+  failureMessages?: Partial<Record<FieldType, string>>;
+}
+
 export interface ExtractionProvider {
   readonly name: string;
-  extractFacts(ocr: OcrResult, documentType: DocumentType): Promise<ExtractedFactCandidate[]>;
+  extractFacts(ocr: OcrResult, documentType: DocumentType): Promise<ExtractionResult>;
 }

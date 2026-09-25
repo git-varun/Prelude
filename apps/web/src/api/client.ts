@@ -82,7 +82,8 @@ export interface DocumentRecord {
   ocr_status: string;
   ocr_text_ref: string | null;
   needs_manual_date: boolean;
-  extraction_status: "pending" | "done" | "failed";
+  extraction_status: "pending" | "done" | "partial" | "failed";
+  extraction_error: string | null;
 }
 
 export interface ReviewFact {
