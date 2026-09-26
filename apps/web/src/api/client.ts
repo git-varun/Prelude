@@ -124,6 +124,7 @@ export interface ReviewFact {
   needs_manual_date: boolean;
   coverage_status: string;
   verification_state: string;
+  has_blocking_conflict: boolean;
   source_page: number | null;
   source_location: string | null;
   source_snippet: string | null;
@@ -179,4 +180,8 @@ export const api = {
 
   patchFact: (factId: string, patch: { value?: string; tracked_marker_id?: string; as_of_date?: string }) =>
     request<ReviewFact>(`/facts/${factId}`, { method: "PATCH", body: JSON.stringify(patch) }),
+
+  signOffFact: (factId: string) => request<ReviewFact>(`/facts/${factId}/sign-off`, { method: "POST" }),
+
+  reopenFact: (factId: string) => request<ReviewFact>(`/facts/${factId}/reopen`, { method: "POST" }),
 };

@@ -166,3 +166,130 @@ test("a /config.json that never responds still ends in the connectivity error (n
   expect(await page.getByRole("heading", { name: "OPD Snapshot" }).count()).toBeGreaterThan(0);
   await page.close();
 }, 30_000);
+
+// Sign-off / reopen buttons on the review FactCard. The stub keeps mutable fact
+// state so a click's POST flips the card the way the real API would.
+type StubFact = { verification_state: string; has_blocking_conflict?: boolean; needs_manual_date?: boolean };
+
+async function openReviewAs(role: "staff" | "oncologist", stub: StubFact) {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000); // fail fast: a missing button must not outlive the test timeout
+  const errors: string[] = [];
+  page.on("pageerror", (err) => errors.push(`pageerror: ${err.message}`));
+  page.on("console", (msg) => {
+    if (msg.type() === "error") errors.push(`console: ${msg.text()}`);
+  });
+  const posts: string[] = [];
+  const state = { ...stub };
+  const cors = {
+    "Access-Control-Allow-Origin": BASE,
+    "Access-Control-Allow-Credentials": "true",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
+  };
+  const fact = () => ({
+    id: "f1", patient_id: "p1", visit_id: "v1", document_id: "doc1", tracked_marker_id: "m1", tracked_marker_name: "CEA",
+    raw_marker_label: null, field_type: "marker_value", value: "4.2", unit: "ng/mL", reference_range: "0-5",
+    as_of_date: state.needs_manual_date ? null : "2026-02-01", needs_manual_date: state.needs_manual_date ?? false,
+    coverage_status: "value_found", verification_state: state.verification_state,
+    has_blocking_conflict: state.has_blocking_conflict ?? false,
+    source_page: 1, source_location: null, source_snippet: "CEA 4.2 ng/mL",
+  });
+  await page.route(`${API}/**`, (route) => {
+    const req = route.request();
+    const path = new URL(req.url()).pathname;
+    if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+    const json = (body: unknown) =>
+      route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify(body) });
+    if (path === "/auth/me") return json({ id: "u1", name: "Test", email: "t@opd.local", role });
+    if (path === "/documents/doc1/facts") {
+      return json({
+        document: {
+          id: "doc1", patient_id: "p1", visit_id: "v1", file_ref: "local://x.pdf", document_type: "blood",
+          source_origin: "own_hospital", uploaded_by: "u1", uploaded_at: "2026-01-01T00:00:00Z",
+          ocr_status: "done", ocr_text_ref: null, needs_manual_date: false, extraction_status: "done", extraction_error: null,
+        },
+        // Undated facts only render as cards when a sibling is dated (an all-undated document
+        // shows the bulk-date form instead), so an undated stub gets a dated PSA sibling.
+        facts: state.needs_manual_date ? [fact(), { ...fact(), id: "f2", tracked_marker_name: "PSA", needs_manual_date: false, as_of_date: "2026-02-01", verification_state: "unverified", has_blocking_conflict: false }] : [fact()],
+        tracked_markers: [],
+      });
+    }
+    if (req.method() === "POST" && path === "/facts/f1/sign-off") {
+      posts.push(path);
+      state.verification_state = "oncologist_signed_off";
+      return json(fact());
+    }
+    if (req.method() === "POST" && path === "/facts/f1/reopen") {
+      posts.push(path);
+      state.verification_state = "reopened_by_oncologist";
+      return json(fact());
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", headers: cors, body: "{}" });
+  });
+  await page.goto(`${BASE}/#/documents/doc1/review`);
+  await page.getByRole("heading", { name: "CEA" }).waitFor();
+  const card = page.locator(".card", { has: page.getByRole("heading", { name: "CEA" }) });
+  const signOff = card.getByRole("button", { name: "Sign off", exact: true });
+  const reopen = card.getByRole("button", { name: "Reopen", exact: true });
+  return { page, errors, posts, signOff, reopen };
+}
+
+for (const verification_state of ["unverified", "staff_corrected", "reopened_by_oncologist"]) {
+  test(`oncologist sees an active Sign off button for a ${verification_state} fact; clicking POSTs and flips it to Reopen`, async () => {
+    const { page, errors, posts, signOff, reopen } = await openReviewAs("oncologist", { verification_state });
+    expect(await signOff.isEnabled()).toBe(true);
+    expect(await reopen.count()).toBe(0);
+    await signOff.click();
+    await reopen.waitFor();
+    expect(posts).toEqual(["/facts/f1/sign-off"]);
+    expect(await signOff.count()).toBe(0);
+    expect(errors).toEqual([]);
+    await page.close();
+  }, 30_000);
+}
+
+test("oncologist sees a disabled Sign off with 'Blocked by an unresolved conflict' when has_blocking_conflict", async () => {
+  const { page, posts, signOff } = await openReviewAs("oncologist", { verification_state: "unverified", has_blocking_conflict: true });
+  expect(await signOff.isDisabled()).toBe(true);
+  await page.getByText("Blocked by an unresolved conflict").waitFor();
+  expect(posts).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("oncologist sees a disabled Sign off with 'Needs a date before sign-off' when the fact is undated", async () => {
+  const { page, signOff } = await openReviewAs("oncologist", { verification_state: "staff_corrected", needs_manual_date: true });
+  expect(await signOff.isDisabled()).toBe(true);
+  await page.getByText("Needs a date before sign-off").waitFor();
+  expect(await page.getByText("Blocked by an unresolved conflict").count()).toBe(0);
+  await page.close();
+}, 30_000);
+
+test("when both block sign-off, the conflict reason is the one shown", async () => {
+  const { page, signOff } = await openReviewAs("oncologist", { verification_state: "unverified", has_blocking_conflict: true, needs_manual_date: true });
+  expect(await signOff.isDisabled()).toBe(true);
+  await page.getByText("Blocked by an unresolved conflict").waitFor();
+  await page.close();
+}, 30_000);
+
+test("oncologist sees Reopen (not Sign off) for an oncologist_signed_off fact; clicking POSTs and flips back to Sign off", async () => {
+  const { page, errors, posts, signOff, reopen } = await openReviewAs("oncologist", { verification_state: "oncologist_signed_off" });
+  expect(await reopen.isEnabled()).toBe(true);
+  expect(await signOff.count()).toBe(0);
+  await reopen.click();
+  await signOff.waitFor();
+  expect(posts).toEqual(["/facts/f1/reopen"]);
+  expect(await reopen.count()).toBe(0);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("staff sees neither Sign off nor Reopen, in any verification state, and no blocked-reason text", async () => {
+  for (const verification_state of ["unverified", "oncologist_signed_off"]) {
+    const { page, signOff, reopen } = await openReviewAs("staff", { verification_state, has_blocking_conflict: true });
+    expect(await signOff.count()).toBe(0);
+    expect(await reopen.count()).toBe(0);
+    expect(await page.getByText("Blocked by an unresolved conflict").count()).toBe(0);
+    await page.close();
+  }
+}, 30_000);

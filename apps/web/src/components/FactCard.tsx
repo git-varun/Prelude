@@ -1,4 +1,5 @@
 import { useState, useEffect } from "react";
+import { RoleGate } from "../auth/AuthContext";
 import { api, ApiError, type ReviewFact, type TrackedMarker } from "../api/client";
 
 const COVERAGE_LABELS: Record<string, string> = {
@@ -51,6 +52,11 @@ export function FactCard({ fact, trackedMarkers, onChanged }: Props) {
 
   const heading = fact.tracked_marker_name ?? fact.raw_marker_label ?? FIELD_LABELS[fact.field_type] ?? fact.field_type;
   const needsReview = fact.coverage_status === "extraction_uncertain";
+  const signOffBlockedReason = fact.has_blocking_conflict
+    ? "Blocked by an unresolved conflict"
+    : fact.needs_manual_date
+      ? "Needs a date before sign-off"
+      : null;
 
   return (
     <div className="card">
@@ -186,6 +192,28 @@ export function FactCard({ fact, trackedMarkers, onChanged }: Props) {
           </div>
         </form>
       )}
+
+      <RoleGate roles={["oncologist"]}>
+        {fact.verification_state === "oncologist_signed_off" ? (
+          <div style={{ marginTop: 16 }}>
+            <button className="btn btn--secondary" type="button" disabled={busy !== null} onClick={() => void run("reopen", () => api.reopenFact(fact.id))}>
+              {busy === "reopen" ? "Reopening..." : "Reopen"}
+            </button>
+          </div>
+        ) : (
+          <div style={{ marginTop: 16 }}>
+            <button
+              className="btn"
+              type="button"
+              disabled={busy !== null || signOffBlockedReason !== null}
+              onClick={() => void run("signoff", () => api.signOffFact(fact.id))}
+            >
+              {busy === "signoff" ? "Signing off..." : "Sign off"}
+            </button>
+            {signOffBlockedReason && <p className="field-hint">{signOffBlockedReason}</p>}
+          </div>
+        )}
+      </RoleGate>
     </div>
   );
 }
