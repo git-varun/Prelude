@@ -498,3 +498,40 @@ test("a reopened fact corrected via PATCH lands in staff_corrected and keeps the
   expect(row.signed_off_by).toBe(oncologist.id);
   expect(row.reopened_by).toBe(oncologist.id);
 });
+
+// --- has_blocking_conflict on GET /documents/:id/facts ---
+
+async function blockingFlags(docId: string): Promise<Record<string, boolean>> {
+  const body = (await (await getDocumentFacts(getReq(docId))).json()) as any;
+  return Object.fromEntries(body.facts.map((f: any) => [f.id, f.has_blocking_conflict]));
+}
+
+test("has_blocking_conflict is false for a fact with no conflicts", async () => {
+  const docId = await newDocument();
+  const id = await newFact(docId);
+  expect(await blockingFlags(docId)).toEqual({ [id]: false });
+});
+
+test("has_blocking_conflict flips true for both facts of an open or annotated conflict, and false once resolved", async () => {
+  const docId = await newDocument();
+  const a = await newFact(docId);
+  const b = await newFact(docId);
+  const c = await newFact(docId); // uninvolved
+  const [row] = await sql`INSERT INTO conflicts (fact_id_a, fact_id_b, status) VALUES (${a}, ${b}, 'open') RETURNING id`;
+  try {
+    for (const status of ["open", "annotated"]) {
+      await sql`UPDATE conflicts SET status = ${status} WHERE id = ${row.id}`;
+      expect(await blockingFlags(docId)).toEqual({ [a]: true, [b]: true, [c]: false });
+    }
+    await sql`UPDATE conflicts SET status = 'resolved' WHERE id = ${row.id}`;
+    expect(await blockingFlags(docId)).toEqual({ [a]: false, [b]: false, [c]: false });
+  } finally {
+    await sql`DELETE FROM conflicts WHERE id = ${row.id}`;
+  }
+});
+
+test("sign-off and reopen responses carry has_blocking_conflict too", async () => {
+  const id = await newFact(await newDocument());
+  const res = await signOffFact(signOffReq(id), asAuthedUser(oncologist));
+  expect(((await res.json()) as any).has_blocking_conflict).toBe(false);
+});
