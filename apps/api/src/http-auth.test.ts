@@ -90,3 +90,19 @@ test("POST /users (oncologist-only) without a session -> 401, with a staff sessi
   expect((await fetch(`${BASE}/users`, init())).status).toBe(401);
   expect((await fetch(`${BASE}/users`, init({ cookie: staff.cookie }))).status).toBe(403);
 });
+
+test("POST /facts/:id/sign-off: no session -> 401, staff -> 403 and the fact is untouched, oncologist passes the role check", async () => {
+  const [visit] = await sql`SELECT id FROM visits WHERE patient_id = ${patientId} LIMIT 1`;
+  const [fact] = await sql`
+    INSERT INTO facts (patient_id, visit_id, document_id, field_type, value, as_of_date, coverage_status, verification_state)
+    VALUES (${patientId}, ${visit.id}, ${documentId}, 'marker_value', '4.2', '2026-02-01', 'value_found', 'unverified')
+    RETURNING id`;
+  const post = (headers: Record<string, string> = {}) => fetch(`${BASE}/facts/${fact.id}/sign-off`, { method: "POST", headers });
+
+  expect((await post()).status).toBe(401);
+  expect((await post({ cookie: staff.cookie })).status).toBe(403);
+  const [after] = await sql`SELECT verification_state FROM facts WHERE id = ${fact.id}`;
+  expect(after.verification_state).toBe("unverified");
+
+  expect((await post({ cookie: oncologist.cookie })).status).toBe(200);
+});

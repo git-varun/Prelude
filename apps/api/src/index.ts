@@ -3,7 +3,7 @@ import { createUser } from "./routes/users";
 import { createPatient, listPatients, getPatient, addMarker } from "./routes/patients";
 import { createOrOpenVisit } from "./routes/visits";
 import { uploadDocument } from "./routes/documents";
-import { getDocumentFacts, patchFact } from "./routes/facts";
+import { getDocumentFacts, patchFact, signOffFact } from "./routes/facts";
 import { requireRole } from "./middleware/roles";
 import { cors } from "./middleware/cors";
 
@@ -41,6 +41,9 @@ const server = Bun.serve({
     }),
     "/facts/:id": cors({
       PATCH: requireRole(["staff", "oncologist"], patchFact),
+    }),
+    "/facts/:id/sign-off": cors({
+      POST: requireRole(["oncologist"], signOffFact),
     }),
   },
   development: {

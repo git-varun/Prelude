@@ -1,6 +1,6 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { sql } from "../db/client";
-import { getDocumentFacts, patchFact } from "./facts";
+import { getDocumentFacts, patchFact, signOffFact } from "./facts";
 import { createTestUser, deleteTestUsers, createTestPatient, deleteTestPatients, asAuthedUser, type TestUser } from "../test-helpers";
 
 let staff: TestUser;
@@ -337,4 +337,82 @@ test("PATCH with a resolution on an oncologist_signed_off fact is 409 even for a
   const res = await patchFact(patchReq(id, { resolution: "no_usable_value" }), asAuthedUser(oncologist));
   expect(res.status).toBe(409);
   expect((await factRow(id)).coverage_status).toBe("extraction_uncertain");
+});
+
+// --- POST /facts/:id/sign-off ---
+
+function signOffReq(id: string) {
+  const req = new Request(`http://localhost/facts/${id}/sign-off`, { method: "POST" }) as Request & { params: { id: string } };
+  req.params = { id };
+  return req;
+}
+
+for (const state of ["unverified", "staff_corrected", "reopened_by_oncologist"]) {
+  test(`sign-off from ${state} → oncologist_signed_off with signed_off_by/at set, and audited`, async () => {
+    const id = await newFact(await newDocument(), { verification: state });
+    const res = await signOffFact(signOffReq(id), asAuthedUser(oncologist));
+    expect(res.status).toBe(200);
+    expect(((await res.json()) as any).verification_state).toBe("oncologist_signed_off");
+    const row = await factRow(id);
+    expect(row.verification_state).toBe("oncologist_signed_off");
+    expect(row.signed_off_by).toBe(oncologist.id);
+    expect(row.signed_off_at).toBeInstanceOf(Date);
+    expect(Math.abs(Date.now() - row.signed_off_at.getTime())).toBeLessThan(60_000);
+
+    const rows = await sql`SELECT * FROM audit_log WHERE entity_type = 'fact' AND entity_id = ${id} AND action = 'sign_off'`;
+    expect(rows).toHaveLength(1);
+    expect(rows[0].actor_id).toBe(oncologist.id);
+    expect(JSON.parse(rows[0].before_value).verification_state).toBe(state);
+    expect(JSON.parse(rows[0].after_value).verification_state).toBe("oncologist_signed_off");
+    expect(JSON.parse(rows[0].after_value).signed_off_by).toBe(oncologist.id);
+  });
+}
+
+async function signOffAuditCount(id: string): Promise<number> {
+  return (await sql`SELECT id FROM audit_log WHERE entity_type = 'fact' AND entity_id = ${id} AND action = 'sign_off'`).length;
+}
+
+test("sign-off of an already oncologist_signed_off fact is 409, changes nothing, writes no audit row", async () => {
+  const id = await newFact(await newDocument(), { verification: "oncologist_signed_off" });
+  const before = await factRow(id);
+  const res = await signOffFact(signOffReq(id), asAuthedUser(oncologist));
+  expect(res.status).toBe(409);
+  const after = await factRow(id);
+  expect(after.signed_off_at).toEqual(before.signed_off_at);
+  expect(await signOffAuditCount(id)).toBe(0);
+});
+
+test("sign-off of an undated fact is a clean 409 (not a raw DB constraint error)", async () => {
+  const id = await newFact(await newDocument(), { asOf: null, needsDate: true });
+  const res = await signOffFact(signOffReq(id), asAuthedUser(oncologist));
+  expect(res.status).toBe(409);
+  expect((await factRow(id)).verification_state).toBe("unverified");
+  expect(await signOffAuditCount(id)).toBe(0);
+});
+
+test("sign-off is blocked with 409 by an open or annotated conflict on either side, allowed once resolved", async () => {
+  const docId = await newDocument();
+  const a = await newFact(docId);
+  const b = await newFact(docId);
+  const [c] = await sql`INSERT INTO conflicts (fact_id_a, fact_id_b, status) VALUES (${a}, ${b}, 'open') RETURNING id`;
+  try {
+    for (const status of ["open", "annotated"]) {
+      await sql`UPDATE conflicts SET status = ${status} WHERE id = ${c.id}`;
+      // fact_id_a side and fact_id_b side both block
+      for (const id of [a, b]) {
+        expect((await signOffFact(signOffReq(id), asAuthedUser(oncologist))).status).toBe(409);
+        expect((await factRow(id)).verification_state).toBe("unverified");
+        expect(await signOffAuditCount(id)).toBe(0);
+      }
+    }
+    await sql`UPDATE conflicts SET status = 'resolved' WHERE id = ${c.id}`;
+    expect((await signOffFact(signOffReq(a), asAuthedUser(oncologist))).status).toBe(200);
+  } finally {
+    await sql`DELETE FROM conflicts WHERE id = ${c.id}`;
+  }
+});
+
+test("sign-off 404s for an unknown or malformed fact id", async () => {
+  expect((await signOffFact(signOffReq("00000000-0000-0000-0000-000000000000"), asAuthedUser(oncologist))).status).toBe(404);
+  expect((await signOffFact(signOffReq("nope"), asAuthedUser(oncologist))).status).toBe(404);
 });

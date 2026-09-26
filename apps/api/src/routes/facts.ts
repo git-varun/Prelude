@@ -172,3 +172,43 @@ export async function patchFact(req: Request & { params: { id: string } }, user:
   const [fact] = await queryFacts(sql, { factId });
   return Response.json(fact);
 }
+
+export async function signOffFact(req: Request & { params: { id: string } }, user: AuthedUser): Promise<Response> {
+  const factId = req.params.id;
+  if (!isUuid(factId)) return jsonError(404, "not_found", "Fact not found.");
+
+  const outcome = await sql.begin(async (tx) => {
+    const [before] = await tx`SELECT * FROM facts WHERE id = ${factId} FOR UPDATE`;
+    if (!before) return "not_found" as const;
+    if (before.verification_state === "oncologist_signed_off") return "already_signed_off" as const;
+
+    // Application-level checks so a violation is a clean 409; the DB constraints
+    // (no_signoff_while_undated, signed_off_requires_oncologist) remain the backstop.
+    if (before.as_of_date === null) return "undated" as const;
+    const [conflict] = await tx`
+      SELECT id FROM conflicts
+      WHERE (fact_id_a = ${factId} OR fact_id_b = ${factId}) AND status IN ('open', 'annotated')
+      LIMIT 1
+    `;
+    if (conflict) return "conflict" as const;
+
+    const [updated] = await tx`
+      UPDATE facts SET verification_state = 'oncologist_signed_off', signed_off_by = ${user.id}, signed_off_at = now()
+      WHERE id = ${factId}
+      RETURNING *
+    `;
+    await tx`
+      INSERT INTO audit_log (actor_id, action, entity_type, entity_id, before_value, after_value)
+      VALUES (${user.id}, 'sign_off', 'fact', ${factId}, ${JSON.stringify(before)}::jsonb, ${JSON.stringify(updated)}::jsonb)
+    `;
+    return "ok" as const;
+  });
+
+  if (outcome === "not_found") return jsonError(404, "not_found", "Fact not found.");
+  if (outcome === "already_signed_off") return jsonError(409, "conflict", "This fact is already oncologist signed-off.");
+  if (outcome === "undated") return jsonError(409, "conflict", "A fact without an as-of date cannot be signed off; supply the date first.");
+  if (outcome === "conflict") return jsonError(409, "conflict", "Sign-off is blocked by an unresolved conflict involving this fact.");
+
+  const [fact] = await queryFacts(sql, { factId });
+  return Response.json(fact);
+}
