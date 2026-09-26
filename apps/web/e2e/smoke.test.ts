@@ -2,8 +2,8 @@ import { afterAll, beforeAll, expect, test } from "bun:test";
 import { chromium, type Browser } from "playwright";
 import { resolve } from "node:path";
 
-// Boots the real web server (from the repo root, so bunfig.toml's
-// PUBLIC_* env inlining applies) and drives it in a real browser. This is the
+// Boots the real web server (PUBLIC_API_URL is served to the browser at
+// /config.json, not inlined at build time) and drives it in a real browser. This is the
 // check that tsc/unit tests can't do: it catches bundle-time/browser-only
 // failures such as `process is not defined` (backlog E1).
 const REPO_ROOT = resolve(import.meta.dir, "../../..");
