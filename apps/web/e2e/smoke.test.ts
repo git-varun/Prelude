@@ -359,14 +359,18 @@ test("per-fact undated fact: sign-off is disabled with a reason until its date i
   // Before: dated fact active, undated fact disabled with the reason.
   expect(await cea.getByRole("button", { name: "Sign off", exact: true }).isEnabled()).toBe(true);
   expect(await cea.getByText("Needs a date before sign-off").count()).toBe(0);
+  // Primary styling marks the actionable button only; the disabled one keeps the plain style.
+  expect(await cea.getByRole("button", { name: "Sign off", exact: true }).getAttribute("class")).toContain("btn--primary");
   const psaSignOff = psa.getByRole("button", { name: "Sign off", exact: true });
   expect(await psaSignOff.isDisabled()).toBe(true);
+  expect(await psaSignOff.getAttribute("class")).not.toContain("btn--primary");
   await psa.getByText("Needs a date before sign-off").waitFor();
 
   // Save the date via the per-fact form; the same page should update in place.
   await psa.getByLabel("As-of date (not found in the document)").fill("2026-03-05");
   await psa.getByRole("button", { name: "Save date" }).click();
   await psa.locator("button:enabled", { hasText: /^Sign off$/ }).waitFor();
+  expect(await psaSignOff.getAttribute("class")).toContain("btn--primary");
   expect(await psa.getByText("Needs a date before sign-off").count()).toBe(0);
   expect(patches).toEqual([{ as_of_date: "2026-03-05" }]);
   expect(navigations).toBe(1); // no reload

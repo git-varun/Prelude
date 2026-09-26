@@ -203,7 +203,7 @@ export function FactCard({ fact, trackedMarkers, onChanged }: Props) {
         ) : (
           <div style={{ marginTop: 16 }}>
             <button
-              className="btn"
+              className={signOffBlockedReason === null ? "btn btn--primary" : "btn"}
               type="button"
               disabled={busy !== null || signOffBlockedReason !== null}
               onClick={() => void run("signoff", () => api.signOffFact(fact.id))}
