@@ -293,3 +293,83 @@ test("staff sees neither Sign off nor Reopen, in any verification state, and no 
     await page.close();
   }
 }, 30_000);
+
+test("per-fact undated fact: sign-off is disabled with a reason until its date is saved, then goes active without a reload", async () => {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  const errors: string[] = [];
+  page.on("pageerror", (err) => errors.push(`pageerror: ${err.message}`));
+  page.on("console", (msg) => {
+    if (msg.type() === "error") errors.push(`console: ${msg.text()}`);
+  });
+  let navigations = 0;
+  page.on("framenavigated", (f) => f === page.mainFrame() && navigations++);
+
+  const cors = {
+    "Access-Control-Allow-Origin": BASE,
+    "Access-Control-Allow-Credentials": "true",
+    "Access-Control-Allow-Headers": "Content-Type",
+    "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
+  };
+  // f1 is dated; f2 is undated until the PATCH below, as the real per-fact date flow produces.
+  const base = {
+    patient_id: "p1", visit_id: "v1", document_id: "doc1", tracked_marker_id: "m1", raw_marker_label: null,
+    field_type: "marker_value", value: "4.2", unit: "ng/mL", reference_range: "0-5", coverage_status: "value_found",
+    has_blocking_conflict: false, source_page: 1, source_location: null, source_snippet: "x",
+  };
+  const f1 = { ...base, id: "f1", tracked_marker_name: "CEA", as_of_date: "2026-02-01", needs_manual_date: false, verification_state: "unverified" };
+  const f2 = { ...base, id: "f2", tracked_marker_name: "PSA", as_of_date: null as string | null, needs_manual_date: true, verification_state: "unverified" };
+  const patches: unknown[] = [];
+
+  await page.route(`${API}/**`, (route) => {
+    const req = route.request();
+    const path = new URL(req.url()).pathname;
+    if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+    const json = (body: unknown) =>
+      route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify(body) });
+    if (path === "/auth/me") return json({ id: "u1", name: "Onc", email: "o@opd.local", role: "oncologist" });
+    if (path === "/documents/doc1/facts") {
+      return json({
+        document: {
+          id: "doc1", patient_id: "p1", visit_id: "v1", file_ref: "local://x.pdf", document_type: "blood",
+          source_origin: "own_hospital", uploaded_by: "u1", uploaded_at: "2026-01-01T00:00:00Z",
+          ocr_status: "done", ocr_text_ref: null, needs_manual_date: f2.needs_manual_date, extraction_status: "done", extraction_error: null,
+        },
+        facts: [f1, f2],
+        tracked_markers: [],
+      });
+    }
+    if (req.method() === "PATCH" && path === "/facts/f2") {
+      const body = JSON.parse(req.postData() ?? "{}");
+      patches.push(body);
+      f2.as_of_date = body.as_of_date;
+      f2.needs_manual_date = false;
+      f2.verification_state = "staff_corrected";
+      return json(f2);
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", headers: cors, body: "{}" });
+  });
+
+  await page.goto(`${BASE}/#/documents/doc1/review`);
+  const cardFor = (name: string) => page.locator(".card", { has: page.getByRole("heading", { name }) });
+  const cea = cardFor("CEA");
+  const psa = cardFor("PSA");
+  await cea.waitFor();
+
+  // Before: dated fact active, undated fact disabled with the reason.
+  expect(await cea.getByRole("button", { name: "Sign off", exact: true }).isEnabled()).toBe(true);
+  expect(await cea.getByText("Needs a date before sign-off").count()).toBe(0);
+  const psaSignOff = psa.getByRole("button", { name: "Sign off", exact: true });
+  expect(await psaSignOff.isDisabled()).toBe(true);
+  await psa.getByText("Needs a date before sign-off").waitFor();
+
+  // Save the date via the per-fact form; the same page should update in place.
+  await psa.getByLabel("As-of date (not found in the document)").fill("2026-03-05");
+  await psa.getByRole("button", { name: "Save date" }).click();
+  await psa.locator("button:enabled", { hasText: /^Sign off$/ }).waitFor();
+  expect(await psa.getByText("Needs a date before sign-off").count()).toBe(0);
+  expect(patches).toEqual([{ as_of_date: "2026-03-05" }]);
+  expect(navigations).toBe(1); // no reload
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
