@@ -1,6 +1,6 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { sql } from "../db/client";
-import { getDocumentFacts, patchFact, signOffFact } from "./facts";
+import { getDocumentFacts, patchFact, signOffFact, reopenFact } from "./facts";
 import { createTestUser, deleteTestUsers, createTestPatient, deleteTestPatients, asAuthedUser, type TestUser } from "../test-helpers";
 
 let staff: TestUser;
@@ -415,4 +415,86 @@ test("sign-off is blocked with 409 by an open or annotated conflict on either si
 test("sign-off 404s for an unknown or malformed fact id", async () => {
   expect((await signOffFact(signOffReq("00000000-0000-0000-0000-000000000000"), asAuthedUser(oncologist))).status).toBe(404);
   expect((await signOffFact(signOffReq("nope"), asAuthedUser(oncologist))).status).toBe(404);
+});
+
+// --- POST /facts/:id/reopen ---
+
+function reopenReq(id: string) {
+  const req = new Request(`http://localhost/facts/${id}/reopen`, { method: "POST" }) as Request & { params: { id: string } };
+  req.params = { id };
+  return req;
+}
+
+async function reopenAuditCount(id: string): Promise<number> {
+  return (await sql`SELECT id FROM audit_log WHERE entity_type = 'fact' AND entity_id = ${id} AND action = 'reopen'`).length;
+}
+
+test("reopen of an oncologist_signed_off fact → reopened_by_oncologist with reopened_by/at set, and audited", async () => {
+  const id = await newFact(await newDocument(), { verification: "oncologist_signed_off" });
+  const res = await reopenFact(reopenReq(id), asAuthedUser(oncologist));
+  expect(res.status).toBe(200);
+  expect(((await res.json()) as any).verification_state).toBe("reopened_by_oncologist");
+  const row = await factRow(id);
+  expect(row.verification_state).toBe("reopened_by_oncologist");
+  expect(row.reopened_by).toBe(oncologist.id);
+  expect(row.reopened_at).toBeInstanceOf(Date);
+  expect(Math.abs(Date.now() - row.reopened_at.getTime())).toBeLessThan(60_000);
+
+  const rows = await sql`SELECT * FROM audit_log WHERE entity_type = 'fact' AND entity_id = ${id} AND action = 'reopen'`;
+  expect(rows).toHaveLength(1);
+  expect(rows[0].actor_id).toBe(oncologist.id);
+  expect(JSON.parse(rows[0].before_value).verification_state).toBe("oncologist_signed_off");
+  expect(JSON.parse(rows[0].after_value).verification_state).toBe("reopened_by_oncologist");
+  expect(JSON.parse(rows[0].after_value).reopened_by).toBe(oncologist.id);
+});
+
+test("reopen leaves signed_off_by and signed_off_at unchanged", async () => {
+  const id = await newFact(await newDocument(), { verification: "oncologist_signed_off" });
+  await sql`UPDATE facts SET signed_off_at = '2026-01-15T10:00:00Z' WHERE id = ${id}`;
+  const before = await factRow(id);
+  expect((await reopenFact(reopenReq(id), asAuthedUser(oncologist))).status).toBe(200);
+  const after = await factRow(id);
+  expect(after.signed_off_by).toBe(oncologist.id);
+  expect(after.signed_off_by).toBe(before.signed_off_by);
+  expect(after.signed_off_at).toEqual(before.signed_off_at);
+});
+
+for (const state of ["unverified", "staff_corrected", "reopened_by_oncologist"]) {
+  test(`reopen from ${state} is 409, changes nothing, writes no audit row`, async () => {
+    const id = await newFact(await newDocument(), { verification: state });
+    const res = await reopenFact(reopenReq(id), asAuthedUser(oncologist));
+    expect(res.status).toBe(409);
+    const row = await factRow(id);
+    expect(row.verification_state).toBe(state);
+    expect(row.reopened_by).toBeNull();
+    expect(row.reopened_at).toBeNull();
+    expect(await reopenAuditCount(id)).toBe(0);
+  });
+}
+
+test("reopen 404s for an unknown or malformed fact id", async () => {
+  expect((await reopenFact(reopenReq("00000000-0000-0000-0000-000000000000"), asAuthedUser(oncologist))).status).toBe(404);
+  expect((await reopenFact(reopenReq("nope"), asAuthedUser(oncologist))).status).toBe(404);
+});
+
+test("reopen is not blocked by an open conflict (only sign-off is)", async () => {
+  const docId = await newDocument();
+  const a = await newFact(docId, { verification: "oncologist_signed_off" });
+  const b = await newFact(docId);
+  const [c] = await sql`INSERT INTO conflicts (fact_id_a, fact_id_b, status) VALUES (${a}, ${b}, 'open') RETURNING id`;
+  try {
+    expect((await reopenFact(reopenReq(a), asAuthedUser(oncologist))).status).toBe(200);
+  } finally {
+    await sql`DELETE FROM conflicts WHERE id = ${c.id}`;
+  }
+});
+
+test("a reopened fact corrected via PATCH lands in staff_corrected and keeps the prior sign-off record", async () => {
+  const id = await newFact(await newDocument(), { verification: "oncologist_signed_off" });
+  await reopenFact(reopenReq(id), asAuthedUser(oncologist));
+  expect((await patchFact(patchReq(id, { value: "6.1" }), asAuthedUser(staff))).status).toBe(200);
+  const row = await factRow(id);
+  expect(row.verification_state).toBe("staff_corrected");
+  expect(row.signed_off_by).toBe(oncologist.id);
+  expect(row.reopened_by).toBe(oncologist.id);
 });

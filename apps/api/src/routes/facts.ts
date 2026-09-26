@@ -212,3 +212,32 @@ export async function signOffFact(req: Request & { params: { id: string } }, use
   const [fact] = await queryFacts(sql, { factId });
   return Response.json(fact);
 }
+
+export async function reopenFact(req: Request & { params: { id: string } }, user: AuthedUser): Promise<Response> {
+  const factId = req.params.id;
+  if (!isUuid(factId)) return jsonError(404, "not_found", "Fact not found.");
+
+  const outcome = await sql.begin(async (tx) => {
+    const [before] = await tx`SELECT * FROM facts WHERE id = ${factId} FOR UPDATE`;
+    if (!before) return "not_found" as const;
+    if (before.verification_state !== "oncologist_signed_off") return "not_signed_off" as const;
+
+    // signed_off_by / signed_off_at are deliberately left as the record of the most recent sign-off.
+    const [updated] = await tx`
+      UPDATE facts SET verification_state = 'reopened_by_oncologist', reopened_by = ${user.id}, reopened_at = now()
+      WHERE id = ${factId}
+      RETURNING *
+    `;
+    await tx`
+      INSERT INTO audit_log (actor_id, action, entity_type, entity_id, before_value, after_value)
+      VALUES (${user.id}, 'reopen', 'fact', ${factId}, ${JSON.stringify(before)}::jsonb, ${JSON.stringify(updated)}::jsonb)
+    `;
+    return "ok" as const;
+  });
+
+  if (outcome === "not_found") return jsonError(404, "not_found", "Fact not found.");
+  if (outcome === "not_signed_off") return jsonError(409, "conflict", "Only an oncologist signed-off fact can be reopened.");
+
+  const [fact] = await queryFacts(sql, { factId });
+  return Response.json(fact);
+}
