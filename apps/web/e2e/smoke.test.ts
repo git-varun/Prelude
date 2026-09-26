@@ -142,3 +142,27 @@ test("a failing /config.json shows the connectivity error instead of a blank scr
   expect(await page.getByRole("heading", { name: "OPD Snapshot" }).count()).toBeGreaterThan(0);
   await page.close();
 }, 30_000);
+
+test("a /config.json with a missing, empty or non-string apiUrl shows the connectivity error, not a silent request to 'undefined/...'", async () => {
+  for (const body of [{}, { apiUrl: "" }, { apiUrl: 5 }]) {
+    const page = await browser.newPage();
+    const requested: string[] = [];
+    page.on("request", (req) => requested.push(req.url()));
+    await page.route(`${BASE}/config.json`, (route) => route.fulfill({ status: 200, contentType: "application/json", body: JSON.stringify(body) }));
+    await page.goto(BASE);
+    await page.getByText("Couldn't reach the server").waitFor({ timeout: 5000 });
+    expect(requested.filter((u) => u.includes("/auth/me"))).toEqual([]);
+    await page.close();
+  }
+}, 30_000);
+
+// The client gives /config.json 8s before giving up, so "hangs" surfaces as the
+// connectivity error just after that, rather than a permanently blank screen.
+test("a /config.json that never responds still ends in the connectivity error (no permanent blank screen)", async () => {
+  const page = await browser.newPage();
+  await page.route(`${BASE}/config.json`, () => {}); // never fulfilled, aborted or continued
+  await page.goto(BASE);
+  await page.getByText("Couldn't reach the server").waitFor({ timeout: 12_000 });
+  expect(await page.getByRole("heading", { name: "OPD Snapshot" }).count()).toBeGreaterThan(0);
+  await page.close();
+}, 30_000);

@@ -5,14 +5,22 @@ import type { UserRole } from "@opd/shared";
 // Resolved lazily inside request() rather than at module load: a failed or slow
 // /config.json then surfaces as an ordinary failed request (the app's
 // "couldn't reach the server" state) instead of stopping React from mounting.
+// The fetch is bounded so a hung server rejects (same path as any failure) instead
+// of leaving the login screen blank forever.
+const CONFIG_TIMEOUT_MS = 8000;
 let apiBaseUrl: Promise<string> | null = null;
 function getApiBaseUrl(): Promise<string> {
-  apiBaseUrl ??= fetch("/config.json")
+  apiBaseUrl ??= fetch("/config.json", { signal: AbortSignal.timeout(CONFIG_TIMEOUT_MS) })
     .then((res) => {
       if (!res.ok) throw new Error(`/config.json returned ${res.status}`);
-      return res.json() as Promise<{ apiUrl: string }>;
+      return res.json() as Promise<{ apiUrl?: unknown }>;
     })
-    .then((config) => config.apiUrl)
+    .then((config) => {
+      if (typeof config?.apiUrl !== "string" || config.apiUrl === "") {
+        throw new Error("/config.json is missing a non-empty apiUrl");
+      }
+      return config.apiUrl;
+    })
     .catch((err) => {
       apiBaseUrl = null; // don't cache a failure; the next request retries
       throw err;
