@@ -189,6 +189,7 @@ export async function signOffFact(req: Request & { params: { id: string } }, use
     // Application-level checks so a violation is a clean 409; the DB constraints
     // (no_signoff_while_undated, signed_off_requires_oncologist) remain the backstop.
     if (before.as_of_date === null) return "undated" as const;
+    if (before.field_type === "marker_value" && before.tracked_marker_id === null) return "unmapped" as const;
     const [conflict] = await tx`
       SELECT id FROM conflicts
       WHERE (fact_id_a = ${factId} OR fact_id_b = ${factId}) AND status IN ('open', 'annotated')
@@ -211,6 +212,7 @@ export async function signOffFact(req: Request & { params: { id: string } }, use
   if (outcome === "not_found") return jsonError(404, "not_found", "Fact not found.");
   if (outcome === "already_signed_off") return jsonError(409, "conflict", "This fact is already oncologist signed-off.");
   if (outcome === "undated") return jsonError(409, "conflict", "A fact without an as-of date cannot be signed off; supply the date first.");
+  if (outcome === "unmapped") return jsonError(409, "conflict", "A marker must be mapped to a tracked marker before sign-off.");
   if (outcome === "conflict") return jsonError(409, "conflict", "Sign-off is blocked by an unresolved conflict involving this fact.");
 
   const [fact] = await queryFacts(sql, { factId });

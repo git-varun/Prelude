@@ -169,7 +169,7 @@ test("a /config.json that never responds still ends in the connectivity error (n
 
 // Sign-off / reopen buttons on the review FactCard. The stub keeps mutable fact
 // state so a click's POST flips the card the way the real API would.
-type StubFact = { verification_state: string; has_blocking_conflict?: boolean; needs_manual_date?: boolean };
+type StubFact = { verification_state: string; has_blocking_conflict?: boolean; needs_manual_date?: boolean; unmapped?: boolean };
 
 async function openReviewAs(role: "staff" | "oncologist", stub: StubFact) {
   const page = await browser.newPage();
@@ -188,8 +188,9 @@ async function openReviewAs(role: "staff" | "oncologist", stub: StubFact) {
     "Access-Control-Allow-Methods": "GET, POST, PATCH, OPTIONS",
   };
   const fact = () => ({
-    id: "f1", patient_id: "p1", visit_id: "v1", document_id: "doc1", tracked_marker_id: "m1", tracked_marker_name: "CEA",
-    raw_marker_label: null, field_type: "marker_value", value: "4.2", unit: "ng/mL", reference_range: "0-5",
+    id: "f1", patient_id: "p1", visit_id: "v1", document_id: "doc1",
+    tracked_marker_id: state.unmapped ? null : "m1", tracked_marker_name: state.unmapped ? null : "CEA",
+    raw_marker_label: state.unmapped ? "Mystery Marker" : null, field_type: "marker_value", value: "4.2", unit: "ng/mL", reference_range: "0-5",
     as_of_date: state.needs_manual_date ? null : "2026-02-01", needs_manual_date: state.needs_manual_date ?? false,
     coverage_status: "value_found", verification_state: state.verification_state,
     has_blocking_conflict: state.has_blocking_conflict ?? false,
@@ -227,12 +228,13 @@ async function openReviewAs(role: "staff" | "oncologist", stub: StubFact) {
     }
     return route.fulfill({ status: 404, contentType: "application/json", headers: cors, body: "{}" });
   });
+  const heading = state.unmapped ? "Mystery Marker" : "CEA";
   await page.goto(`${BASE}/#/documents/doc1/review`);
-  await page.getByRole("heading", { name: "CEA" }).waitFor();
-  const card = page.locator(".card", { has: page.getByRole("heading", { name: "CEA" }) });
+  await page.getByRole("heading", { name: heading }).waitFor();
+  const card = page.locator(".card", { has: page.getByRole("heading", { name: heading }) });
   const signOff = card.getByRole("button", { name: "Sign off", exact: true });
   const reopen = card.getByRole("button", { name: "Reopen", exact: true });
-  return { page, errors, posts, signOff, reopen };
+  return { page, errors, posts, signOff, reopen, card };
 }
 
 for (const verification_state of ["unverified", "staff_corrected", "reopened_by_oncologist"]) {
@@ -248,6 +250,14 @@ for (const verification_state of ["unverified", "staff_corrected", "reopened_by_
     await page.close();
   }, 30_000);
 }
+
+test("oncologist sees a disabled Sign off with the unmapped-marker reason when the fact has no tracked_marker_id", async () => {
+  const { page, posts, signOff, card } = await openReviewAs("oncologist", { verification_state: "unverified", unmapped: true });
+  expect(await signOff.isDisabled()).toBe(true);
+  await card.getByText("A marker must be mapped to a tracked marker before sign-off").waitFor();
+  expect(posts).toEqual([]);
+  await page.close();
+}, 30_000);
 
 test("oncologist sees a disabled Sign off with 'Blocked by an unresolved conflict' when has_blocking_conflict", async () => {
   const { page, posts, signOff } = await openReviewAs("oncologist", { verification_state: "unverified", has_blocking_conflict: true });

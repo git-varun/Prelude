@@ -56,7 +56,9 @@ export function FactCard({ fact, trackedMarkers, onChanged }: Props) {
     ? "Blocked by an unresolved conflict"
     : fact.needs_manual_date
       ? "Needs a date before sign-off"
-      : null;
+      : fact.field_type === "marker_value" && !fact.tracked_marker_id
+        ? "A marker must be mapped to a tracked marker before sign-off"
+        : null;
 
   return (
     <div className="card">

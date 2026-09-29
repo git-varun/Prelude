@@ -93,9 +93,11 @@ test("POST /users (oncologist-only) without a session -> 401, with a staff sessi
 
 test("POST /facts/:id/sign-off: no session -> 401, staff -> 403 and the fact is untouched, oncologist passes the role check", async () => {
   const [visit] = await sql`SELECT id FROM visits WHERE patient_id = ${patientId} LIMIT 1`;
+  const [marker] = await sql`
+    INSERT INTO tracked_markers (patient_id, marker_name, is_custom, added_by) VALUES (${patientId}, 'CEA', false, ${staff.id}) RETURNING id`;
   const [fact] = await sql`
-    INSERT INTO facts (patient_id, visit_id, document_id, field_type, value, as_of_date, coverage_status, verification_state)
-    VALUES (${patientId}, ${visit.id}, ${documentId}, 'marker_value', '4.2', '2026-02-01', 'value_found', 'unverified')
+    INSERT INTO facts (patient_id, visit_id, document_id, tracked_marker_id, field_type, value, as_of_date, coverage_status, verification_state)
+    VALUES (${patientId}, ${visit.id}, ${documentId}, ${marker.id}, 'marker_value', '4.2', '2026-02-01', 'value_found', 'unverified')
     RETURNING id`;
   const post = (headers: Record<string, string> = {}) => fetch(`${BASE}/facts/${fact.id}/sign-off`, { method: "POST", headers });
 

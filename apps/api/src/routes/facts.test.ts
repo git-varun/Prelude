@@ -349,7 +349,7 @@ function signOffReq(id: string) {
 
 for (const state of ["unverified", "staff_corrected", "reopened_by_oncologist"]) {
   test(`sign-off from ${state} → oncologist_signed_off with signed_off_by/at set, and audited`, async () => {
-    const id = await newFact(await newDocument(), { verification: state });
+    const id = await newFact(await newDocument(), { verification: state, markerId: ceaMarkerId });
     const res = await signOffFact(signOffReq(id), asAuthedUser(oncologist));
     expect(res.status).toBe(200);
     expect(((await res.json()) as any).verification_state).toBe("oncologist_signed_off");
@@ -390,10 +390,29 @@ test("sign-off of an undated fact is a clean 409 (not a raw DB constraint error)
   expect(await signOffAuditCount(id)).toBe(0);
 });
 
+test("sign-off of an unmapped marker_value fact (tracked_marker_id null) is a clean 409, unchanged in the DB, no audit row", async () => {
+  const id = await newFact(await newDocument(), { rawLabel: "Mystery", markerId: null });
+  const before = await factRow(id);
+  const res = await signOffFact(signOffReq(id), asAuthedUser(oncologist));
+  expect(res.status).toBe(409);
+  expect(((await res.json()) as any).message).toBe("A marker must be mapped to a tracked marker before sign-off.");
+  const after = await factRow(id);
+  expect(after.verification_state).toBe("unverified");
+  expect(after.signed_off_by).toEqual(before.signed_off_by);
+  expect(after.signed_off_at).toEqual(before.signed_off_at);
+  expect(await signOffAuditCount(id)).toBe(0);
+});
+
+test("sign-off of a mapped marker_value fact is unaffected by the unmapped-marker guard", async () => {
+  const id = await newFact(await newDocument(), { markerId: ceaMarkerId });
+  const res = await signOffFact(signOffReq(id), asAuthedUser(oncologist));
+  expect(res.status).toBe(200);
+});
+
 test("sign-off is blocked with 409 by an open or annotated conflict on either side, allowed once resolved", async () => {
   const docId = await newDocument();
-  const a = await newFact(docId);
-  const b = await newFact(docId);
+  const a = await newFact(docId, { markerId: ceaMarkerId });
+  const b = await newFact(docId, { markerId: ceaMarkerId });
   const [c] = await sql`INSERT INTO conflicts (fact_id_a, fact_id_b, status) VALUES (${a}, ${b}, 'open') RETURNING id`;
   try {
     for (const status of ["open", "annotated"]) {
@@ -531,7 +550,7 @@ test("has_blocking_conflict flips true for both facts of an open or annotated co
 });
 
 test("sign-off and reopen responses carry has_blocking_conflict too", async () => {
-  const id = await newFact(await newDocument());
+  const id = await newFact(await newDocument(), { markerId: ceaMarkerId });
   const res = await signOffFact(signOffReq(id), asAuthedUser(oncologist));
   expect(((await res.json()) as any).has_blocking_conflict).toBe(false);
 });
