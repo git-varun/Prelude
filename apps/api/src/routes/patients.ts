@@ -158,29 +158,46 @@ interface SnapshotFactRow {
   source_snippet: string | null;
 }
 
-// One live fact per marker, latest as_of_date; an exact-date tie surfaces both rows. This is a
-// heuristic, not full §4 conflict-display coverage: an open/both-stand conflict with differing
-// dates, an undated sibling, or facts from another visit (conflicts are patient-wide) can still
-// drop one side — deferred to M7, which owns real conflict-driven selection.
+// For each tracked marker: one top-level entry, the live fact with the latest as_of_date
+// among facts with no open/annotated conflict (an undated fact never outranks a dated one —
+// NULLS LAST). A fact that IS party to an open/annotated conflict always surfaces regardless
+// of date — same-date-with-differing-value is one way that arises, but so is any other open
+// conflict; conflict detection (not this selection logic) is the source of truth for that, and
+// both sides of it surface via the same conflicts-array/top-level-entries rule as before.
 async function loadTumorMarkers(patientId: string, visitId: string): Promise<SnapshotFactRow[]> {
   return sql`
     WITH live AS (
       SELECT f.* FROM facts f
       WHERE f.visit_id = ${visitId} AND f.field_type = 'marker_value' AND f.tracked_marker_id IS NOT NULL
         AND ${LIVE_FACT_FILTER}
+    ), blocked AS (
+      SELECT f.id FROM live f
+      WHERE EXISTS (
+        SELECT 1 FROM conflicts c
+        WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated')
+      )
     ), ranked AS (
       SELECT f.*, RANK() OVER (PARTITION BY f.tracked_marker_id ORDER BY f.as_of_date DESC NULLS LAST) AS rnk
       FROM live f
+      WHERE f.id NOT IN (SELECT id FROM blocked)
+    ), winners AS (
+      SELECT id, tracked_marker_id, value, unit, reference_range, as_of_date, coverage_status,
+             verification_state, document_id, source_page, source_location, source_snippet
+      FROM ranked WHERE rnk = 1
+      UNION ALL
+      SELECT id, tracked_marker_id, value, unit, reference_range, as_of_date, coverage_status,
+             verification_state, document_id, source_page, source_location, source_snippet
+      FROM live WHERE id IN (SELECT id FROM blocked)
     )
     SELECT tm.id AS tracked_marker_id, tm.marker_name,
-           r.id AS fact_id, r.value, r.unit, r.reference_range,
-           to_char(r.as_of_date, 'YYYY-MM-DD') AS as_of_date,
-           r.coverage_status, r.verification_state,
-           r.document_id, r.source_page, r.source_location, r.source_snippet
+           w.id AS fact_id, w.value, w.unit, w.reference_range,
+           to_char(w.as_of_date, 'YYYY-MM-DD') AS as_of_date,
+           w.coverage_status, w.verification_state,
+           w.document_id, w.source_page, w.source_location, w.source_snippet
     FROM tracked_markers tm
-    LEFT JOIN ranked r ON r.tracked_marker_id = tm.id AND r.rnk = 1
+    LEFT JOIN winners w ON w.tracked_marker_id = tm.id
     WHERE tm.patient_id = ${patientId}
-    ORDER BY tm.added_at ASC, r.as_of_date DESC NULLS LAST, r.id
+    ORDER BY tm.added_at ASC, w.as_of_date DESC NULLS LAST, w.id
   `;
 }
 
@@ -202,16 +219,37 @@ async function loadCurrentTreatment(visitId: string): Promise<SnapshotFactRow[]>
   `;
 }
 
-// Every live radiology_impression fact for the visit, no "latest only" narrowing.
+// Single latest radiology_impression fact, same selection rule as tumor markers and
+// current_treatment: latest as_of_date among non-conflicted facts (undated never wins over
+// dated), plus any fact party to an open/annotated conflict regardless of date.
 async function loadRadiology(visitId: string): Promise<SnapshotFactRow[]> {
   return sql`
-    SELECT f.id AS fact_id, f.value, f.unit, f.reference_range,
-           to_char(f.as_of_date, 'YYYY-MM-DD') AS as_of_date,
-           f.coverage_status, f.verification_state,
-           f.document_id, f.source_page, f.source_location, f.source_snippet
-    FROM facts f
-    WHERE f.visit_id = ${visitId} AND f.field_type = 'radiology_impression' AND ${LIVE_FACT_FILTER}
-    ORDER BY f.as_of_date DESC NULLS LAST, f.id
+    WITH live AS (
+      SELECT f.* FROM facts f
+      WHERE f.visit_id = ${visitId} AND f.field_type = 'radiology_impression' AND ${LIVE_FACT_FILTER}
+    ), blocked AS (
+      SELECT f.id FROM live f
+      WHERE EXISTS (
+        SELECT 1 FROM conflicts c
+        WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated')
+      )
+    ), ranked AS (
+      SELECT f.*, RANK() OVER (ORDER BY f.as_of_date DESC NULLS LAST) AS rnk
+      FROM live f
+      WHERE f.id NOT IN (SELECT id FROM blocked)
+    )
+    SELECT id AS fact_id, value, unit, reference_range,
+           to_char(as_of_date, 'YYYY-MM-DD') AS as_of_date,
+           coverage_status, verification_state,
+           document_id, source_page, source_location, source_snippet
+    FROM ranked WHERE rnk = 1
+    UNION ALL
+    SELECT id AS fact_id, value, unit, reference_range,
+           to_char(as_of_date, 'YYYY-MM-DD') AS as_of_date,
+           coverage_status, verification_state,
+           document_id, source_page, source_location, source_snippet
+    FROM live WHERE id IN (SELECT id FROM blocked)
+    ORDER BY as_of_date DESC NULLS LAST, fact_id
   `;
 }
 

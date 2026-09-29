@@ -217,3 +217,49 @@ test("once a conflict resolves via authoritative pick, only the authoritative fa
     await sql`DELETE FROM conflicts WHERE id = ${conflictId}`;
   }
 });
+
+test("an open conflict between two facts for the same marker with DIFFERING dates still surfaces both as top-level entries (not just the later-dated one)", async () => {
+  const docId = await newDocument(currentVisitId);
+  const [{ id: markerId }] = await sql`
+    INSERT INTO tracked_markers (patient_id, marker_name, is_custom, added_by) VALUES (${patientId}, 'CA-19-9', false, ${staff.id}) RETURNING id`;
+  const older = await newFact(docId, currentVisitId, { markerId, value: "4.0", asOf: "2026-01-20" });
+  const newer = await newFact(docId, currentVisitId, { markerId, value: "9.0", asOf: "2026-02-01" });
+  const [{ id: conflictId }] = await sql`INSERT INTO conflicts (fact_id_a, fact_id_b, status) VALUES (${older}, ${newer}, 'open') RETURNING id`;
+
+  try {
+    const res = await getPatientSnapshot(snapshotReq(patientId));
+    const body = (await res.json()) as any;
+    const entries = body.tumor_markers.filter((m: any) => m.tracked_marker_id === markerId);
+    expect(entries).toHaveLength(2);
+    expect(entries.map((e: any) => e.fact_id).sort()).toEqual([newer, older].sort());
+  } finally {
+    await sql`DELETE FROM conflicts WHERE id = ${conflictId}`;
+  }
+});
+
+test("an undated sibling never wins the top-level slot over a dated fact for the same marker", async () => {
+  const docId = await newDocument(currentVisitId);
+  const [{ id: markerId }] = await sql`
+    INSERT INTO tracked_markers (patient_id, marker_name, is_custom, added_by) VALUES (${patientId}, 'HE4', false, ${staff.id}) RETURNING id`;
+  await newFact(docId, currentVisitId, { markerId, value: "undated-value", asOf: null });
+  const dated = await newFact(docId, currentVisitId, { markerId, value: "5.0", asOf: "2026-02-01" });
+
+  const res = await getPatientSnapshot(snapshotReq(patientId));
+  const body = (await res.json()) as any;
+  const entries = body.tumor_markers.filter((m: any) => m.tracked_marker_id === markerId);
+  expect(entries).toHaveLength(1);
+  expect(entries[0].fact_id).toBe(dated);
+});
+
+test("radiology now selects only the single latest non-conflicted fact, matching current_treatment's rule (no longer lists every live fact)", async () => {
+  const docId = await newDocument(currentVisitId, "radiology");
+  const older = await newFact(docId, currentVisitId, { fieldType: "radiology_impression", value: "Older impression", asOf: "2026-01-05" });
+  const latest = await newFact(docId, currentVisitId, { fieldType: "radiology_impression", value: "Newer impression", asOf: "2026-02-20" });
+
+  const res = await getPatientSnapshot(snapshotReq(patientId));
+  const body = (await res.json()) as any;
+  const ours = body.radiology.filter((r: any) => r.fact_id === older || r.fact_id === latest);
+  expect(ours).toHaveLength(1);
+  expect(ours[0].fact_id).toBe(latest);
+  expect(ours[0].value).toBe("Newer impression");
+});
