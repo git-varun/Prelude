@@ -27,3 +27,8 @@ export function matchDocumentReview(path: string): string | null {
   const m = path.match(/^\/documents\/([^/]+)\/review$/);
   return m ? m[1]! : null;
 }
+
+export function matchPatientSnapshot(path: string): string | null {
+  const m = path.match(/^\/patients\/([^/]+)\/snapshot$/);
+  return m ? m[1]! : null;
+}

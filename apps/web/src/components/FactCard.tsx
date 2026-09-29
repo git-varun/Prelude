@@ -8,6 +8,7 @@ const COVERAGE_LABELS: Record<string, string> = {
   not_applicable: "Not applicable per source",
   extraction_uncertain: "Needs review",
   conflicting_sources: "Conflicting values, see sources",
+  not_found_in_document_set: "Not found in this document set",
 };
 
 const FIELD_LABELS: Record<string, string> = {

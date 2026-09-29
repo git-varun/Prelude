@@ -387,3 +387,141 @@ test("per-fact undated fact: sign-off is disabled with a reason until its date i
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);
+
+// Patient Snapshot screen. One fixture builder shared across tests, overridden per test
+// so each stays focused on the one thing it's checking.
+function provenance(overrides: Record<string, unknown> = {}) {
+  return {
+    document_id: "doc1", source_page: 3, source_location: "line 4", source_snippet: "x",
+    fallback_level: "exact", ...overrides,
+  };
+}
+
+function snapshotField(overrides: Record<string, unknown> = {}) {
+  return {
+    fact_id: "f1", field_type: "marker_value", tracked_marker_id: "m1", marker_name: "CEA",
+    value: "4.2", unit: "ng/mL", reference_range: "0-5", as_of_date: "2026-02-01",
+    coverage_status: "value_found", verification_state: "unverified", delta_status: null,
+    conflicts: [], provenance: provenance(), ...overrides,
+  };
+}
+
+function snapshotBody(overrides: Record<string, unknown> = {}) {
+  return {
+    patient: { id: "p1", name: "Test Patient", cancer_type: "Breast" },
+    current_visit: { id: "v2", visit_date: "2026-02-01" },
+    previous_visit: { id: "v1", visit_date: "2026-01-01" },
+    current_treatment: [],
+    tumor_markers: [],
+    radiology: [],
+    since_last_visit: [],
+    ...overrides,
+  };
+}
+
+async function openSnapshot(role: "staff" | "oncologist", body: unknown) {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  const errors: string[] = [];
+  page.on("pageerror", (err) => errors.push(`pageerror: ${err.message}`));
+  page.on("console", (msg) => {
+    if (msg.type() === "error") errors.push(`console: ${msg.text()}`);
+  });
+  const cors = { "Access-Control-Allow-Origin": BASE, "Access-Control-Allow-Credentials": "true" };
+  await page.route(`${API}/**`, (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const json = (b: unknown) => route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify(b) });
+    if (path === "/auth/me") return json({ id: "u1", name: "Test", email: "t@opd.local", role });
+    if (path === "/patients/p1/snapshot") return json(body);
+    return route.fulfill({ status: 404, contentType: "application/json", headers: cors, body: "{}" });
+  });
+  await page.goto(`${BASE}/#/patients/p1/snapshot`);
+  await page.getByRole("heading", { name: "Test Patient" }).waitFor();
+  return { page, errors };
+}
+
+test("Snapshot: 'Since last visit' shows only the changed marker, not the unchanged one, while Tumor markers shows both", async () => {
+  const body = snapshotBody({
+    tumor_markers: [
+      snapshotField({ fact_id: "f1", marker_name: "CEA", value: "9.0", delta_status: "changed" }),
+      snapshotField({ fact_id: "f2", marker_name: "PSA", tracked_marker_id: "m2", value: "1.0", delta_status: "unchanged" }),
+    ],
+    since_last_visit: [snapshotField({ fact_id: "f1", marker_name: "CEA", value: "9.0", delta_status: "changed" })],
+  });
+  const { page, errors } = await openSnapshot("staff", body);
+  const sinceSection = page.locator("section", { has: page.getByRole("heading", { name: "Since last visit" }) });
+  const markersSection = page.locator("section", { has: page.getByRole("heading", { name: "Tumor markers" }) });
+  await sinceSection.getByRole("heading", { name: "CEA" }).waitFor();
+  expect(await sinceSection.getByRole("heading", { name: "PSA" }).count()).toBe(0);
+  await markersSection.getByRole("heading", { name: "CEA" }).waitFor();
+  await markersSection.getByRole("heading", { name: "PSA" }).waitFor();
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Snapshot: a not_found_in_document_set marker renders as a placeholder row, not an interactive FactCard", async () => {
+  const body = snapshotBody({
+    tumor_markers: [
+      snapshotField({
+        fact_id: null, marker_name: "AFP", tracked_marker_id: "m3", value: null, unit: null, reference_range: null,
+        as_of_date: null, coverage_status: "not_found_in_document_set", verification_state: null, conflicts: [], provenance: null,
+      }),
+    ],
+  });
+  const { page, errors } = await openSnapshot("oncologist", body);
+  const card = page.locator(".card", { has: page.getByRole("heading", { name: "AFP" }) });
+  await card.getByText("Not found in this document set").waitFor();
+  expect(await card.getByRole("button", { name: "Sign off", exact: true }).count()).toBe(0);
+  expect(await card.getByRole("button", { name: "Reopen", exact: true }).count()).toBe(0);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Snapshot: an open conflict on a field reaches FactCard through the adapter as a disabled, reason-labeled Sign off button", async () => {
+  const body = snapshotBody({
+    tumor_markers: [
+      snapshotField({
+        fact_id: "f1", marker_name: "CEA",
+        conflicts: [{ conflict_id: "c1", status: "open", other_fact_id: "f9", other_value: "9.0", other_source: provenance(), authoritative_fact_id: null, historical: false }],
+      }),
+    ],
+  });
+  const { page, errors } = await openSnapshot("oncologist", body);
+  const card = page.locator(".card", { has: page.getByRole("heading", { name: "CEA" }) });
+  const signOff = card.getByRole("button", { name: "Sign off", exact: true });
+  await signOff.waitFor();
+  expect(await signOff.isDisabled()).toBe(true);
+  await card.getByText("Blocked by an unresolved conflict").waitFor();
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Snapshot: a new patient (previous_visit.id null) omits 'Since last visit' entirely, not as an empty section", async () => {
+  const body = snapshotBody({
+    previous_visit: { id: null, visit_date: null },
+    tumor_markers: [snapshotField({ fact_id: "f1", marker_name: "CEA" })],
+  });
+  const { page, errors } = await openSnapshot("staff", body);
+  await page.getByRole("heading", { name: "Tumor markers" }).waitFor();
+  expect(await page.getByRole("heading", { name: "Since last visit" }).count()).toBe(0);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Snapshot: source link label varies by provenance.fallback_level (exact, page, document)", async () => {
+  const body = snapshotBody({
+    tumor_markers: [
+      snapshotField({ fact_id: "f1", marker_name: "CEA", provenance: provenance({ fallback_level: "exact", source_page: 3, source_location: "line 4" }) }),
+      snapshotField({ fact_id: "f2", marker_name: "PSA", tracked_marker_id: "m2", provenance: provenance({ fallback_level: "page", source_page: 5, source_location: null }) }),
+    ],
+    current_treatment: [
+      snapshotField({ fact_id: "f3", field_type: "treatment_regimen", marker_name: null, tracked_marker_id: null, provenance: provenance({ fallback_level: "document", source_page: null, source_location: null }) }),
+    ],
+  });
+  const { page, errors } = await openSnapshot("staff", body);
+  await page.getByRole("button", { name: "Page 3 · line 4" }).waitFor();
+  await page.getByRole("button", { name: "Page 5 (location not recorded)" }).waitFor();
+  await page.getByRole("button", { name: "Open document (no page/location recorded)" }).waitFor();
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);

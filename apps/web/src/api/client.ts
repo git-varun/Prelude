@@ -136,6 +136,52 @@ export interface DocumentReview {
   tracked_markers: TrackedMarker[];
 }
 
+export interface Provenance {
+  document_id: string;
+  source_page: number | null;
+  source_location: string | null;
+  source_snippet: string | null;
+  fallback_level: "exact" | "page" | "document";
+}
+
+export interface ConflictEntry {
+  conflict_id: string;
+  status: string;
+  other_fact_id: string;
+  other_value: string | null;
+  other_source: Provenance;
+  authoritative_fact_id: string | null;
+  historical: boolean;
+}
+
+export type DeltaStatus = "new" | "changed" | "unchanged" | "not_observed_in_current_document_set";
+
+export interface SnapshotField {
+  fact_id: string | null;
+  field_type: string;
+  tracked_marker_id: string | null;
+  marker_name: string | null;
+  value: string | null;
+  unit: string | null;
+  reference_range: string | null;
+  as_of_date: string | null;
+  coverage_status: string;
+  verification_state: string | null;
+  delta_status: DeltaStatus | null;
+  conflicts: ConflictEntry[];
+  provenance: Provenance | null;
+}
+
+export interface PatientSnapshot {
+  patient: { id: string; name: string | null; cancer_type: string | null };
+  current_visit: { id: string; visit_date: string };
+  previous_visit: { id: string | null; visit_date: string | null };
+  current_treatment: SnapshotField[];
+  tumor_markers: SnapshotField[];
+  radiology: SnapshotField[];
+  since_last_visit: SnapshotField[];
+}
+
 export const api = {
   login: (email: string, password: string) =>
     request<SessionUser>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
@@ -148,6 +194,8 @@ export const api = {
     request<PatientSummary[]>(`/patients${search ? `?search=${encodeURIComponent(search)}` : ""}`),
 
   getPatient: (id: string) => request<PatientDetail>(`/patients/${id}`),
+
+  getPatientSnapshot: (id: string) => request<PatientSnapshot>(`/patients/${id}/snapshot`),
 
   createPatient: (input: { name: string; cancer_type: string; markers: { marker_name: string }[] }) =>
     request<PatientDetail>("/patients", { method: "POST", body: JSON.stringify(input) }),

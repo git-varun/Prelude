@@ -55,7 +55,20 @@ export function PatientList() {
             }}
           >
             <span className="patient-row__name">{p.name || "(unnamed patient)"}</span>
-            <span className="patient-row__meta">{p.cancer_type || "cancer type not set"}</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span className="patient-row__meta">{p.cancer_type || "cancer type not set"}</span>
+              <button
+                className="btn btn--ghost"
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
+                  navigate(`/patients/${p.id}/snapshot`);
+                }}
+              >
+                Snapshot
+              </button>
+            </span>
           </a>
         ))}
       </div>
