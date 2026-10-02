@@ -34,8 +34,8 @@ Snapshot as of 2026-09-25, after the `m2-extraction-review` branch was merged in
 ### A. Waiting on you (cannot be done without your input or credentials)
 | # | Task | Why / notes |
 | --- | --- | --- |
-| U1 | Add `OCR_PROVIDER=aws_textract`, `AWS_TEXTRACT_REGION` / `_ACCESS_KEY_ID` / `_SECRET_ACCESS_KEY`, and `EXTRACTION_PROVIDER=anthropic` to `.env`, then run `bun run eval:ingestion` | The eval is built and verified to fail cleanly at provider setup; no results exist yet. `.env` also holds an unused `OCR_API_KEY` to remove. |
-| U2 | Choose the default OCR provider | Deliberately deferred until the comparison exists. Only AWS is being set up; Azure would need its own credentials for a real comparison. |
+| U1 | Add `OCR_PROVIDER=google_document_ai`, `GOOGLE_DOCUMENT_AI_PROJECT_ID` / `_LOCATION` / `_PROCESSOR_ID` / `_CREDENTIALS_JSON`, and `EXTRACTION_PROVIDER=anthropic` to `.env`, then run `bun run eval:ingestion` | The eval is built and verified to fail cleanly at provider setup; no results exist yet. `.env` also holds an unused `OCR_API_KEY` to remove. AWS Textract was dropped as the comparison vendor (credentials never became available); `apps/api/src/services/ocr/awsTextract.ts` is left in place, unused. |
+| U2 | Choose the default OCR provider | Deliberately deferred until the comparison exists. Only Google is being set up; Azure would need its own credentials for a real comparison. |
 | U3 | Confirm a Data Processing Agreement with Anthropic (and decide whether Azure/AWS need one) | Required before any real patient data reaches the pipeline. Synthetic data is unaffected. |
 | U4 | Provide de-identified scanned or photographed documents | The Blueprint M2 item "test against realistic scanned paper" is still open; current samples are clean PDFs. |
 | U5 | Get the oncologist to approve the real controlled marker list (C8) | `CONTROLLED_MARKERS` in `packages/shared/src/markers.ts` is a placeholder. |

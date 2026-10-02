@@ -1,6 +1,6 @@
 import type { ExtractionProvider, OcrProvider } from "@opd/shared";
 import { AzureDocIntelligenceProvider } from "./ocr/azureDocIntelligence";
-import { AwsTextractProvider } from "./ocr/awsTextract";
+import { GoogleDocumentAiProvider } from "./ocr/googleDocumentAi";
 import { AnthropicExtractionProvider } from "./extraction/anthropicExtraction";
 
 let cachedProvider: OcrProvider | undefined;
@@ -19,22 +19,24 @@ function buildOcrProvider(): OcrProvider {
     return new AzureDocIntelligenceProvider(endpoint, key);
   }
 
-  if (providerName === "aws_textract") {
-    const region = process.env.AWS_TEXTRACT_REGION;
-    const accessKeyId = process.env.AWS_TEXTRACT_ACCESS_KEY_ID;
-    const secretAccessKey = process.env.AWS_TEXTRACT_SECRET_ACCESS_KEY;
-    if (!region || !accessKeyId || !secretAccessKey) {
+  if (providerName === "google_document_ai") {
+    const projectId = process.env.GOOGLE_DOCUMENT_AI_PROJECT_ID;
+    const location = process.env.GOOGLE_DOCUMENT_AI_LOCATION;
+    const processorId = process.env.GOOGLE_DOCUMENT_AI_PROCESSOR_ID;
+    const credentialsJson = process.env.GOOGLE_DOCUMENT_AI_CREDENTIALS_JSON;
+    if (!projectId || !location || !processorId || !credentialsJson) {
       throw new Error(
-        "AWS_TEXTRACT_REGION, AWS_TEXTRACT_ACCESS_KEY_ID, and AWS_TEXTRACT_SECRET_ACCESS_KEY are required for OCR_PROVIDER=aws_textract.",
+        "GOOGLE_DOCUMENT_AI_PROJECT_ID, GOOGLE_DOCUMENT_AI_LOCATION, GOOGLE_DOCUMENT_AI_PROCESSOR_ID, and GOOGLE_DOCUMENT_AI_CREDENTIALS_JSON are required for OCR_PROVIDER=google_document_ai.",
       );
     }
-    return new AwsTextractProvider(region, accessKeyId, secretAccessKey);
+    const credentials = JSON.parse(credentialsJson) as { client_email: string; private_key: string };
+    return new GoogleDocumentAiProvider(projectId, location, processorId, credentials);
   }
 
   if (providerName === undefined) {
-    throw new Error("OCR_PROVIDER is not set. Expected 'azure_doc_intelligence' or 'aws_textract'.");
+    throw new Error("OCR_PROVIDER is not set. Expected 'azure_doc_intelligence' or 'google_document_ai'.");
   }
-  throw new Error(`Unrecognized OCR_PROVIDER: ${providerName}. Expected 'azure_doc_intelligence' or 'aws_textract'.`);
+  throw new Error(`Unrecognized OCR_PROVIDER: ${providerName}. Expected 'azure_doc_intelligence' or 'google_document_ai'.`);
 }
 
 /** Memoized: constructing a new vendor client per call would drop connection reuse for no benefit. */

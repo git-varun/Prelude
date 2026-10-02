@@ -5,13 +5,13 @@ is configured to talk to). Unlike the frozen spec docs (01–03), **this
 document is not frozen** — update it whenever a provider is added, swapped,
 or its config changes. Companion to `docs/m1-backlog.md` / `docs/m2-backlog.md`.
 
-Last updated: 2026-09-23.
+Last updated: 2026-10-02.
 
 | Service | Purpose | Selected via | Required env vars | Client library | Free tier? | DPA status |
 | --- | --- | --- | --- | --- | --- | --- |
 | PostgreSQL | Primary datastore (patients, visits, documents, facts, tracked_markers, audit_log, users, sessions) | `DATABASE_URL` | `DATABASE_URL` | Bun's built-in `SQL` (`apps/api/src/db/client.ts`) — not `pg`/`postgres.js`, per project convention | N/A (self-hosted, `docker-compose` for local per `docs/02-implementation-blueprint.md` Q2) | N/A — self-hosted, no vendor data-sharing |
 | Azure AI Document Intelligence | OCR provider option (`prebuilt-read` model) | `OCR_PROVIDER=azure_doc_intelligence` | `AZURE_DOC_INTELLIGENCE_ENDPOINT`, `AZURE_DOC_INTELLIGENCE_KEY` | `@azure-rest/ai-document-intelligence`, `@azure/core-auth` | Yes — F0 tier, 500 pages/month, ongoing (not time-limited), 1 free instance per subscription | Not yet confirmed (blocks real patient data, not synthetic use — see Open Items below) |
-| AWS Textract | OCR provider option (`DetectDocumentText`, synchronous — single-page PDF/JPEG/PNG/TIFF only, see `docs/m2-backlog.md` C2) | `OCR_PROVIDER=aws_textract` | `AWS_TEXTRACT_REGION`, `AWS_TEXTRACT_ACCESS_KEY_ID`, `AWS_TEXTRACT_SECRET_ACCESS_KEY` | `@aws-sdk/client-textract` | Yes — 1,000 pages/month for the first 3 months on a new AWS account | Not yet confirmed (same caveat as above) |
+| Google Document AI | OCR provider option (Document AI OCR processor) | `OCR_PROVIDER=google_document_ai` | `GOOGLE_DOCUMENT_AI_PROJECT_ID`, `GOOGLE_DOCUMENT_AI_LOCATION`, `GOOGLE_DOCUMENT_AI_PROCESSOR_ID`, `GOOGLE_DOCUMENT_AI_CREDENTIALS_JSON` | `@google-cloud/documentai` | Yes — 1,000 pages/month free tier | Not yet confirmed (same caveat as above) |
 | Anthropic API (Claude) | LLM fact extraction from OCR'd text (`services/extraction/anthropicExtraction.ts`), model `claude-opus-5` | `EXTRACTION_PROVIDER=anthropic` | `LLM_API_KEY` | `@anthropic-ai/sdk` | No published free tier; pay-as-you-go | **Not yet confirmed — explicit open pre-launch item, see below** |
 | Local filesystem | Object storage for uploaded documents + OCR text (dev/pilot; abstracted behind `file_ref` so swapping to S3-compatible storage later is config-only) | `OBJECT_STORAGE_DRIVER=local` | `OBJECT_STORAGE_LOCAL_PATH` | `Bun.file`/`Bun.write` (`apps/api/src/services/storage.ts`) | N/A (local disk) | N/A |
 

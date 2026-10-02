@@ -13,6 +13,7 @@
     "@aws-sdk/client-textract": "^3.1137.0",
     "@azure-rest/ai-document-intelligence": "^1.1.0",
     "@azure/core-auth": "^1.11.0",
+    "@google-cloud/documentai": "^10.1.1",
     "@opd/shared": "workspace:*",
     "zod": "^4.6.5"
   },
