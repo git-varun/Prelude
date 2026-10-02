@@ -7,7 +7,7 @@ Snapshot as of 2026-09-25, after the `m2-extraction-review` branch was merged in
 ### M2 review and documentation pass
 - Code review of the M2 ingestion cycle found five issues (later fixed, see below).
 - Docs: `README.md` rewritten (setup, run, test, eval, docs index); `docs/third-party-services.md` created (Postgres, Azure Document Intelligence, AWS Textract, Anthropic API, local storage: env vars, free tier, DPA status); `docs/m2-backlog.md` brought up to date; Blueprint reference DDL updated to the final schema.
-- Dependency check: `bun audit` clean; only `typescript` (peer, 5.9.3 → 7.0.2) is outdated.
+- Dependency check: `bun audit` clean; `typescript` bumped 5.9.3 → 7.0.2 (see U10).
 - Duplicate MVP-spec files and an unrelated QR image at the repo root were removed.
 
 ### Test coverage added
@@ -43,7 +43,7 @@ Snapshot as of 2026-09-25, after the `m2-extraction-review` branch was merged in
 | U7 | Clinical review of the review-screen wording ("Needs review", "Value found", "saving confirms it") | Needs an oncologist's judgment. |
 | U8 | Decide whether to push/merge to a shared remote | There is no remote configured. |
 | U9 | Apply migration 003 to any other database you use; decide on a migration runner | Migrations are applied by hand (compose init mounts only cover fresh databases). |
-| U10 | Decide whether to bump `typescript` 5.9.3 → 7.0.2 | Major-version jump, not urgent. |
+| U10 | ~~Decide whether to bump `typescript` 5.9.3 → 7.0.2~~ | Done — bumped to 7.0.2 as a root devDependency (was an unused `^5` peerDependency). Required one fix: an ambient `*.css` module declaration (`apps/web/src/css.d.ts`) for TS7's new `TS2882` side-effect-import check. |
 | U11 | Regenerate or retire `docs/m2-tracker.xlsx` | It predates C4–C7 and the review screen (still untracked). |
 
 ### B. Engineering tasks

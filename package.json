@@ -12,9 +12,7 @@
     "eval:ingestion": "bun apps/api/src/scripts/evalIngestion.ts"
   },
   "devDependencies": {
-    "@types/bun": "latest"
-  },
-  "peerDependencies": {
-    "typescript": "^5"
+    "@types/bun": "latest",
+    "typescript": "^7.0.2"
   }
 }
