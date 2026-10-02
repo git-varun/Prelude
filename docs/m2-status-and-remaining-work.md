@@ -36,7 +36,7 @@ Snapshot as of 2026-09-25, after the `m2-extraction-review` branch was merged in
 | --- | --- | --- |
 | U1 | Add `OCR_PROVIDER=google_document_ai`, `GOOGLE_DOCUMENT_AI_PROJECT_ID` / `_LOCATION` / `_PROCESSOR_ID` / `_CREDENTIALS_JSON`, and `EXTRACTION_PROVIDER=anthropic` to `.env`, then run `bun run eval:ingestion` | The eval is built and verified to fail cleanly at provider setup; no results exist yet. `.env` also holds an unused `OCR_API_KEY` to remove. AWS Textract was dropped as the comparison vendor (credentials never became available); `apps/api/src/services/ocr/awsTextract.ts` is left in place, unused. |
 | U2 | Choose the default OCR provider | Deliberately deferred until the comparison exists. Only Google is being set up; Azure would need its own credentials for a real comparison. |
-| U3 | Confirm a Data Processing Agreement with Anthropic (and decide whether Azure/AWS need one) | Required before any real patient data reaches the pipeline. Synthetic data is unaffected. |
+| U3 | Confirm a Data Processing Agreement with Anthropic (and decide whether Azure/Google need one) | Required before any real patient data reaches the pipeline. Synthetic data is unaffected. |
 | U4 | Provide de-identified scanned or photographed documents | The Blueprint M2 item "test against realistic scanned paper" is still open; current samples are clean PDFs. |
 | U5 | Get the oncologist to approve the real controlled marker list (C8) | `CONTROLLED_MARKERS` in `packages/shared/src/markers.ts` is a placeholder. |
 | U6 | Product decisions: (a) add a `partial` extraction status (E6)? (b) should "apply date" mark facts `staff_corrected` when no value was reviewed? (c) should value edits on `not_assessed` / `not_applicable` / `conflicting_sources` facts be allowed? (d) confirm `no_signoff_while_undated` matches your intent | (a) a partial field-type failure with surviving results still ends as `done`. (b)/(c) decide before M3 treats `staff_corrected` as "reviewed" and before the Snapshot is built. |
@@ -59,7 +59,7 @@ Snapshot as of 2026-09-25, after the `m2-extraction-review` branch was merged in
 | D8 | Replace `SELECT *` documents in `GET /documents/:id/facts` with explicit columns (currently exposes `file_ref`) | Low | E5 |
 | D9 | Extraction retry action and a stored failure reason (`extraction_error`) | Medium | C7 residual |
 | D10 | Move OCR + extraction off the upload request into a background job | Medium | C1 |
-| D11 | Multi-page PDFs for AWS Textract (async API + S3) if AWS becomes the default provider | Medium | C2 |
+| D11 | ~~Multi-page PDFs for AWS Textract (async API + S3) if AWS becomes the default provider~~ | Moot | AWS Textract is no longer the comparison vendor (see U1); `googleDocumentAi.ts` handles multi-page documents natively. |
 | D12 | Extend eval samples with degraded/photographed images | Low | eval tooling |
 | D13 | Minor deferred nits (label `htmlFor`, `onChanged` error wording, unit shown with null value, matcher trailing slash, Back button `type`, audit snapshots storing ISO timestamps, year/length caps) | Low | E5 |
 
