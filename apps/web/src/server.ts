@@ -17,4 +17,4 @@ const server = Bun.serve({
   },
 });
 
-console.log(`OPD web app listening on http://localhost:${server.port}`);
+console.log(`Prelude web app listening on http://localhost:${server.port}`);

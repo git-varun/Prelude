@@ -1,4 +1,4 @@
-import type { UserRole } from "@opd/shared";
+import type { UserRole } from "@prelude/shared";
 import { getAuthedUser, jsonError, type AuthedUser } from "./auth";
 
 export type RoleHandler<Req extends Request = Request> = (req: Req, user: AuthedUser) => Promise<Response> | Response;

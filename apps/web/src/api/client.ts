@@ -1,4 +1,4 @@
-import type { UserRole } from "@opd/shared";
+import type { UserRole } from "@prelude/shared";
 
 // Runtime config from server.ts (PUBLIC_API_URL). `process.env` doesn't exist in
 // the browser, so the client asks the server for its one public setting.

@@ -26,7 +26,7 @@ export function Login({ connectivityError = false }: { connectivityError?: boole
 
   return (
     <div style={{ maxWidth: 360, margin: "80px auto" }}>
-      <h1 style={{ textAlign: "center", marginBottom: 24 }}>OPD Snapshot</h1>
+      <h1 style={{ textAlign: "center", marginBottom: 24 }}>Prelude</h1>
       <div className="card">
         {connectivityError && (
           <div className="error-banner">Couldn't reach the server. Check your connection and try again.</div>

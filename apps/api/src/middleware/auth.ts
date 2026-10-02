@@ -1,5 +1,5 @@
 import { sql } from "../db/client";
-import type { User } from "@opd/shared";
+import type { User } from "@prelude/shared";
 
 const SESSION_COOKIE = "opd_session";
 const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 7; // 7 days

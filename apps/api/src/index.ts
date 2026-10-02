@@ -58,4 +58,4 @@ const server = Bun.serve({
   },
 });
 
-console.log(`OPD API listening on http://localhost:${server.port}`);
+console.log(`Prelude API listening on http://localhost:${server.port}`);

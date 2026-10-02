@@ -10,14 +10,14 @@
       },
     },
     "apps/api": {
-      "name": "@opd/api",
+      "name": "@prelude/api",
       "dependencies": {
         "@anthropic-ai/sdk": "^0.127.0",
         "@aws-sdk/client-textract": "^3.1137.0",
         "@azure-rest/ai-document-intelligence": "^1.1.0",
         "@azure/core-auth": "^1.11.0",
         "@google-cloud/documentai": "^10.1.1",
-        "@opd/shared": "workspace:*",
+        "@prelude/shared": "workspace:*",
         "zod": "^4.6.5",
       },
       "devDependencies": {
@@ -25,9 +25,9 @@
       },
     },
     "apps/web": {
-      "name": "@opd/web",
+      "name": "@prelude/web",
       "dependencies": {
-        "@opd/shared": "workspace:*",
+        "@prelude/shared": "workspace:*",
         "react": "^19",
         "react-dom": "^19",
       },
@@ -38,7 +38,7 @@
       },
     },
     "packages/shared": {
-      "name": "@opd/shared",
+      "name": "@prelude/shared",
     },
   },
   "packages": {
@@ -104,17 +104,17 @@
 
     "@js-sdsl/ordered-map": ["@js-sdsl/ordered-map@4.4.2", "", {}, "sha512-iUKgm52T8HOE/makSxjqoWhe95ZJA1/G1sYsGev2JDKUSS14KAgg1LHb+Ba+IPow0xflbnSkOsZcO08C7w1gYw=="],
 
-    "@opd/api": ["@opd/api@workspace:apps/api"],
-
-    "@opd/shared": ["@opd/shared@workspace:packages/shared"],
-
-    "@opd/web": ["@opd/web@workspace:apps/web"],
-
     "@opentelemetry/api": ["@opentelemetry/api@1.9.1", "", {}, "sha512-gLyJlPHPZYdAk1JENA9LeHejZe1Ti77/pTeFm/nMXmQH/HFZlcS/O2XJB+L8fkbrNSqhdtlvjBVjxwUYanNH5Q=="],
 
     "@pdf-lib/standard-fonts": ["@pdf-lib/standard-fonts@1.0.0", "", { "dependencies": { "pako": "^1.0.6" } }, "sha512-hU30BK9IUN/su0Mn9VdlVKsWBS6GyhVfqjwl1FjZN4TxP6cCw0jP2w7V3Hf5uX7M0AZJ16vey9yE0ny7Sa59ZA=="],
 
     "@pdf-lib/upng": ["@pdf-lib/upng@1.0.1", "", { "dependencies": { "pako": "^1.0.10" } }, "sha512-dQK2FUMQtowVP00mtIksrlZhdFXQZPC+taih1q4CvPZ5vqdxR/LKBaFg0oAfzd1GlHZXXSPdQfzQnt+ViGvEIQ=="],
+
+    "@prelude/api": ["@prelude/api@workspace:apps/api"],
+
+    "@prelude/shared": ["@prelude/shared@workspace:packages/shared"],
+
+    "@prelude/web": ["@prelude/web@workspace:apps/web"],
 
     "@protobufjs/aspromise": ["@protobufjs/aspromise@1.1.2", "", {}, "sha512-j+gKExEuLmKwvz3OgROXtrJ2UG2x8Ch2YZUxahh+s1F2HZ+wAceUNLkvy6zKCPVRkU++ZWQrdxsUeQXmcg4uoQ=="],
 

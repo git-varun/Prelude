@@ -1,6 +1,6 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { uploadDocument, runExtraction } from "./documents";
-import type { ExtractedFactCandidate, ExtractionProvider, FieldType } from "@opd/shared";
+import type { ExtractedFactCandidate, ExtractionProvider, FieldType } from "@prelude/shared";
 import { createOrOpenVisit } from "./visits";
 import { sql } from "../db/client";
 import { createTestUser, deleteTestUsers, createTestPatient, deleteTestPatients, asAuthedUser, type TestUser } from "../test-helpers";

@@ -1,7 +1,7 @@
 import DocumentIntelligence, { getLongRunningPoller, isUnexpected } from "@azure-rest/ai-document-intelligence";
 import type { AnalyzeOperationOutput, AnalyzeResultOutput } from "@azure-rest/ai-document-intelligence";
 import { AzureKeyCredential } from "@azure/core-auth";
-import type { OcrProvider, OcrResult, OcrPage } from "@opd/shared";
+import type { OcrProvider, OcrResult, OcrPage } from "@prelude/shared";
 
 // prebuilt-read is Azure's general OCR model (text + layout, no
 // form/structure extraction) — the right fit here since field-level

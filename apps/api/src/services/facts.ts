@@ -1,6 +1,6 @@
 import { sql } from "../db/client";
 import { assignCoverageStatus } from "./rules";
-import type { ExtractedFactCandidate } from "@opd/shared";
+import type { ExtractedFactCandidate } from "@prelude/shared";
 
 interface DocumentContext {
   id: string;

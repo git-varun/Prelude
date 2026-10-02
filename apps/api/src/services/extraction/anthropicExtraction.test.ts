@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import type { ExtractedFactCandidate, FieldType } from "@opd/shared";
+import type { ExtractedFactCandidate, FieldType } from "@prelude/shared";
 import { AnthropicExtractionProvider, normalizeAsOfDate } from "./anthropicExtraction";
 
 function candidate(fieldType: FieldType): ExtractedFactCandidate {

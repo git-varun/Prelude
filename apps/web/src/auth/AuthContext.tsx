@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from "react";
-import type { UserRole } from "@opd/shared";
+import type { UserRole } from "@prelude/shared";
 import { api, ApiError, type SessionUser } from "../api/client";
 
 interface AuthState {

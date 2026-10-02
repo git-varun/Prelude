@@ -1,4 +1,4 @@
-# OPD AI Snapshot Tool — Implementation Blueprint
+# Prelude — Implementation Blueprint
 
 2026-09-19 · @Someone
 

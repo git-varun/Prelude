@@ -1,6 +1,6 @@
 import { sql } from "./db/client";
 import { createSession, sessionCookieHeader, type AuthedUser } from "./middleware/auth";
-import type { UserRole } from "@opd/shared";
+import type { UserRole } from "@prelude/shared";
 
 export interface TestUser {
   id: string;

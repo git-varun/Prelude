@@ -1,5 +1,5 @@
 {
-  "name": "@opd/api",
+  "name": "@prelude/api",
   "module": "src/index.ts",
   "type": "module",
   "private": true,
@@ -14,7 +14,7 @@
     "@azure-rest/ai-document-intelligence": "^1.1.0",
     "@azure/core-auth": "^1.11.0",
     "@google-cloud/documentai": "^10.1.1",
-    "@opd/shared": "workspace:*",
+    "@prelude/shared": "workspace:*",
     "zod": "^4.6.5"
   },
   "devDependencies": {

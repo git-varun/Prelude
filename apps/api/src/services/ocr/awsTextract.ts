@@ -1,5 +1,5 @@
 import { TextractClient, DetectDocumentTextCommand, type Block } from "@aws-sdk/client-textract";
-import type { OcrProvider, OcrResult, OcrPage } from "@opd/shared";
+import type { OcrProvider, OcrResult, OcrPage } from "@prelude/shared";
 
 function toPages(blocks: Block[]): OcrPage[] {
   const pageNumbers = [...new Set(blocks.map((block) => block.Page ?? 1))].sort((a, b) => a - b);

@@ -1,4 +1,4 @@
-# OPD AI Snapshot Tool
+# Prelude
 
 Oncology outpatient (OPD) visit-prep tool: ingests uploaded documents (blood
 reports, prescriptions, radiology), extracts structured facts via OCR + LLM,

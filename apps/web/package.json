@@ -1,5 +1,5 @@
 {
-  "name": "@opd/web",
+  "name": "@prelude/web",
   "type": "module",
   "private": true,
   "scripts": {
@@ -8,7 +8,7 @@
     "test:e2e": "bun test e2e"
   },
   "dependencies": {
-    "@opd/shared": "workspace:*",
+    "@prelude/shared": "workspace:*",
     "react": "^19",
     "react-dom": "^19"
   },

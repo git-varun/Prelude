@@ -1,6 +1,6 @@
 import { DocumentProcessorServiceClient } from "@google-cloud/documentai";
 import type { google } from "@google-cloud/documentai/build/protos/protos";
-import type { OcrProvider, OcrResult, OcrPage } from "@opd/shared";
+import type { OcrProvider, OcrResult, OcrPage } from "@prelude/shared";
 
 type Document = google.cloud.documentai.v1.IDocument;
 

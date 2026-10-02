@@ -9,7 +9,7 @@ export function Shell({ children }: { children: ReactNode }) {
     <div className="app-shell">
       <header className="app-header">
         <div className="app-header__brand" onClick={() => navigate("/patients")} style={{ cursor: "pointer" }}>
-          <span className="app-header__brand-mark">OPD</span> Snapshot
+          <span className="app-header__brand-mark">Prelude</span>
         </div>
         {user && (
           <div className="app-header__user">

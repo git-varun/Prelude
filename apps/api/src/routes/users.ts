@@ -1,7 +1,7 @@
 import { sql } from "../db/client";
 import { jsonError } from "../middleware/auth";
 import type { AuthedUser } from "../middleware/auth";
-import type { UserRole } from "@opd/shared";
+import type { UserRole } from "@prelude/shared";
 
 const ROLES: UserRole[] = ["staff", "oncologist"];
 

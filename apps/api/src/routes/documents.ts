@@ -4,7 +4,7 @@ import type { AuthedUser } from "../middleware/auth";
 import { deleteDocumentFile, saveDocumentFile, saveOcrResult } from "../services/storage";
 import { getExtractionProvider, getOcrProvider } from "../services/providerFactory";
 import { persistExtractedFacts } from "../services/facts";
-import type { ExtractionProvider, OcrResult } from "@opd/shared";
+import type { ExtractionProvider, OcrResult } from "@prelude/shared";
 
 const DOCUMENT_TYPES = ["prescription", "blood", "radiology"] as const;
 const SOURCE_ORIGINS = ["own_hospital", "outside_paper", "outside_cd", "whatsapp_pdf"] as const;

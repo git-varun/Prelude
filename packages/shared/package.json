@@ -1,5 +1,5 @@
 {
-  "name": "@opd/shared",
+  "name": "@prelude/shared",
   "module": "src/index.ts",
   "type": "module",
   "private": true,

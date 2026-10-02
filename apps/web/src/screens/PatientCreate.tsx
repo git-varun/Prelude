@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { CONTROLLED_MARKERS } from "@opd/shared";
+import { CONTROLLED_MARKERS } from "@prelude/shared";
 import { api, ApiError } from "../api/client";
 import { navigate } from "../router";
 

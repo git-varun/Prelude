@@ -2,7 +2,7 @@
 
 2026-09-19 · @Someone
 
-Authoritative engineering contracts for the OPD AI Snapshot Tool, subordinate to the frozen MVP Specification v1.1. This resolves the state-machine and API-shape ambiguity left open by the Implementation Blueprint — treat every table here as binding for Claude Code, not illustrative.
+Authoritative engineering contracts for Prelude, subordinate to the frozen MVP Specification v1.1. This resolves the state-machine and API-shape ambiguity left open by the Implementation Blueprint — treat every table here as binding for Claude Code, not illustrative.
 
 ## 1. Coverage-State Representation & Transition Matrix
 

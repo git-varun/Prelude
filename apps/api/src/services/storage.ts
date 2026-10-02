@@ -1,6 +1,6 @@
 import { mkdir, unlink } from "node:fs/promises";
 import path from "node:path";
-import type { OcrResult } from "@opd/shared";
+import type { OcrResult } from "@prelude/shared";
 
 // Local filesystem for dev, per your instruction: file_ref is an abstracted
 // pointer ("local://<patient>/<name>") so swapping to a real S3-compatible

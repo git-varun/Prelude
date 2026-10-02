@@ -1,4 +1,4 @@
-import type { ExtractionProvider, OcrProvider } from "@opd/shared";
+import type { ExtractionProvider, OcrProvider } from "@prelude/shared";
 import { AzureDocIntelligenceProvider } from "./ocr/azureDocIntelligence";
 import { GoogleDocumentAiProvider } from "./ocr/googleDocumentAi";
 import { AnthropicExtractionProvider } from "./extraction/anthropicExtraction";

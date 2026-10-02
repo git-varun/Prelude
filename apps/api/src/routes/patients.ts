@@ -1,7 +1,7 @@
 import { sql } from "../db/client";
 import { jsonError } from "../middleware/auth";
 import type { AuthedUser } from "../middleware/auth";
-import { isControlledMarker } from "@opd/shared";
+import { isControlledMarker } from "@prelude/shared";
 import {
   deltaKey, deltaForCurrentFact, deltaForAbsentField, loadDeltaBaselines, LIVE_FACT_FILTER,
   type DeltaBaseline, type DeltaStatus,

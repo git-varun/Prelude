@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { assignCoverageStatus, EXTRACTION_CONFIDENCE_THRESHOLD } from "./rules";
-import type { ExtractedFactCandidate } from "@opd/shared";
+import type { ExtractedFactCandidate } from "@prelude/shared";
 
 function candidate(overrides: Partial<ExtractedFactCandidate> = {}): ExtractedFactCandidate {
   return {

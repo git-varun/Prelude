@@ -63,7 +63,7 @@ test("app loads, login renders, no console errors", async () => {
   });
 
   await page.goto(BASE);
-  await page.getByRole("heading", { name: "OPD Snapshot" }).waitFor();
+  await page.getByRole("heading", { name: "Prelude" }).waitFor();
   await page.getByLabel("Email").waitFor();
   await page.getByLabel("Password").waitFor();
   await page.getByRole("button", { name: "Sign in" }).waitFor();
@@ -139,7 +139,7 @@ test("a failing /config.json shows the connectivity error instead of a blank scr
   await page.route(`${BASE}/config.json`, (route) => route.abort());
   await page.goto(BASE);
   await page.getByText("Couldn't reach the server").waitFor();
-  expect(await page.getByRole("heading", { name: "OPD Snapshot" }).count()).toBeGreaterThan(0);
+  expect(await page.getByRole("heading", { name: "Prelude" }).count()).toBeGreaterThan(0);
   await page.close();
 }, 30_000);
 
@@ -163,7 +163,7 @@ test("a /config.json that never responds still ends in the connectivity error (n
   await page.route(`${BASE}/config.json`, () => {}); // never fulfilled, aborted or continued
   await page.goto(BASE);
   await page.getByText("Couldn't reach the server").waitFor({ timeout: 12_000 });
-  expect(await page.getByRole("heading", { name: "OPD Snapshot" }).count()).toBeGreaterThan(0);
+  expect(await page.getByRole("heading", { name: "Prelude" }).count()).toBeGreaterThan(0);
   await page.close();
 }, 30_000);
 

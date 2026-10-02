@@ -1,4 +1,4 @@
-import type { CoverageStatus, ExtractedFactCandidate } from "@opd/shared";
+import type { CoverageStatus, ExtractedFactCandidate } from "@prelude/shared";
 
 // Below this confidence, a candidate is treated as extraction_uncertain
 // regardless of what the extraction pass itself guessed — a named constant

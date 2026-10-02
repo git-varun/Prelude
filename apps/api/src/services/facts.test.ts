@@ -2,7 +2,7 @@ import { test, expect, beforeAll, afterAll } from "bun:test";
 import { sql } from "../db/client";
 import { persistExtractedFacts } from "./facts";
 import { createTestUser, deleteTestUsers, createTestPatient, deleteTestPatients, type TestUser } from "../test-helpers";
-import type { ExtractedFactCandidate } from "@opd/shared";
+import type { ExtractedFactCandidate } from "@prelude/shared";
 
 let staff: TestUser;
 let patientId: string;

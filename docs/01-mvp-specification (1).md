@@ -1,4 +1,4 @@
-# OPD AI Snapshot Tool — MVP Specification
+# Prelude — MVP Specification
 
 2026-09-19 · @Someone
 
