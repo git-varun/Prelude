@@ -47,5 +47,6 @@ Living trackers (update as work happens; not frozen):
 - [`docs/m1-backlog.md`](docs/m1-backlog.md) / [`docs/m2-backlog.md`](docs/m2-backlog.md) — known issues, resolved items, and design decisions per milestone
 - [`docs/m2-status-and-remaining-work.md`](docs/m2-status-and-remaining-work.md) — summary of M2 work done and the remaining task list
 - [`docs/third-party-services.md`](docs/third-party-services.md) — every external vendor in use, required env vars, free-tier/DPA status
+- [Decisions Log](https://claude.ai/code/artifact/aeadec59-b7b6-4c12-ba6c-d843652a9ca5) — supersedes the retired `docs/m2-tracker.xlsx`
 
 This project was scaffolded using `bun init` in bun v1.3.13. [Bun](https://bun.com) is a fast all-in-one JavaScript runtime.

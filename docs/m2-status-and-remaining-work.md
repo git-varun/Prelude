@@ -44,7 +44,7 @@ Snapshot as of 2026-09-25, after the `m2-extraction-review` branch was merged in
 | U8 | Decide whether to push/merge to a shared remote | There is no remote configured. |
 | U9 | Apply migration 003 to any other database you use; decide on a migration runner | Migrations are applied by hand (compose init mounts only cover fresh databases). |
 | U10 | ~~Decide whether to bump `typescript` 5.9.3 → 7.0.2~~ | Done — bumped to 7.0.2 as a root devDependency (was an unused `^5` peerDependency). Required one fix: an ambient `*.css` module declaration (`apps/web/src/css.d.ts`) for TS7's new `TS2882` side-effect-import check. |
-| U11 | ~~Regenerate or retire `docs/m2-tracker.xlsx`~~ | Done — retired (`git rm`); superseded by the Decisions Log doc (link pending — not found in this repo; needs the doc's URL to add to the README). |
+| U11 | ~~Regenerate or retire `docs/m2-tracker.xlsx`~~ | Done — retired (`git rm`); superseded by the [Decisions Log](https://claude.ai/code/artifact/aeadec59-b7b6-4c12-ba6c-d843652a9ca5), linked from the README's "Living trackers" list. |
 
 ### B. Engineering tasks
 | # | Task | Priority | Reference |
