@@ -1,7 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
-import { CONTROLLED_MARKERS } from "@prelude/shared";
 import type { DocumentType, ExtractedFactCandidate, ExtractionProvider, ExtractionResult, FieldType, OcrResult } from "@prelude/shared";
 
 const MODEL = "claude-opus-5";
@@ -39,7 +38,8 @@ function pageAnnotatedText(ocr: OcrResult): string {
   return ocr.pages.map((page) => `--- Page ${page.pageNumber} ---\n${page.text}`).join("\n\n");
 }
 
-function promptFor(fieldType: FieldType, documentType: DocumentType, ocrText: string): string {
+// Exported for testing the prompt text itself (the marker-matching instruction below).
+export function promptFor(fieldType: FieldType, documentType: DocumentType, ocrText: string): string {
   const common = `You are extracting structured clinical data from OCR'd text of a ${documentType} document for an oncology patient snapshot tool. This is a decision-support aid, not a diagnostic system — extract only what the document explicitly states. Never infer, guess, or fill in a value the source doesn't contain.
 
 Rules:
@@ -60,14 +60,11 @@ ${ocrText}
       return `${common}
 
 Task: extract tumor marker values (lab test results with a numeric or coded value).
-For each marker found, set trackedMarkerLabel to the marker's name. The patient's controlled marker
-list is: ${CONTROLLED_MARKERS.join(", ")}. If the extracted marker name clearly matches one of these
-(allowing for case, punctuation, and spacing differences — e.g. "CA 125" matches "CA-125"), set
-trackedMarkerLabel to that exact controlled name. If it doesn't confidently match any of them, set
-trackedMarkerLabel to the raw name exactly as it appears in the document instead — do not force a
-match, and do not invent a controlled name; resolving that raw name is the caller's job, not yours.
-value/unit/referenceRange are that marker's own reported value, unit, and reference range, if stated
-alongside it.`;
+For each marker found, set trackedMarkerLabel to the marker's name exactly as it appears in the
+document — do not try to match, normalize, or map it to any controlled list yourself; a separate
+deterministic step does that matching from the raw label, and it cannot be trusted to agree with a
+judgment call made here. value/unit/referenceRange are that marker's own reported value, unit, and
+reference range, if stated alongside it.`;
 
     case "reference_range":
       return `${common}

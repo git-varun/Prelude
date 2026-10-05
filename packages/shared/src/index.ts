@@ -1,4 +1,8 @@
-export { CONTROLLED_MARKERS, isControlledMarker } from "./markers";
+export {
+  CONTROLLED_MARKERS, isControlledMarker, matchMarker,
+  MARKER_REGISTRY, DISEASE_SITE_PANELS, DISEASE_SITES, FALLBACK_MARKER_SET,
+} from "./markers";
+export type { MarkerDefinition } from "./markers";
 export type { OcrPage, OcrResult, OcrProvider } from "./providers/ocr";
 export type { ExtractedCoverageStatus, ExtractedFactCandidate, ExtractionProvider, ExtractionResult } from "./providers/extraction";
 

@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type PatientSnapshot, type ReviewFact, type SnapshotField } from "../api/client";
 import { FactCard } from "../components/FactCard";
+import { MarkerDisclaimerFooter } from "../components/MarkerDisclaimerFooter";
+import { withThyroglobulinAdjacency } from "../lib/markerOrder";
 import { navigate } from "../router";
 
 const FIELD_LABELS: Record<string, string> = {
@@ -230,7 +232,7 @@ export function Snapshot({ patientId }: { patientId: string }) {
       />
       <Section
         title="Tumor markers"
-        fields={data.tumor_markers}
+        fields={withThyroglobulinAdjacency(data.tumor_markers)}
         patientId={data.patient.id}
         visitId={visitId}
         onChanged={load}
@@ -242,6 +244,8 @@ export function Snapshot({ patientId }: { patientId: string }) {
         visitId={visitId}
         onChanged={load}
       />
+
+      <MarkerDisclaimerFooter />
     </div>
   );
 }

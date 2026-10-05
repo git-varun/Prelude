@@ -1,6 +1,17 @@
 import { useState, useEffect } from "react";
 import { RoleGate } from "../auth/AuthContext";
 import { api, ApiError, type ReviewFact, type TrackedMarker } from "../api/client";
+import { flagForRange } from "../lib/referenceRange";
+
+const RANGE_FLAG_LABEL: Record<"above" | "below", string> = {
+  above: "Above laboratory reference interval",
+  below: "Below laboratory reference interval",
+};
+
+// Tooltip fixed verbatim (Decisions Log, clinical input).
+function rangeFlagTooltip(rawRange: string | null): string {
+  return `Value exceeds source laboratory reference range (${rawRange}). Verification against original PDF report required.`;
+}
 
 const COVERAGE_LABELS: Record<string, string> = {
   value_found: "Value found",
@@ -92,6 +103,14 @@ export function FactCard({ fact, trackedMarkers, onChanged }: Props) {
             {fact.value ?? <span className="muted">(no value)</span>}
             {fact.unit && ` ${fact.unit}`}
             {fact.reference_range && <span className="muted"> · ref {fact.reference_range}</span>}
+            {(() => {
+              const flag = flagForRange(fact.value, fact.reference_range);
+              return flag ? (
+                <span className="tag tag--range-flag" style={{ marginLeft: 8 }} title={rangeFlagTooltip(fact.reference_range)}>
+                  {RANGE_FLAG_LABEL[flag]}
+                </span>
+              ) : null;
+            })()}
           </p>
           <form
             className="field"

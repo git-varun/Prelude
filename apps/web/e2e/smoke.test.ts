@@ -237,6 +237,17 @@ async function openReviewAs(role: "staff" | "oncologist", stub: StubFact) {
   return { page, errors, posts, signOff, reopen, card };
 }
 
+test("Extraction Review: the persistent marker disclaimer footer renders verbatim", async () => {
+  const { page, errors } = await openReviewAs("staff", { verification_state: "unverified" });
+  await page
+    .getByText(
+      "For clinical information aggregation only. Does not replace professional clinical evaluation or verified laboratory source documents. Tumor marker kinetics must be interpreted alongside histopathological, clinical, and radiological findings.",
+    )
+    .waitFor();
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
 for (const verification_state of ["unverified", "staff_corrected", "reopened_by_oncologist"]) {
   test(`oncologist sees an active Sign off button for a ${verification_state} fact; clicking POSTs and flips it to Reopen`, async () => {
     const { page, errors, posts, signOff, reopen } = await openReviewAs("oncologist", { verification_state });
@@ -504,6 +515,160 @@ test("Snapshot: a new patient (previous_visit.id null) omits 'Since last visit' 
   const { page, errors } = await openSnapshot("staff", body);
   await page.getByRole("heading", { name: "Tumor markers" }).waitFor();
   expect(await page.getByRole("heading", { name: "Since last visit" }).count()).toBe(0);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Snapshot: a marker value above its reference range shows the muted ochre pill with the prescribed tooltip, not a red/terracotta alert", async () => {
+  const body = snapshotBody({
+    tumor_markers: [snapshotField({ fact_id: "f1", marker_name: "CEA", value: "9.0", reference_range: "0-5" })],
+  });
+  const { page, errors } = await openSnapshot("oncologist", body);
+  const card = page.locator(".card", { has: page.getByRole("heading", { name: "CEA" }) });
+  const pill = card.getByText("Above laboratory reference interval");
+  await pill.waitFor();
+  expect(await pill.getAttribute("title")).toBe(
+    "Value exceeds source laboratory reference range (0-5). Verification against original PDF report required.",
+  );
+  expect(await card.getByText("Below laboratory reference interval").count()).toBe(0);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Snapshot: a marker value within its reference range shows no indicator", async () => {
+  const body = snapshotBody({
+    tumor_markers: [snapshotField({ fact_id: "f1", marker_name: "CEA", value: "3.0", reference_range: "0-5" })],
+  });
+  const { page, errors } = await openSnapshot("staff", body);
+  const card = page.locator(".card", { has: page.getByRole("heading", { name: "CEA" }) });
+  await card.getByText("ref 0-5").waitFor();
+  expect(await card.getByText("Above laboratory reference interval").count()).toBe(0);
+  expect(await card.getByText("Below laboratory reference interval").count()).toBe(0);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Snapshot: the persistent marker disclaimer footer renders verbatim", async () => {
+  const body = snapshotBody({ tumor_markers: [snapshotField({ fact_id: "f1", marker_name: "CEA" })] });
+  const { page, errors } = await openSnapshot("staff", body);
+  await page
+    .getByText(
+      "For clinical information aggregation only. Does not replace professional clinical evaluation or verified laboratory source documents. Tumor marker kinetics must be interpreted alongside histopathological, clinical, and radiological findings.",
+    )
+    .waitFor();
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Snapshot: Thyroglobulin always renders adjacent to Anti-Tg, even when the API returns them apart", async () => {
+  const body = snapshotBody({
+    tumor_markers: [
+      snapshotField({ fact_id: "f1", marker_name: "Anti-Tg (TgAb)" }),
+      snapshotField({ fact_id: "f2", marker_name: "CEA" }),
+      snapshotField({ fact_id: "f3", marker_name: "Thyroglobulin (Tg)" }),
+      snapshotField({ fact_id: "f4", marker_name: "Calcitonin" }),
+    ],
+  });
+  const { page, errors } = await openSnapshot("staff", body);
+  const markersSection = page.locator("section", { has: page.getByRole("heading", { name: "Tumor markers" }) });
+  const headings = await markersSection.getByRole("heading", { level: 2 }).allTextContents();
+  const tgIndex = headings.indexOf("Thyroglobulin (Tg)");
+  expect(tgIndex).toBeGreaterThan(-1);
+  expect(headings[tgIndex + 1]).toBe("Anti-Tg (TgAb)");
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Patient create: selecting a disease site pre-checks the union of its marker panel(s)", async () => {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  const errors: string[] = [];
+  page.on("pageerror", (err) => errors.push(`pageerror: ${err.message}`));
+  page.on("console", (msg) => {
+    if (msg.type() === "error") errors.push(`console: ${msg.text()}`);
+  });
+  const cors = { "Access-Control-Allow-Origin": BASE, "Access-Control-Allow-Credentials": "true" };
+  await page.route(`${API}/**`, (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const json = (b: unknown) => route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify(b) });
+    if (path === "/auth/me") return json({ id: "u1", name: "Test Staff", email: "s@opd.local", role: "staff" });
+    return route.fulfill({ status: 404, contentType: "application/json", headers: cors, body: "{}" });
+  });
+
+  await page.goto(`${BASE}/#/patients/new`);
+  await page.getByRole("heading", { name: "New patient" }).waitFor();
+
+  // Fallback set is pre-checked with no site selected.
+  await page.getByRole("checkbox", { name: "CEA" }).waitFor();
+  expect(await page.getByRole("checkbox", { name: "CEA" }).isChecked()).toBe(true);
+  expect(await page.getByRole("checkbox", { name: "CA 15-3" }).isChecked()).toBe(true);
+  expect(await page.getByRole("checkbox", { name: "HE4" }).isChecked()).toBe(false);
+
+  // Selecting Gynecologic replaces the fallback set with exactly that site's panel.
+  await page.getByRole("checkbox", { name: "Gynecologic" }).click();
+  expect(await page.getByRole("checkbox", { name: "HE4" }).isChecked()).toBe(true);
+  expect(await page.getByRole("checkbox", { name: "CA-125" }).isChecked()).toBe(true);
+  expect(await page.getByRole("checkbox", { name: "CEA" }).isChecked()).toBe(true);
+  expect(await page.getByRole("checkbox", { name: "CA 15-3" }).isChecked()).toBe(false);
+
+  // Also selecting Breast unions in its panel on top of Gynecologic's.
+  await page.getByRole("checkbox", { name: "Breast" }).click();
+  expect(await page.getByRole("checkbox", { name: "CA 15-3" }).isChecked()).toBe(true);
+  expect(await page.getByRole("checkbox", { name: "CA-125" }).isChecked()).toBe(true);
+
+  // A manual uncheck survives further site toggles.
+  await page.getByRole("checkbox", { name: "CA-125" }).uncheck();
+  await page.getByRole("checkbox", { name: "Urologic" }).click();
+  expect(await page.getByRole("checkbox", { name: "CA-125" }).isChecked()).toBe(false);
+
+  // Clearing every site brings the fallback set back (except the manual uncheck above).
+  await page.getByRole("checkbox", { name: "Gynecologic" }).click();
+  await page.getByRole("checkbox", { name: "Breast" }).click();
+  await page.getByRole("checkbox", { name: "Urologic" }).click();
+  expect(await page.getByRole("checkbox", { name: "CEA" }).isChecked()).toBe(true);
+  expect(await page.getByRole("checkbox", { name: "CA 15-3" }).isChecked()).toBe(true);
+  expect(await page.getByRole("checkbox", { name: "CA-125" }).isChecked()).toBe(false);
+  expect(await page.getByRole("checkbox", { name: "HE4" }).isChecked()).toBe(false);
+
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Marker Management: lists tracked markers and adds one from the controlled list without a reload", async () => {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  const errors: string[] = [];
+  page.on("pageerror", (err) => errors.push(`pageerror: ${err.message}`));
+  page.on("console", (msg) => {
+    if (msg.type() === "error") errors.push(`console: ${msg.text()}`);
+  });
+  const cors = { "Access-Control-Allow-Origin": BASE, "Access-Control-Allow-Credentials": "true" };
+  let markers = [{ id: "m1", marker_name: "CEA", is_custom: false, added_at: "2026-01-01", added_by: "u1" }];
+  await page.route(`${API}/**`, (route) => {
+    const req = route.request();
+    const path = new URL(req.url()).pathname;
+    const json = (b: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", headers: cors, body: JSON.stringify(b) });
+    if (path === "/auth/me") return json({ id: "u1", name: "Test Staff", email: "s@opd.local", role: "staff" });
+    if (path === "/patients/p1" && req.method() === "GET") {
+      return json({ id: "p1", name: "Test Patient", cancer_type: "Breast", created_at: "2026-01-01", created_by: "u1", tracked_markers: markers });
+    }
+    if (path === "/patients/p1/markers" && req.method() === "POST") {
+      const body = JSON.parse(req.postData() ?? "{}");
+      const row = { id: "m2", marker_name: body.marker_name, is_custom: false, added_at: "2026-02-01", added_by: "u1" };
+      markers = [...markers, row];
+      return json(row, 201);
+    }
+    return json({}, 404);
+  });
+
+  await page.goto(`${BASE}/#/patients/p1/markers`);
+  await page.getByRole("heading", { name: "Tracked markers — Test Patient" }).waitFor();
+  await page.getByText("CEA", { exact: true }).waitFor();
+
+  await page.getByLabel("From the controlled list").selectOption("CA 19-9");
+  await page.getByRole("button", { name: "Add" }).first().click();
+  await page.getByText("CA 19-9", { exact: true }).waitFor();
+
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);

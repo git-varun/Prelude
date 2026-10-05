@@ -14,6 +14,11 @@
   --color-role-oncologist-soft: #f3e3da;
   --color-danger: #a13d2e;
   --color-success: #3f6e63;
+  /* Out-of-reference-range indicator only — a muted ochre neutral, deliberately distinct
+     from --color-accent (terracotta) and --color-danger (red): the Decisions Log's clinical
+     input is explicit that this indicator must never read as a clinical alarm. */
+  --color-range-flag: #8a6d2e;
+  --color-range-flag-soft: #f1e9d6;
 
   --radius-sm: 6px;
   --radius-md: 10px;
@@ -324,6 +329,20 @@ select {
   background: var(--color-role-staff-soft);
   color: var(--color-role-staff);
   border-color: transparent;
+}
+
+.tag--range-flag {
+  background: var(--color-range-flag-soft);
+  color: var(--color-range-flag);
+  border-color: transparent;
+}
+
+.app-footer-disclaimer {
+  margin-top: var(--space-6);
+  padding-top: var(--space-4);
+  border-top: 1px solid var(--color-border);
+  color: var(--color-text-muted);
+  font-size: 12px;
 }
 
 .error-banner {

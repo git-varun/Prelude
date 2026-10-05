@@ -1,22 +1,52 @@
 import { useState, type FormEvent } from "react";
-import { CONTROLLED_MARKERS } from "@prelude/shared";
+import { CONTROLLED_MARKERS, DISEASE_SITES, DISEASE_SITE_PANELS, FALLBACK_MARKER_SET } from "@prelude/shared";
 import { api, ApiError } from "../api/client";
 import { navigate } from "../router";
 
 export function PatientCreate() {
   const [name, setName] = useState("");
   const [cancerType, setCancerType] = useState("");
-  const [selectedMarkers, setSelectedMarkers] = useState<Set<string>>(new Set());
+  const [selectedSites, setSelectedSites] = useState<Set<string>>(new Set());
+  // The checked set is derived, not stored directly: `auto` (the union of selected
+  // sites' panels, or the fallback set when none is selected) with `manualOn`/
+  // `manualOff` layered on top, so a deliberate check/uncheck survives a later site
+  // toggle instead of being silently overwritten by the new auto set.
+  const [manualOn, setManualOn] = useState<Set<string>>(new Set());
+  const [manualOff, setManualOff] = useState<Set<string>>(new Set());
   const [customMarker, setCustomMarker] = useState("");
   const [customMarkers, setCustomMarkers] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
 
+  const autoMarkers =
+    selectedSites.size === 0 ? FALLBACK_MARKER_SET : [...selectedSites].flatMap((s) => DISEASE_SITE_PANELS[s]!);
+  const selectedMarkers = new Set(
+    [...autoMarkers, ...manualOn].filter((marker) => !manualOff.has(marker)),
+  );
+
   function toggleMarker(marker: string) {
-    setSelectedMarkers((prev) => {
+    if (selectedMarkers.has(marker)) {
+      setManualOff((prev) => new Set(prev).add(marker));
+      setManualOn((prev) => {
+        const next = new Set(prev);
+        next.delete(marker);
+        return next;
+      });
+    } else {
+      setManualOn((prev) => new Set(prev).add(marker));
+      setManualOff((prev) => {
+        const next = new Set(prev);
+        next.delete(marker);
+        return next;
+      });
+    }
+  }
+
+  function toggleSite(site: string) {
+    setSelectedSites((prev) => {
       const next = new Set(prev);
-      if (next.has(marker)) next.delete(marker);
-      else next.add(marker);
+      if (next.has(site)) next.delete(site);
+      else next.add(site);
       return next;
     });
   }
@@ -64,6 +94,21 @@ export function PatientCreate() {
             <label htmlFor="cancer-type">Cancer type</label>
             <input id="cancer-type" value={cancerType} onChange={(e) => setCancerType(e.target.value)} required />
           </div>
+        </div>
+
+        <div className="card">
+          <h2>Primary disease site</h2>
+          <p className="field-hint" style={{ marginBottom: 16 }}>
+            Selecting a site pre-checks its default marker panel below. No site selected uses the generic fallback
+            panel. Select multiple sites to union their panels.
+          </p>
+
+          {DISEASE_SITES.map((site) => (
+            <label key={site} className="checkbox-row">
+              <input type="checkbox" checked={selectedSites.has(site)} onChange={() => toggleSite(site)} />
+              {site}
+            </label>
+          ))}
         </div>
 
         <div className="card">

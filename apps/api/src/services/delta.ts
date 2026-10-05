@@ -4,6 +4,13 @@ export type DeltaStatus = "new" | "changed" | "unchanged" | "not_observed_in_cur
 
 export interface DeltaBaseline {
   value: string | null;
+  unit: string | null;
+}
+
+// Case/whitespace-tolerant only — never a unit-conversion step. Units are
+// displayed exactly as reported and never converted (Decisions Log).
+function normalizeUnit(unit: string | null): string | null {
+  return unit === null ? null : unit.trim().toLowerCase();
 }
 
 export function deltaKey(fieldType: string, trackedMarkerId: string | null): string {
@@ -23,7 +30,7 @@ export const LIVE_FACT_FILTER = sql`
 export async function loadDeltaBaselines(patientId: string, currentVisitDate: string): Promise<Map<string, DeltaBaseline>> {
   const rows = await sql`
     WITH prior AS (
-      SELECT f.field_type, f.tracked_marker_id, f.value,
+      SELECT f.field_type, f.tracked_marker_id, f.value, f.unit,
              RANK() OVER (
                PARTITION BY f.field_type, f.tracked_marker_id
                ORDER BY v.visit_date DESC, f.as_of_date DESC NULLS LAST, f.id DESC
@@ -34,19 +41,27 @@ export async function loadDeltaBaselines(patientId: string, currentVisitDate: st
         AND v.visit_date < ${currentVisitDate}::date
         AND ${LIVE_FACT_FILTER}
     )
-    SELECT field_type, tracked_marker_id, value FROM prior WHERE rnk = 1
+    SELECT field_type, tracked_marker_id, value, unit FROM prior WHERE rnk = 1
   `;
 
   const map = new Map<string, DeltaBaseline>();
   for (const row of rows) {
-    map.set(deltaKey(row.field_type, row.tracked_marker_id), { value: row.value });
+    map.set(deltaKey(row.field_type, row.tracked_marker_id), { value: row.value, unit: row.unit });
   }
   return map;
 }
 
-/** delta_status for a FACT that exists in the current visit's document set. */
-export function deltaForCurrentFact(value: string | null, baseline: DeltaBaseline | undefined): DeltaStatus {
+// delta_status for a FACT that exists in the current visit's document set.
+// Units are never converted: a unit change (even with an identical value
+// string) is always 'changed'; values are compared only once units match
+// exactly, case/whitespace-normalized (Decisions Log, clinical input).
+export function deltaForCurrentFact(
+  value: string | null,
+  unit: string | null,
+  baseline: DeltaBaseline | undefined,
+): DeltaStatus {
   if (!baseline) return "new";
+  if (normalizeUnit(unit) !== normalizeUnit(baseline.unit)) return "changed";
   return value === baseline.value ? "unchanged" : "changed";
 }
 

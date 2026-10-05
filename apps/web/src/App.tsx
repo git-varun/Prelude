@@ -5,9 +5,10 @@ import { Login } from "./screens/Login";
 import { PatientList } from "./screens/PatientList";
 import { PatientCreate } from "./screens/PatientCreate";
 import { Upload } from "./screens/Upload";
-import { useHashRoute, matchPatientUpload, matchDocumentReview, matchPatientSnapshot, matchDocumentSource } from "./router";
+import { useHashRoute, matchPatientUpload, matchDocumentReview, matchPatientSnapshot, matchPatientMarkers, matchDocumentSource } from "./router";
 import { ExtractionReview } from "./screens/ExtractionReview";
 import { Snapshot } from "./screens/Snapshot";
+import { MarkerManagement } from "./screens/MarkerManagement";
 import { SourceView } from "./screens/SourceView";
 
 function Routed() {
@@ -20,6 +21,7 @@ function Routed() {
   const uploadPatientId = matchPatientUpload(route);
   const reviewDocumentId = matchDocumentReview(route);
   const snapshotPatientId = matchPatientSnapshot(route);
+  const markersPatientId = matchPatientMarkers(route);
   const source = matchDocumentSource(route);
 
   let screen: ReactNode;
@@ -31,6 +33,8 @@ function Routed() {
     screen = <ExtractionReview documentId={reviewDocumentId} />;
   } else if (snapshotPatientId) {
     screen = <Snapshot patientId={snapshotPatientId} />;
+  } else if (markersPatientId) {
+    screen = <MarkerManagement patientId={markersPatientId} />;
   } else if (route === "/patients/new") {
     screen = <PatientCreate />;
   } else {

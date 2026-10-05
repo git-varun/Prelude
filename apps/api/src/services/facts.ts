@@ -1,5 +1,6 @@
 import { sql } from "../db/client";
 import { assignCoverageStatus, detectConflicts } from "./rules";
+import { matchMarker } from "@prelude/shared";
 import type { ExtractedFactCandidate } from "@prelude/shared";
 
 interface DocumentContext {
@@ -57,8 +58,15 @@ export async function persistExtractedFacts(
     const trackedMarkerRows = await tx`
       SELECT id, marker_name FROM tracked_markers WHERE patient_id = ${document.patient_id}
     `;
+    // Keyed by canonical name (falling back to the tracked marker's own name when it
+    // doesn't resolve to one, e.g. a custom marker) so a tracked marker named by any
+    // alias — "PSA", not just "Total PSA" — still matches a raw label normalized to
+    // the same canonical name.
     const trackedMarkerIdByName = new Map<string, string>(
-      trackedMarkerRows.map((row: any) => [String(row.marker_name).trim().toLowerCase(), row.id as string]),
+      trackedMarkerRows.map((row: any) => {
+        const name = String(row.marker_name);
+        return [(matchMarker(name) ?? name).trim().toLowerCase(), row.id as string];
+      }),
     );
 
     const createdFactIds: string[] = [];
@@ -70,7 +78,13 @@ export async function persistExtractedFacts(
       let coverageStatus = assignCoverageStatus(candidate);
 
       if (candidate.trackedMarkerLabel) {
-        const matchId = trackedMarkerIdByName.get(candidate.trackedMarkerLabel.trim().toLowerCase());
+        // matchMarker is the deterministic (in-code, not LLM-trusted) normalization step:
+        // it resolves a raw extracted label like "Carcinoembryonic Antigen" to its
+        // canonical controlled name ("CEA") before looking up the patient's tracked
+        // markers, so a tracked marker named "CEA" still matches. No canonical match
+        // falls back to the raw label unchanged (custom markers, genuinely unmapped names).
+        const lookupLabel = matchMarker(candidate.trackedMarkerLabel) ?? candidate.trackedMarkerLabel;
+        const matchId = trackedMarkerIdByName.get(lookupLabel.trim().toLowerCase());
         if (matchId) {
           trackedMarkerId = matchId;
         } else {

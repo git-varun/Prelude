@@ -370,7 +370,7 @@ function buildSingleKeyBlock(
     const delta = deltaForAbsentField(baseline);
     return delta === null ? [] : [fieldObject(EMPTY_ROW, fieldType, conflictsByFactId, delta)];
   }
-  return rows.map((r) => fieldObject(r, fieldType, conflictsByFactId, deltaForCurrentFact(r.value, baseline)));
+  return rows.map((r) => fieldObject(r, fieldType, conflictsByFactId, deltaForCurrentFact(r.value, r.unit, baseline)));
 }
 
 export async function getPatientSnapshot(req: Request & { params: { id: string } }): Promise<Response> {
@@ -403,7 +403,7 @@ export async function getPatientSnapshot(req: Request & { params: { id: string }
 
   const tumorMarkers = markerRows.map((r) => {
     const baseline = baselines.get(deltaKey("marker_value", r.tracked_marker_id ?? null));
-    const delta = r.fact_id ? deltaForCurrentFact(r.value, baseline) : deltaForAbsentField(baseline);
+    const delta = r.fact_id ? deltaForCurrentFact(r.value, r.unit, baseline) : deltaForAbsentField(baseline);
     return fieldObject(r, "marker_value", conflicts, delta);
   });
   const currentTreatment = buildSingleKeyBlock(treatmentRows, "treatment_regimen", baselines, conflicts);

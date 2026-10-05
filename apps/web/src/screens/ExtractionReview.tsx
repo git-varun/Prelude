@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, ApiError, type DocumentReview } from "../api/client";
 import { FactCard } from "../components/FactCard";
+import { MarkerDisclaimerFooter } from "../components/MarkerDisclaimerFooter";
 import { navigate } from "../router";
 
 export function ExtractionReview({ documentId }: { documentId: string }) {
@@ -152,6 +153,8 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
           ))}
         </>
       )}
+
+      <MarkerDisclaimerFooter />
     </div>
   );
 }

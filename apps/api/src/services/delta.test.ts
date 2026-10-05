@@ -4,23 +4,39 @@ import { deltaKey, deltaForCurrentFact, deltaForAbsentField, loadDeltaBaselines 
 import { createTestUser, deleteTestUsers, createTestPatient, deleteTestPatients, type TestUser } from "../test-helpers";
 
 test("deltaForCurrentFact returns 'new' when there is no prior baseline", () => {
-  expect(deltaForCurrentFact("4.2", undefined)).toBe("new");
+  expect(deltaForCurrentFact("4.2", "ng/mL", undefined)).toBe("new");
 });
 
-test("deltaForCurrentFact returns 'unchanged' when the value matches the baseline", () => {
-  expect(deltaForCurrentFact("4.2", { value: "4.2" })).toBe("unchanged");
+test("deltaForCurrentFact returns 'unchanged' when the value and unit match the baseline", () => {
+  expect(deltaForCurrentFact("4.2", "ng/mL", { value: "4.2", unit: "ng/mL" })).toBe("unchanged");
 });
 
 test("deltaForCurrentFact returns 'changed' when the value differs from the baseline", () => {
-  expect(deltaForCurrentFact("5.0", { value: "4.2" })).toBe("changed");
+  expect(deltaForCurrentFact("5.0", "ng/mL", { value: "4.2", unit: "ng/mL" })).toBe("changed");
 });
 
 test("deltaForCurrentFact treats a null current value matching a null baseline as unchanged", () => {
-  expect(deltaForCurrentFact(null, { value: null })).toBe("unchanged");
+  expect(deltaForCurrentFact(null, null, { value: null, unit: null })).toBe("unchanged");
+});
+
+// Units are never converted (Decisions Log, clinical input): a unit change is always
+// 'changed', even when the value string is identical, and values are compared only
+// when units match exactly (after case/whitespace normalization).
+test("deltaForCurrentFact returns 'changed' on a unit change even when the value is identical", () => {
+  expect(deltaForCurrentFact("4.2", "µg/L", { value: "4.2", unit: "ng/mL" })).toBe("changed");
+});
+
+test("deltaForCurrentFact tolerates case/whitespace differences in unit, not unit differences themselves", () => {
+  expect(deltaForCurrentFact("4.2", " NG/mL ", { value: "4.2", unit: "ng/mL" })).toBe("unchanged");
+});
+
+test("deltaForCurrentFact returns 'changed' when a unit appears where the baseline had none, or vice versa", () => {
+  expect(deltaForCurrentFact("4.2", "ng/mL", { value: "4.2", unit: null })).toBe("changed");
+  expect(deltaForCurrentFact("4.2", null, { value: "4.2", unit: "ng/mL" })).toBe("changed");
 });
 
 test("deltaForAbsentField returns 'not_observed_in_current_document_set' when a prior baseline exists", () => {
-  expect(deltaForAbsentField({ value: "4.2" })).toBe("not_observed_in_current_document_set");
+  expect(deltaForAbsentField({ value: "4.2", unit: "ng/mL" })).toBe("not_observed_in_current_document_set");
 });
 
 test("deltaForAbsentField returns null when there is no prior baseline at all", () => {
@@ -68,13 +84,13 @@ async function newDocument(visitId: string): Promise<string> {
 
 async function newFact(visitId: string, o: Record<string, unknown> = {}): Promise<string> {
   const f = {
-    fieldType: "marker_value", value: "4.2", asOf: "2026-01-01", verification: "unverified",
+    fieldType: "marker_value", value: "4.2", unit: "ng/mL", asOf: "2026-01-01", verification: "unverified",
     markerId: markerId as string | null, ...o,
   };
   const [row] = await sql`
-    INSERT INTO facts (patient_id, visit_id, document_id, tracked_marker_id, field_type, value, as_of_date,
+    INSERT INTO facts (patient_id, visit_id, document_id, tracked_marker_id, field_type, value, unit, as_of_date,
       coverage_status, verification_state, signed_off_by)
-    VALUES (${patientId}, ${visitId}, ${await newDocument(visitId)}, ${f.markerId}, ${f.fieldType}, ${f.value},
+    VALUES (${patientId}, ${visitId}, ${await newDocument(visitId)}, ${f.markerId}, ${f.fieldType}, ${f.value}, ${f.unit},
       ${f.asOf}, 'value_found', ${f.verification}, ${f.verification === "oncologist_signed_off" ? oncologist.id : null})
     RETURNING id`;
   return row.id;
@@ -92,7 +108,7 @@ test("loadDeltaBaselines reaches back past an intervening visit with no signed-o
   await newFact(v1, { markerId: otherMarkerId, verification: "oncologist_signed_off", value: "7.7" });
   // v2 has no signed-off fact for otherMarkerId at all.
   const baselines = await loadDeltaBaselines(patientId, "2026-03-01");
-  expect(baselines.get(deltaKey("marker_value", otherMarkerId))).toEqual({ value: "7.7" });
+  expect(baselines.get(deltaKey("marker_value", otherMarkerId))).toEqual({ value: "7.7", unit: "ng/mL" });
 });
 
 test("loadDeltaBaselines picks the most recent prior visit's signed-off fact when multiple prior visits qualify", async () => {
@@ -101,7 +117,7 @@ test("loadDeltaBaselines picks the most recent prior visit's signed-off fact whe
   await newFact(v1, { markerId: m, verification: "oncologist_signed_off", value: "old" });
   await newFact(v2, { markerId: m, verification: "oncologist_signed_off", value: "newer" });
   const baselines = await loadDeltaBaselines(patientId, "2026-03-01");
-  expect(baselines.get(deltaKey("marker_value", m))).toEqual({ value: "newer" });
+  expect(baselines.get(deltaKey("marker_value", m))).toEqual({ value: "newer", unit: "ng/mL" });
 });
 
 test("loadDeltaBaselines never includes a fact from the current visit or a later one", async () => {
@@ -117,7 +133,7 @@ test("loadDeltaBaselines treats a custom marker exactly like a controlled one: k
     INSERT INTO tracked_markers (patient_id, marker_name, is_custom, added_by) VALUES (${patientId}, 'Some Custom Marker', true, ${staff.id}) RETURNING id`;
   await newFact(v1, { markerId: customId, verification: "oncologist_signed_off", value: "custom-baseline" });
   const baselines = await loadDeltaBaselines(patientId, "2026-03-01");
-  expect(baselines.get(deltaKey("marker_value", customId))).toEqual({ value: "custom-baseline" });
+  expect(baselines.get(deltaKey("marker_value", customId))).toEqual({ value: "custom-baseline", unit: "ng/mL" });
 });
 
 test("loadDeltaBaselines never picks a fact that lost an authoritative-pick conflict resolution, even if it's the later-dated signed-off fact", async () => {
@@ -130,7 +146,7 @@ test("loadDeltaBaselines never picks a fact that lost an authoritative-pick conf
 
   try {
     const baselines = await loadDeltaBaselines(patientId, "2026-03-01");
-    expect(baselines.get(deltaKey("marker_value", m))).toEqual({ value: "4.0" });
+    expect(baselines.get(deltaKey("marker_value", m))).toEqual({ value: "4.0", unit: "ng/mL" });
   } finally {
     await sql`DELETE FROM conflicts WHERE id = ${conflictId}`;
   }

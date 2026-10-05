@@ -1,6 +1,16 @@
 import { test, expect } from "bun:test";
 import type { ExtractedFactCandidate, FieldType } from "@prelude/shared";
-import { AnthropicExtractionProvider, normalizeAsOfDate } from "./anthropicExtraction";
+import { AnthropicExtractionProvider, normalizeAsOfDate, promptFor } from "./anthropicExtraction";
+
+// Deterministic marker matching (matchMarker, services/facts.ts) is the only place a raw
+// extracted label is ever resolved to a controlled canonical name — never the LLM, which
+// cannot be trusted to apply the hard-negative rules (Free PSA vs Total PSA, etc.)
+// consistently. The prompt must ask for the label verbatim, not attempt the match itself.
+test("the marker_value prompt asks for the raw label verbatim, never asking the model to match a controlled list", () => {
+  const prompt = promptFor("marker_value", "blood", "some ocr text");
+  expect(prompt).not.toMatch(/controlled marker/i);
+  expect(prompt).toMatch(/exactly as it appears/i);
+});
 
 function candidate(fieldType: FieldType): ExtractedFactCandidate {
   return {

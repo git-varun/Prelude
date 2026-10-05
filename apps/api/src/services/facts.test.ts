@@ -240,3 +240,72 @@ test("copies null source fields through as-is rather than inventing them", async
   expect(fact.source_location).toBeNull();
   expect(fact.source_snippet).toBeNull();
 });
+
+test("matches a raw label against a tracked marker's canonical name via a synonym alias", async () => {
+  await sql`
+    INSERT INTO tracked_markers (patient_id, marker_name, is_custom, added_by)
+    VALUES (${patientId}, 'CA 19-9', false, ${staff.id})
+  `;
+
+  const result = await persistExtractedFacts(
+    docContext(),
+    [candidate({ trackedMarkerLabel: "CA19-9", asOfDate: "2026-05-01" })],
+    staff.id,
+  );
+
+  const [fact] = await sql`SELECT * FROM facts WHERE id = ${result.createdFactIds[0]}`;
+  expect(fact.tracked_marker_id).not.toBeNull();
+  expect(fact.raw_marker_label).toBeNull();
+});
+
+test("matches when the tracked marker itself is named by an alias, not the canonical name", async () => {
+  await sql`
+    INSERT INTO tracked_markers (patient_id, marker_name, is_custom, added_by)
+    VALUES (${patientId}, 'PSA', false, ${staff.id})
+  `;
+
+  const result = await persistExtractedFacts(
+    docContext(),
+    [candidate({ trackedMarkerLabel: "PSA", asOfDate: "2026-05-03" })],
+    staff.id,
+  );
+
+  const [fact] = await sql`SELECT * FROM facts WHERE id = ${result.createdFactIds[0]}`;
+  expect(fact.tracked_marker_id).not.toBeNull();
+  expect(fact.raw_marker_label).toBeNull();
+});
+
+test("matches a raw alias label against a tracked marker named by a different alias of the same canonical marker", async () => {
+  await sql`
+    INSERT INTO tracked_markers (patient_id, marker_name, is_custom, added_by)
+    VALUES (${patientId}, 'PSA', false, ${staff.id})
+  `;
+
+  const result = await persistExtractedFacts(
+    docContext(),
+    [candidate({ trackedMarkerLabel: "tPSA", asOfDate: "2026-05-04" })],
+    staff.id,
+  );
+
+  const [fact] = await sql`SELECT * FROM facts WHERE id = ${result.createdFactIds[0]}`;
+  expect(fact.tracked_marker_id).not.toBeNull();
+  expect(fact.raw_marker_label).toBeNull();
+});
+
+test("never matches Free PSA to a tracked Total PSA marker (hard negative)", async () => {
+  await sql`
+    INSERT INTO tracked_markers (patient_id, marker_name, is_custom, added_by)
+    VALUES (${patientId}, 'Total PSA', false, ${staff.id})
+  `;
+
+  const result = await persistExtractedFacts(
+    docContext(),
+    [candidate({ trackedMarkerLabel: "Free PSA", asOfDate: "2026-05-02" })],
+    staff.id,
+  );
+
+  const [fact] = await sql`SELECT * FROM facts WHERE id = ${result.createdFactIds[0]}`;
+  expect(fact.tracked_marker_id).toBeNull();
+  expect(fact.raw_marker_label).toBe("Free PSA");
+  expect(fact.coverage_status).toBe("extraction_uncertain");
+});
