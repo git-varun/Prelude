@@ -17,30 +17,35 @@ const staff = await upsertUser("Dev Staff", "staff@opd.local", "staff-password",
 const oncologist = await upsertUser("Dev Oncologist", "oncologist@opd.local", "onc-password", "oncologist");
 
 // One demo patient per disease-site panel, for the walkthrough demo — realistic
-// multi-visit values (an older signed-off visit establishing a delta baseline, plus
-// a current visit), with a few values deliberately outside the reference range to
-// demonstrate the out-of-range pill (docs/M5).
+// multi-visit values (two signed-off historical visits, plus a current visit), with
+// a few values deliberately outside the reference range to demonstrate the
+// out-of-range pill (docs/M5) and at least 2 signed-off points per marker to
+// demonstrate the trend chart (docs/M6).
 interface MarkerDemoData {
   unit: string;
   range: string;
+  earliest: string;
   baseline: string;
   current: string;
 }
 
+// earliest + baseline are both oncologist_signed_off, so every demo marker has >= 2
+// signed-off points for the Snapshot's per-marker trend chart (M6); current stays
+// unverified, the pre-existing "needs review" demo state.
 const MARKER_DEMO_DATA: Record<string, MarkerDemoData> = {
-  "CEA": { unit: "ng/mL", range: "0-5", baseline: "3.0", current: "3.2" },
-  "CA 19-9": { unit: "U/mL", range: "0-37", baseline: "20", current: "25" },
-  "CA-125": { unit: "U/mL", range: "0-35", baseline: "18", current: "18" },
-  "CA 15-3": { unit: "U/mL", range: "0-30", baseline: "15", current: "15" },
-  "AFP": { unit: "ng/mL", range: "0-10", baseline: "4", current: "4" },
-  "Total PSA": { unit: "ng/mL", range: "0-4", baseline: "2.1", current: "2.3" },
-  "Beta-hCG": { unit: "mIU/mL", range: "<5", baseline: "1", current: "1" },
-  "LDH": { unit: "U/L", range: "140-280", baseline: "200", current: "210" },
-  "HE4": { unit: "pmol/L", range: "<140", baseline: "80", current: "90" },
-  "CA 72-4": { unit: "U/mL", range: "0-6.9", baseline: "3", current: "3" },
-  "Thyroglobulin (Tg)": { unit: "ng/mL", range: "0-55", baseline: "20", current: "20" },
-  "Anti-Tg (TgAb)": { unit: "IU/mL", range: "0-4.5", baseline: "2", current: "2" },
-  "Calcitonin": { unit: "pg/mL", range: "0-10", baseline: "5", current: "5" },
+  "CEA": { unit: "ng/mL", range: "0-5", earliest: "2.4", baseline: "3.0", current: "3.2" },
+  "CA 19-9": { unit: "U/mL", range: "0-37", earliest: "16", baseline: "20", current: "25" },
+  "CA-125": { unit: "U/mL", range: "0-35", earliest: "15", baseline: "18", current: "18" },
+  "CA 15-3": { unit: "U/mL", range: "0-30", earliest: "13", baseline: "15", current: "15" },
+  "AFP": { unit: "ng/mL", range: "0-10", earliest: "3.5", baseline: "4", current: "4" },
+  "Total PSA": { unit: "ng/mL", range: "0-4", earliest: "1.8", baseline: "2.1", current: "2.3" },
+  "Beta-hCG": { unit: "mIU/mL", range: "<5", earliest: "1", baseline: "1", current: "1" },
+  "LDH": { unit: "U/L", range: "140-280", earliest: "190", baseline: "200", current: "210" },
+  "HE4": { unit: "pmol/L", range: "<140", earliest: "70", baseline: "80", current: "90" },
+  "CA 72-4": { unit: "U/mL", range: "0-6.9", earliest: "2.7", baseline: "3", current: "3" },
+  "Thyroglobulin (Tg)": { unit: "ng/mL", range: "0-55", earliest: "18", baseline: "20", current: "20" },
+  "Anti-Tg (TgAb)": { unit: "IU/mL", range: "0-4.5", earliest: "1.8", baseline: "2", current: "2" },
+  "Calcitonin": { unit: "pg/mL", range: "0-10", earliest: "4.5", baseline: "5", current: "5" },
 };
 
 // A few deliberately out-of-range current values, keyed by "<site>::<marker>".
@@ -62,11 +67,18 @@ async function seedDemoPatient(site: string, markers: readonly string[]) {
     INSERT INTO patients (name, cancer_type, created_by) VALUES (${name}, ${site}, ${staff.id}) RETURNING id
   `;
 
+  const [earliestVisit] = await sql`
+    INSERT INTO visits (patient_id, visit_date) VALUES (${patient.id}, '2025-11-15') RETURNING id
+  `;
   const [oldVisit] = await sql`
     INSERT INTO visits (patient_id, visit_date) VALUES (${patient.id}, '2026-01-15') RETURNING id
   `;
   const [currentVisit] = await sql`
     INSERT INTO visits (patient_id, visit_date) VALUES (${patient.id}, '2026-03-15') RETURNING id
+  `;
+  const [earliestDoc] = await sql`
+    INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, ocr_status)
+    VALUES (${patient.id}, ${earliestVisit.id}, 'local://seed/earliest.pdf', 'blood', 'own_hospital', ${staff.id}, 'done') RETURNING id
   `;
   const [oldDoc] = await sql`
     INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, ocr_status)
@@ -82,6 +94,13 @@ async function seedDemoPatient(site: string, markers: readonly string[]) {
     const [tracked] = await sql`
       INSERT INTO tracked_markers (patient_id, marker_name, is_custom, added_by)
       VALUES (${patient.id}, ${marker}, false, ${staff.id}) RETURNING id
+    `;
+
+    await sql`
+      INSERT INTO facts (patient_id, visit_id, document_id, tracked_marker_id, field_type, value, unit,
+        reference_range, as_of_date, coverage_status, verification_state, signed_off_by, signed_off_at)
+      VALUES (${patient.id}, ${earliestVisit.id}, ${earliestDoc.id}, ${tracked.id}, 'marker_value', ${data.earliest}, ${data.unit},
+        ${data.range}, '2025-11-15', 'value_found', 'oncologist_signed_off', ${oncologist.id}, now())
     `;
 
     await sql`

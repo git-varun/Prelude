@@ -430,7 +430,7 @@ function snapshotBody(overrides: Record<string, unknown> = {}) {
   };
 }
 
-async function openSnapshot(role: "staff" | "oncologist", body: unknown) {
+async function openSnapshot(role: "staff" | "oncologist", body: unknown, trends: Record<string, unknown> = {}) {
   const page = await browser.newPage();
   page.setDefaultTimeout(5000);
   const errors: string[] = [];
@@ -444,6 +444,8 @@ async function openSnapshot(role: "staff" | "oncologist", body: unknown) {
     const json = (b: unknown) => route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify(b) });
     if (path === "/auth/me") return json({ id: "u1", name: "Test", email: "t@opd.local", role });
     if (path === "/patients/p1/snapshot") return json(body);
+    const trendMatch = path.match(/^\/patients\/p1\/markers\/([^/]+)\/trend$/);
+    if (trendMatch) return json(trends[trendMatch[1]!] ?? { marker_name: "", points: [] });
     return route.fulfill({ status: 404, contentType: "application/json", headers: cors, body: "{}" });
   });
   await page.goto(`${BASE}/#/patients/p1/snapshot`);
@@ -556,6 +558,84 @@ test("Snapshot: the persistent marker disclaimer footer renders verbatim", async
       "For clinical information aggregation only. Does not replace professional clinical evaluation or verified laboratory source documents. Tumor marker kinetics must be interpreted alongside histopathological, clinical, and radiological findings.",
     )
     .waitFor();
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Snapshot: a tumor marker with 2+ signed-off trend points renders a chart", async () => {
+  const body = snapshotBody({
+    tumor_markers: [snapshotField({ fact_id: "f1", tracked_marker_id: "m1", marker_name: "CEA" })],
+  });
+  const trends = {
+    m1: {
+      marker_name: "CEA",
+      points: [
+        { fact_id: "t1", value: "3.0", unit: "ng/mL", reference_range: "0-5", as_of_date: "2026-01-01", visit_id: "v1" },
+        { fact_id: "t2", value: "4.0", unit: "ng/mL", reference_range: "0-5", as_of_date: "2026-02-01", visit_id: "v2" },
+      ],
+    },
+  };
+  const { page, errors } = await openSnapshot("staff", body, trends);
+  await page.getByRole("heading", { name: "CEA" }).waitFor();
+  await page.locator("svg[role='img']").waitFor();
+  expect(await page.getByText("Units differ").count()).toBe(0);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Snapshot: trend points with differing reference ranges render a chart with no band", async () => {
+  const body = snapshotBody({
+    tumor_markers: [snapshotField({ fact_id: "f1", tracked_marker_id: "m1", marker_name: "CEA" })],
+  });
+  const trends = {
+    m1: {
+      marker_name: "CEA",
+      points: [
+        { fact_id: "t1", value: "3.0", unit: "ng/mL", reference_range: "0-5", as_of_date: "2026-01-01", visit_id: "v1" },
+        { fact_id: "t2", value: "4.0", unit: "ng/mL", reference_range: "0-6", as_of_date: "2026-02-01", visit_id: "v2" },
+      ],
+    },
+  };
+  const { page, errors } = await openSnapshot("staff", body, trends);
+  await page.getByRole("heading", { name: "CEA" }).waitFor();
+  const svg = page.locator("svg[role='img']");
+  await svg.waitFor();
+  expect(await svg.locator("rect").count()).toBe(0);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Snapshot: fewer than 2 trend points renders no chart", async () => {
+  const body = snapshotBody({
+    tumor_markers: [snapshotField({ fact_id: "f1", tracked_marker_id: "m1", marker_name: "CEA" })],
+  });
+  const trends = {
+    m1: { marker_name: "CEA", points: [{ fact_id: "t1", value: "3.0", unit: "ng/mL", reference_range: "0-5", as_of_date: "2026-01-01", visit_id: "v1" }] },
+  };
+  const { page, errors } = await openSnapshot("staff", body, trends);
+  await page.getByRole("heading", { name: "CEA" }).waitFor();
+  await page.waitForTimeout(300); // let the trend fetch settle before asserting absence
+  expect(await page.locator("svg[role='img']").count()).toBe(0);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Snapshot: mixed-unit trend points show a 'units differ' note instead of a chart", async () => {
+  const body = snapshotBody({
+    tumor_markers: [snapshotField({ fact_id: "f1", tracked_marker_id: "m1", marker_name: "CEA" })],
+  });
+  const trends = {
+    m1: {
+      marker_name: "CEA",
+      points: [
+        { fact_id: "t1", value: "3.0", unit: "ng/mL", reference_range: "0-5", as_of_date: "2026-01-01", visit_id: "v1" },
+        { fact_id: "t2", value: "4.0", unit: "µg/L", reference_range: "0-5", as_of_date: "2026-02-01", visit_id: "v2" },
+      ],
+    },
+  };
+  const { page, errors } = await openSnapshot("staff", body, trends);
+  await page.getByText("Units differ across these values").waitFor();
+  expect(await page.locator("svg[role='img']").count()).toBe(0);
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);

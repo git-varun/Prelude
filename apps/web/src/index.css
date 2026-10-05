@@ -19,6 +19,9 @@
      input is explicit that this indicator must never read as a clinical alarm. */
   --color-range-flag: #8a6d2e;
   --color-range-flag-soft: #f1e9d6;
+  /* Trend chart line/dots only — a neutral slate, deliberately not --color-success
+     or --color-danger: a value's trajectory carries no good/bad judgment here. */
+  --color-chart-line: #5b6472;
 
   --radius-sm: 6px;
   --radius-md: 10px;

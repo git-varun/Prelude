@@ -206,6 +206,20 @@ export interface PatientSnapshot {
   since_last_visit: SnapshotField[];
 }
 
+export interface MarkerTrendPoint {
+  fact_id: string;
+  value: string;
+  unit: string | null;
+  reference_range: string | null;
+  as_of_date: string;
+  visit_id: string;
+}
+
+export interface MarkerTrend {
+  marker_name: string;
+  points: MarkerTrendPoint[];
+}
+
 export const api = {
   login: (email: string, password: string) =>
     request<SessionUser>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
@@ -220,6 +234,9 @@ export const api = {
   getPatient: (id: string) => request<PatientDetail>(`/patients/${id}`),
 
   getPatientSnapshot: (id: string) => request<PatientSnapshot>(`/patients/${id}/snapshot`),
+
+  getMarkerTrend: (patientId: string, trackedMarkerId: string) =>
+    request<MarkerTrend>(`/patients/${patientId}/markers/${trackedMarkerId}/trend`),
 
   createPatient: (input: { name: string; cancer_type: string; markers: { marker_name: string }[] }) =>
     request<PatientDetail>("/patients", { method: "POST", body: JSON.stringify(input) }),

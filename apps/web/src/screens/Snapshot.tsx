@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type PatientSnapshot, type ReviewFact, type SnapshotField } from "../api/client";
 import { FactCard } from "../components/FactCard";
 import { MarkerDisclaimerFooter } from "../components/MarkerDisclaimerFooter";
+import { MarkerTrendChart } from "../components/MarkerTrendChart";
 import { withThyroglobulinAdjacency } from "../lib/markerOrder";
 import { navigate } from "../router";
 
@@ -83,12 +84,14 @@ function FieldEntry({
   visitId,
   onChanged,
   showDelta,
+  showTrend,
 }: {
   field: SnapshotField;
   patientId: string;
   visitId: string;
   onChanged: () => void;
   showDelta?: boolean;
+  showTrend?: boolean;
 }) {
   const heading = field.marker_name ?? FIELD_LABELS[field.field_type] ?? field.field_type;
   const deltaBadge = showDelta && field.delta_status ? (
@@ -116,6 +119,9 @@ function FieldEntry({
       <FactCard fact={toReviewFact(field, patientId, visitId)} trackedMarkers={[]} onChanged={onChanged} />
       {deltaBadge}
       {sourceLink(field)}
+      {showTrend && field.tracked_marker_id && (
+        <MarkerTrendChart patientId={patientId} trackedMarkerId={field.tracked_marker_id} />
+      )}
     </div>
   );
 }
@@ -127,6 +133,7 @@ function Section({
   visitId,
   onChanged,
   showDelta,
+  showTrend,
 }: {
   title: string;
   fields: SnapshotField[];
@@ -134,6 +141,7 @@ function Section({
   visitId: string;
   onChanged: () => void;
   showDelta?: boolean;
+  showTrend?: boolean;
 }) {
   return (
     <section aria-labelledby={`section-${title}`} style={{ marginBottom: 32 }}>
@@ -149,6 +157,7 @@ function Section({
             visitId={visitId}
             onChanged={onChanged}
             showDelta={showDelta}
+            showTrend={showTrend}
           />
         ))
       )}
@@ -236,6 +245,7 @@ export function Snapshot({ patientId }: { patientId: string }) {
         patientId={data.patient.id}
         visitId={visitId}
         onChanged={load}
+        showTrend
       />
       <Section
         title="Radiology"

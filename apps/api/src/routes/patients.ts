@@ -425,3 +425,31 @@ export async function getPatientSnapshot(req: Request & { params: { id: string }
     since_last_visit: sinceLastVisit,
   });
 }
+
+// For the Snapshot's per-marker trend chart (M6): every oncologist_signed_off fact for this
+// tracked marker across the patient's FULL history (not scoped to one visit), ordered by
+// as_of_date ascending. Only a signed-off value is trustworthy enough to plot — unverified/
+// staff_corrected facts are excluded, as is a fact that lost an authoritative-pick conflict
+// resolution (via the shared LIVE_FACT_FILTER, reused rather than reimplemented).
+export async function getMarkerTrend(
+  req: Request & { params: { id: string; trackedMarkerId: string } },
+): Promise<Response> {
+  const patientId = req.params.id;
+  const trackedMarkerId = req.params.trackedMarkerId;
+  if (!isUuid(patientId) || !isUuid(trackedMarkerId)) return jsonError(404, "not_found", "Marker not found.");
+
+  const [marker] = await sql`
+    SELECT marker_name FROM tracked_markers WHERE id = ${trackedMarkerId} AND patient_id = ${patientId}
+  `;
+  if (!marker) return jsonError(404, "not_found", "Marker not found.");
+
+  const points = await sql`
+    SELECT f.id AS fact_id, f.value, f.unit, f.reference_range, to_char(f.as_of_date, 'YYYY-MM-DD') AS as_of_date, f.visit_id
+    FROM facts f
+    WHERE f.tracked_marker_id = ${trackedMarkerId} AND f.verification_state = 'oncologist_signed_off'
+      AND ${LIVE_FACT_FILTER}
+    ORDER BY f.as_of_date ASC
+  `;
+
+  return Response.json({ marker_name: marker.marker_name, points });
+}
