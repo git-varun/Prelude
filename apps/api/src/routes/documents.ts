@@ -1,13 +1,31 @@
 import { sql } from "../db/client";
 import { jsonError } from "../middleware/auth";
 import type { AuthedUser } from "../middleware/auth";
-import { deleteDocumentFile, saveDocumentFile, saveOcrResult } from "../services/storage";
+import { deleteDocumentFile, documentFile, readOcrResult, saveDocumentFile, saveOcrResult } from "../services/storage";
 import { getExtractionProvider, getOcrProvider } from "../services/providerFactory";
 import { persistExtractedFacts } from "../services/facts";
 import type { ExtractionProvider, OcrResult } from "@prelude/shared";
 
+const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+const isUuid = (s: unknown): s is string => typeof s === "string" && UUID.test(s);
+
 const DOCUMENT_TYPES = ["prescription", "blood", "radiology"] as const;
 const SOURCE_ORIGINS = ["own_hospital", "outside_paper", "outside_cd", "whatsapp_pdf"] as const;
+
+// file_ref's suffix preserves the original upload's extension (saveDocumentFile), so the
+// content type for serving it back is inferred from that rather than a stored mime column.
+const EXTENSION_CONTENT_TYPES: Record<string, string> = {
+  pdf: "application/pdf",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  png: "image/png",
+  heic: "image/heic",
+};
+
+function contentTypeForFileRef(fileRef: string): string {
+  const ext = fileRef.split(".").pop()?.toLowerCase() ?? "";
+  return EXTENSION_CONTENT_TYPES[ext] ?? "application/octet-stream";
+}
 
 // m1-backlog B3: all three document types legitimately arrive as either a
 // scanned/exported PDF or a phone photo, so this is a single allowlist
@@ -100,10 +118,13 @@ export async function uploadDocument(req: Request & { params: { id: string } }, 
 // docs/02 M2: "on upload, run OCR and update ocr_status to done/failed."
 // Runs inline in the upload request rather than a background queue — no
 // queue infrastructure exists yet, and this matches the M2 checklist's
-// wording. Never fabricates source_page/source_location: the OCR pass only
-// captures page-level text here, real per-fact location comes from the
-// extraction step (services/extraction.ts) reading providerRaw, and is left
-// null wherever a provider doesn't supply it.
+// wording. Never fabricates source_page/source_location: both OCR providers
+// (services/ocr/*) discard bounding-box/geometry data when building
+// OcrResult.pages, keeping only plain per-line text, and the extraction step
+// (services/extraction/anthropicExtraction.ts) never reads providerRaw to
+// recover it. source_location is therefore left null in practice; provenance
+// resolution (routes/patients.ts provenanceFor) relies on source_page and
+// source_snippet instead.
 async function runOcr(
   document: any,
   file: File,
@@ -189,4 +210,42 @@ export async function runExtraction(
       console.error(`Could not record extraction_status='failed' for document ${document.id}:`, statusErr);
     }
   }
+}
+
+// For the Source view (apps/web SourceView.tsx): document metadata plus its OCR text, so the
+// screen can pick a page's text to search a fact's source_snippet against. providerRaw is
+// dropped — it's internal OCR-vendor payload, never meant for the browser.
+export async function getDocument(req: Request & { params: { id: string } }): Promise<Response> {
+  const documentId = req.params.id;
+  if (!isUuid(documentId)) return jsonError(404, "not_found", "Document not found.");
+
+  const [document] = await sql`SELECT * FROM documents WHERE id = ${documentId}`;
+  if (!document) return jsonError(404, "not_found", "Document not found.");
+
+  let ocr: { fullText: string; pages: { pageNumber: number; text: string }[] } | null = null;
+  if (document.ocr_text_ref) {
+    try {
+      const result = await readOcrResult(document.ocr_text_ref);
+      ocr = { fullText: result.fullText, pages: result.pages };
+    } catch (err) {
+      console.error(`Could not read OCR result for document ${documentId}:`, err);
+    }
+  }
+
+  return Response.json({ document, ocr });
+}
+
+// Streams the original uploaded file back, for the Source view to render (or probe for
+// renderability — a non-ok response here is exactly the OCR-text-only fallback trigger).
+export async function getDocumentFile(req: Request & { params: { id: string } }): Promise<Response> {
+  const documentId = req.params.id;
+  if (!isUuid(documentId)) return jsonError(404, "not_found", "Document not found.");
+
+  const [document] = await sql`SELECT file_ref FROM documents WHERE id = ${documentId}`;
+  if (!document) return jsonError(404, "not_found", "Document not found.");
+
+  const file = documentFile(document.file_ref);
+  if (!(await file.exists())) return jsonError(404, "not_found", "Document file is not available in storage.");
+
+  return new Response(file, { headers: { "Content-Type": contentTypeForFileRef(document.file_ref) } });
 }

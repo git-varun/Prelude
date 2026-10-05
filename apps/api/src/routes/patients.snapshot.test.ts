@@ -137,6 +137,45 @@ test("a signed-off fact with page/location/snippet returns full provenance with 
   });
 });
 
+test("a fact with source_page and source_snippet but no source_location still gets fallback_level 'exact' (no provider populates source_location)", async () => {
+  const docId = await newDocument(currentVisitId, "radiology");
+  const factId = await newFact(docId, currentVisitId, {
+    fieldType: "radiology_impression",
+    value: "Stable disease",
+    asOf: "2026-02-01",
+    sourcePage: 2,
+    sourceLocation: null,
+    sourceSnippet: "Impression: stable disease.",
+  });
+
+  const res = await getPatientSnapshot(snapshotReq(patientId));
+  const body = (await res.json()) as any;
+  const entry = body.radiology.find((r: any) => r.fact_id === factId);
+  expect(entry.provenance).toEqual({
+    document_id: docId,
+    source_page: 2,
+    source_location: null,
+    source_snippet: "Impression: stable disease.",
+    fallback_level: "exact",
+  });
+});
+
+test("a fact with only source_page (no source_snippet) gets fallback_level 'page'", async () => {
+  const docId = await newDocument(currentVisitId, "radiology");
+  const factId = await newFact(docId, currentVisitId, {
+    fieldType: "radiology_impression",
+    value: "Stable disease",
+    asOf: "2026-02-02",
+    sourcePage: 2,
+    sourceSnippet: null,
+  });
+
+  const res = await getPatientSnapshot(snapshotReq(patientId));
+  const body = (await res.json()) as any;
+  const entry = body.radiology.find((r: any) => r.fact_id === factId);
+  expect(entry.provenance.fallback_level).toBe("page");
+});
+
 test("current_treatment returns only the latest treatment_regimen fact by as_of_date, not a history array", async () => {
   const docId = await newDocument(currentVisitId, "prescription");
   await newFact(docId, currentVisitId, { fieldType: "treatment_regimen", value: "Older regimen", asOf: "2026-01-15" });
@@ -249,6 +288,27 @@ test("an undated sibling never wins the top-level slot over a dated fact for the
   const entries = body.tumor_markers.filter((m: any) => m.tracked_marker_id === markerId);
   expect(entries).toHaveLength(1);
   expect(entries[0].fact_id).toBe(dated);
+});
+
+test("an open conflict between two treatment_regimen facts with DIFFERING dates still surfaces both as top-level current_treatment entries (not just the later-dated one), same as tumor markers", async () => {
+  const docId = await newDocument(currentVisitId, "prescription");
+  const older = await newFact(docId, currentVisitId, { fieldType: "treatment_regimen", value: "Paclitaxel", asOf: "2026-01-15" });
+  const newer = await newFact(docId, currentVisitId, { fieldType: "treatment_regimen", value: "FOLFOX", asOf: "2026-02-01" });
+  const [{ id: conflictId }] = await sql`INSERT INTO conflicts (fact_id_a, fact_id_b, status) VALUES (${older}, ${newer}, 'open') RETURNING id`;
+
+  try {
+    const res = await getPatientSnapshot(snapshotReq(patientId));
+    const body = (await res.json()) as any;
+    const entries = body.current_treatment.filter((t: any) => t.fact_id === older || t.fact_id === newer);
+    expect(entries).toHaveLength(2);
+    for (const entry of entries) {
+      expect(entry.conflicts).toHaveLength(1);
+      expect(entry.conflicts[0].conflict_id).toBe(conflictId);
+      expect(entry.conflicts[0].status).toBe("open");
+    }
+  } finally {
+    await sql`DELETE FROM conflicts WHERE id = ${conflictId}`;
+  }
 });
 
 test("radiology now selects only the single latest non-conflicted fact, matching current_treatment's rule (no longer lists every live fact)", async () => {

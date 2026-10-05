@@ -69,7 +69,7 @@ function sourceLink(field: SnapshotField) {
         ? `Page ${p.source_page} (location not recorded)`
         : "Open document (no page/location recorded)";
   return (
-    <button className="btn btn--ghost" type="button" onClick={() => navigate(`/documents/${p.document_id}/review`)}>
+    <button className="btn btn--ghost" type="button" onClick={() => navigate(`/documents/${p.document_id}/source?fact=${field.fact_id}`)}>
       {label}
     </button>
   );

@@ -201,21 +201,36 @@ async function loadTumorMarkers(patientId: string, visitId: string): Promise<Sna
   `;
 }
 
-// Single latest treatment_regimen fact, never a history array; same tie heuristic as markers.
+// Single latest non-conflicted treatment_regimen fact, plus any fact party to an open/annotated
+// conflict regardless of date — same selection rule as tumor_markers/radiology.
 async function loadCurrentTreatment(visitId: string): Promise<SnapshotFactRow[]> {
   return sql`
     WITH live AS (
       SELECT f.* FROM facts f
       WHERE f.visit_id = ${visitId} AND f.field_type = 'treatment_regimen' AND ${LIVE_FACT_FILTER}
+    ), blocked AS (
+      SELECT f.id FROM live f
+      WHERE EXISTS (
+        SELECT 1 FROM conflicts c
+        WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated')
+      )
     ), ranked AS (
-      SELECT f.*, RANK() OVER (ORDER BY f.as_of_date DESC NULLS LAST) AS rnk FROM live f
+      SELECT f.*, RANK() OVER (ORDER BY f.as_of_date DESC NULLS LAST) AS rnk
+      FROM live f
+      WHERE f.id NOT IN (SELECT id FROM blocked)
     )
     SELECT id AS fact_id, value, unit, reference_range,
            to_char(as_of_date, 'YYYY-MM-DD') AS as_of_date,
            coverage_status, verification_state,
            document_id, source_page, source_location, source_snippet
     FROM ranked WHERE rnk = 1
-    ORDER BY id
+    UNION ALL
+    SELECT id AS fact_id, value, unit, reference_range,
+           to_char(as_of_date, 'YYYY-MM-DD') AS as_of_date,
+           coverage_status, verification_state,
+           document_id, source_page, source_location, source_snippet
+    FROM live WHERE id IN (SELECT id FROM blocked)
+    ORDER BY as_of_date DESC NULLS LAST, fact_id
   `;
 }
 
@@ -262,7 +277,7 @@ interface Provenance {
 }
 
 function provenanceFor(documentId: string, sourcePage: number | null, sourceLocation: string | null, sourceSnippet: string | null): Provenance {
-  const fallback_level = sourcePage != null && sourceLocation != null ? "exact" : sourcePage != null ? "page" : "document";
+  const fallback_level = sourcePage != null && sourceSnippet != null ? "exact" : sourcePage != null ? "page" : "document";
   return { document_id: documentId, source_page: sourcePage, source_location: sourceLocation, source_snippet: sourceSnippet, fallback_level };
 }
 

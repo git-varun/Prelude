@@ -525,3 +525,166 @@ test("Snapshot: source link label varies by provenance.fallback_level (exact, pa
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);
+
+// Source view. Shares this file's single browser/server (a second full harness per test
+// file overwhelms the sandbox's resource limits — see docs/M6 notes on the Source view build).
+function sourceDocumentRecord(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "doc1", patient_id: "p1", visit_id: "v1", file_ref: "local://p1/scan.pdf", document_type: "radiology",
+    source_origin: "own_hospital", uploaded_by: "u1", uploaded_at: "2026-01-01T00:00:00Z",
+    ocr_status: "done", ocr_text_ref: "local://p1/ocr/doc1.json", needs_manual_date: false,
+    extraction_status: "done", extraction_error: null,
+    ...overrides,
+  };
+}
+
+function sourceFact(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "f1", patient_id: "p1", visit_id: "v1", document_id: "doc1", tracked_marker_id: null,
+    tracked_marker_name: null, raw_marker_label: null, field_type: "radiology_impression",
+    value: "Stable disease, no new lesions.", unit: null, reference_range: null, as_of_date: "2026-02-01",
+    needs_manual_date: false, coverage_status: "value_found", verification_state: "unverified",
+    has_blocking_conflict: false, source_page: null, source_location: null, source_snippet: null,
+    ...overrides,
+  };
+}
+
+const SOURCE_OCR = {
+  fullText: "Page one text.\n\nFindings: no change. Impression: Stable disease, no new lesions.",
+  pages: [
+    { pageNumber: 1, text: "Page one text." },
+    { pageNumber: 2, text: "Findings: no change. Impression: Stable disease, no new lesions." },
+  ],
+};
+
+interface SourceScenario {
+  document?: Record<string, unknown>;
+  fact: Record<string, unknown>;
+  fileStatus: number;
+  fileContentType?: string;
+}
+
+async function openSource({ document = {}, fact: factOverrides, fileStatus, fileContentType }: SourceScenario) {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  const errors: string[] = [];
+  page.on("pageerror", (err) => errors.push(`pageerror: ${err.message}`));
+  page.on("console", (msg) => {
+    if (msg.type() !== "error") return;
+    // The file-availability probe (api.checkDocumentFile) legitimately 404s in the
+    // fallback-triggering scenarios; the browser logs that resource failure to console.
+    if (msg.location().url === `${API}/documents/doc1/file`) return;
+    errors.push(`console: ${msg.text()}`);
+  });
+  const cors = { "Access-Control-Allow-Origin": BASE, "Access-Control-Allow-Credentials": "true" };
+
+  await page.route(`${API}/**`, (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const json = (body: unknown) =>
+      route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify(body) });
+    if (path === "/auth/me") return json({ id: "u1", name: "Test Staff", email: "s@opd.local", role: "staff" });
+    if (path === "/documents/doc1") return json({ document: sourceDocumentRecord(document), ocr: SOURCE_OCR });
+    if (path === "/documents/doc1/facts") {
+      return json({ document: sourceDocumentRecord(document), facts: [sourceFact(factOverrides)], tracked_markers: [] });
+    }
+    if (path === "/documents/doc1/file") {
+      return route.fulfill({
+        status: fileStatus,
+        headers: { ...cors, ...(fileContentType ? { "Content-Type": fileContentType } : {}) },
+        body: fileStatus === 200 ? "stub-file-bytes" : JSON.stringify({ error: "not_found", message: "no file" }),
+      });
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", headers: cors, body: "{}" });
+  });
+
+  await page.goto(`${BASE}/#/documents/doc1/source?fact=f1`);
+  await page.getByRole("heading", { name: "Source document" }).waitFor();
+  return { page, errors };
+}
+
+test("Source view, exact fallback_level: renders the original document and highlights the first text match of source_snippet", async () => {
+  const { page, errors } = await openSource({
+    fact: { source_page: 2, source_snippet: "Stable disease, no new lesions." },
+    fileStatus: 200,
+    fileContentType: "application/pdf",
+  });
+
+  const pdf = page.getByTestId("source-file-pdf");
+  await pdf.waitFor();
+  expect(await pdf.getAttribute("src")).toContain("#page=2");
+
+  await page.getByRole("heading", { name: "Extracted text" }).waitFor();
+  const mark = page.getByTestId("source-highlight");
+  await mark.waitFor();
+  expect(await mark.textContent()).toBe("Stable disease, no new lesions.");
+
+  expect(await page.getByText("Source detail unavailable").count()).toBe(0);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Source view, page fallback_level: jumps to the correct page, no highlight, with a note that exact location isn't available", async () => {
+  const { page, errors } = await openSource({
+    fact: { source_page: 2, source_snippet: null },
+    fileStatus: 200,
+    fileContentType: "application/pdf",
+  });
+
+  const pdf = page.getByTestId("source-file-pdf");
+  await pdf.waitFor();
+  expect(await pdf.getAttribute("src")).toContain("#page=2");
+
+  await page.getByText("Exact location isn't available for this fact — showing page 2.").waitFor();
+  expect(await page.getByTestId("source-highlight").count()).toBe(0);
+  expect(await page.getByRole("heading", { name: "Extracted text" }).count()).toBe(0);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Source view, document fallback_level: renders the whole document, no page jump or highlight, 'source detail unavailable' shown", async () => {
+  const { page, errors } = await openSource({
+    fact: { source_page: null, source_snippet: null },
+    fileStatus: 200,
+    fileContentType: "application/pdf",
+  });
+
+  const pdf = page.getByTestId("source-file-pdf");
+  await pdf.waitFor();
+  const src = await pdf.getAttribute("src");
+  expect(src).not.toContain("#page=");
+
+  await page.getByText("Source detail unavailable").waitFor();
+  expect(await page.getByTestId("source-highlight").count()).toBe(0);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Source view: the OCR-text-only fallback triggers when the original file can't be rendered, still highlighting the snippet for an exact fact", async () => {
+  const { page, errors } = await openSource({
+    fact: { source_page: 2, source_snippet: "Stable disease, no new lesions." },
+    fileStatus: 404,
+  });
+
+  await page.getByText("The original document couldn't be rendered. Showing extracted text instead.").waitFor();
+  expect(await page.getByTestId("source-file-pdf").count()).toBe(0);
+  expect(await page.getByTestId("source-file-image").count()).toBe(0);
+
+  const mark = page.getByTestId("source-highlight");
+  await mark.waitFor();
+  expect(await mark.textContent()).toBe("Stable disease, no new lesions.");
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Source view: the OCR-text-only fallback shows plain text with no highlight when the fact has no source_snippet", async () => {
+  const { page, errors } = await openSource({
+    fact: { source_page: null, source_snippet: null },
+    fileStatus: 404,
+  });
+
+  await page.getByText("The original document couldn't be rendered. Showing extracted text instead.").waitFor();
+  expect(await page.getByTestId("source-highlight").count()).toBe(0);
+  await page.getByText("Page one text.").waitFor();
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);

@@ -32,3 +32,14 @@ export function matchPatientSnapshot(path: string): string | null {
   const m = path.match(/^\/patients\/([^/]+)\/snapshot$/);
   return m ? m[1]! : null;
 }
+
+// Hash routes carry their query string too (everything after '#' is one string), so the
+// ?fact= param is parsed out here rather than relying on window.location.search.
+export function matchDocumentSource(path: string): { documentId: string; factId: string } | null {
+  const [pathname, query] = path.split("?");
+  const m = pathname!.match(/^\/documents\/([^/]+)\/source$/);
+  if (!m) return null;
+  const factId = new URLSearchParams(query ?? "").get("fact");
+  if (!factId) return null;
+  return { documentId: m[1]!, factId };
+}

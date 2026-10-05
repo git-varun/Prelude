@@ -52,6 +52,16 @@ export function resolveLocalPath(fileRef: string): string {
   return path.join(localBasePath, fileRef.slice("local://".length));
 }
 
+// Reads back what saveOcrResult wrote, for the Source view (routes/documents.ts getDocument).
+export async function readOcrResult(ocrTextRef: string): Promise<OcrResult> {
+  return JSON.parse(await Bun.file(resolveLocalPath(ocrTextRef)).text());
+}
+
+// The document's original file, for the Source view to render or probe for renderability.
+export function documentFile(fileRef: string) {
+  return Bun.file(resolveLocalPath(fileRef));
+}
+
 // Used to clean up a file already written to storage when the DB insert that
 // was meant to reference it fails (m1-backlog B4) — best-effort, since the
 // upload should still surface the original DB error either way.

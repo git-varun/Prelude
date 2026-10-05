@@ -136,6 +136,30 @@ export interface DocumentReview {
   tracked_markers: TrackedMarker[];
 }
 
+export interface DocumentOcrPage {
+  pageNumber: number;
+  text: string;
+}
+
+export interface DocumentOcr {
+  fullText: string;
+  pages: DocumentOcrPage[];
+}
+
+export interface DocumentWithOcr {
+  document: DocumentRecord;
+  ocr: DocumentOcr | null;
+}
+
+// Whether the original file is renderable, found via a direct probe request rather than relying
+// on <img>/<iframe> onerror (unreliable for PDFs) — a non-ok result is the Source view's cue to
+// fall back to OCR text.
+export interface DocumentFileCheck {
+  ok: boolean;
+  contentType: string | null;
+  url: string;
+}
+
 export interface Provenance {
   document_id: string;
   source_page: number | null;
@@ -225,6 +249,18 @@ export const api = {
   },
 
   getDocumentFacts: (documentId: string) => request<DocumentReview>(`/documents/${documentId}/facts`),
+
+  getDocument: (documentId: string) => request<DocumentWithOcr>(`/documents/${documentId}`),
+
+  checkDocumentFile: async (documentId: string): Promise<DocumentFileCheck> => {
+    const url = `${await getApiBaseUrl()}/documents/${documentId}/file`;
+    try {
+      const res = await fetch(url, { credentials: "include" });
+      return { ok: res.ok, contentType: res.ok ? res.headers.get("content-type") : null, url };
+    } catch {
+      return { ok: false, contentType: null, url };
+    }
+  },
 
   patchFact: (factId: string, patch: { value?: string; tracked_marker_id?: string; as_of_date?: string }) =>
     request<ReviewFact>(`/facts/${factId}`, { method: "PATCH", body: JSON.stringify(patch) }),

@@ -5,9 +5,10 @@ import { Login } from "./screens/Login";
 import { PatientList } from "./screens/PatientList";
 import { PatientCreate } from "./screens/PatientCreate";
 import { Upload } from "./screens/Upload";
-import { useHashRoute, matchPatientUpload, matchDocumentReview, matchPatientSnapshot } from "./router";
+import { useHashRoute, matchPatientUpload, matchDocumentReview, matchPatientSnapshot, matchDocumentSource } from "./router";
 import { ExtractionReview } from "./screens/ExtractionReview";
 import { Snapshot } from "./screens/Snapshot";
+import { SourceView } from "./screens/SourceView";
 
 function Routed() {
   const { user, loading, connectivityError } = useAuth();
@@ -19,10 +20,13 @@ function Routed() {
   const uploadPatientId = matchPatientUpload(route);
   const reviewDocumentId = matchDocumentReview(route);
   const snapshotPatientId = matchPatientSnapshot(route);
+  const source = matchDocumentSource(route);
 
   let screen: ReactNode;
   if (uploadPatientId) {
     screen = <Upload patientId={uploadPatientId} />;
+  } else if (source) {
+    screen = <SourceView documentId={source.documentId} factId={source.factId} />;
   } else if (reviewDocumentId) {
     screen = <ExtractionReview documentId={reviewDocumentId} />;
   } else if (snapshotPatientId) {
