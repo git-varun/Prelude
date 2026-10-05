@@ -1,6 +1,7 @@
 import { sql } from "../db/client";
 import { jsonError } from "../middleware/auth";
 import type { AuthedUser } from "../middleware/auth";
+import { detectConflicts } from "../services/rules";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (s: unknown): s is string => typeof s === "string" && UUID.test(s);
@@ -161,6 +162,14 @@ export async function patchFact(req: Request & { params: { id: string } }, user:
       INSERT INTO audit_log (actor_id, action, entity_type, entity_id, before_value, after_value)
       VALUES (${user.id}, 'correct', 'fact', ${factId}, ${JSON.stringify(before)}::jsonb, ${JSON.stringify(updated)}::jsonb)
     `;
+
+    // Only run detection on the transition from undated to dated — this is
+    // when the fact becomes eligible for the first time. A value/marker edit
+    // on an already-dated fact doesn't re-trigger detection here.
+    if (before.as_of_date === null && updated.as_of_date !== null) {
+      await detectConflicts(tx, updated);
+    }
+
     return "ok" as const;
   });
 

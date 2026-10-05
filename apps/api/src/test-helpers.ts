@@ -46,6 +46,7 @@ export async function deleteTestPatients(...ids: string[]): Promise<void> {
   if (ids.length === 0) return;
   await sql`DELETE FROM audit_log WHERE entity_type = 'fact' AND entity_id IN (SELECT id FROM facts WHERE patient_id IN ${sql(ids)})`;
   await sql`DELETE FROM audit_log WHERE entity_type = 'document' AND entity_id IN (SELECT id FROM documents WHERE patient_id IN ${sql(ids)})`;
+  await sql`DELETE FROM conflicts WHERE fact_id_a IN (SELECT id FROM facts WHERE patient_id IN ${sql(ids)}) OR fact_id_b IN (SELECT id FROM facts WHERE patient_id IN ${sql(ids)})`;
   await sql`DELETE FROM facts WHERE patient_id IN ${sql(ids)}`;
   await sql`DELETE FROM documents WHERE patient_id IN ${sql(ids)}`;
   await sql`DELETE FROM tracked_markers WHERE patient_id IN ${sql(ids)}`;

@@ -1,5 +1,5 @@
 import { sql } from "../db/client";
-import { assignCoverageStatus } from "./rules";
+import { assignCoverageStatus, detectConflicts } from "./rules";
 import type { ExtractedFactCandidate } from "@prelude/shared";
 
 interface DocumentContext {
@@ -103,6 +103,8 @@ export async function persistExtractedFacts(
         INSERT INTO audit_log (actor_id, action, entity_type, entity_id, after_value)
         VALUES (${actorId}, 'upload', 'fact', ${fact.id}, ${JSON.stringify(fact)}::jsonb)
       `;
+
+      await detectConflicts(tx, fact);
     }
 
     if (needsManualDate) {

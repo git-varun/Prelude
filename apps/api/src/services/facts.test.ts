@@ -168,6 +168,67 @@ test("the database rejects sign-off on a fact that has no as_of_date", async () 
   await expect(insertSignedOffUndated()).rejects.toThrow(/no_signoff_while_undated/);
 });
 
+test("two candidates in the same upload that share an as_of_date but disagree on value are flagged conflicting_sources", async () => {
+  const doc = await newDocument();
+  // Both candidates map to the patient's existing 'CEA' tracked marker (seeded by
+  // the first test in this file) — an unmapped marker (tracked_marker_id null) is
+  // deliberately excluded from conflict detection, since two unmapped candidates
+  // sharing a null marker id aren't known to be the *same* marker.
+  const result = await persistExtractedFacts(
+    doc,
+    [
+      candidate({ asOfDate: "2026-04-01", value: "4.2" }),
+      candidate({ asOfDate: "2026-04-01", value: "9.0" }),
+    ],
+    staff.id,
+  );
+  expect(result.createdFactIds).toHaveLength(2);
+
+  const facts = await sql`SELECT id, coverage_status FROM facts WHERE id IN ${sql(result.createdFactIds)}`;
+  expect(facts.every((f: any) => f.coverage_status === "conflicting_sources")).toBe(true);
+
+  const [conflict] = await sql`
+    SELECT id FROM conflicts
+    WHERE (fact_id_a = ${result.createdFactIds[0]} AND fact_id_b = ${result.createdFactIds[1]})
+       OR (fact_id_a = ${result.createdFactIds[1]} AND fact_id_b = ${result.createdFactIds[0]})`;
+  expect(conflict).toBeTruthy();
+
+  await sql`DELETE FROM conflicts WHERE id = ${conflict.id}`;
+});
+
+test("a document uploaded against an existing patient does not flag a conflict against a document from a different visit sharing a date, when values match", async () => {
+  const doc = await newDocument();
+  const result = await persistExtractedFacts(
+    doc,
+    [candidate({ trackedMarkerLabel: undefined, asOfDate: "2026-04-02", value: "4.2" })],
+    staff.id,
+  );
+  const [fact] = await sql`SELECT coverage_status FROM facts WHERE id = ${result.createdFactIds[0]}`;
+  expect(fact.coverage_status).toBe("value_found");
+});
+
+test("two unmapped-marker candidates sharing an as_of_date but disagreeing on value are not flagged conflicting_sources", async () => {
+  const doc = await newDocument();
+  const result = await persistExtractedFacts(
+    doc,
+    [
+      candidate({ trackedMarkerLabel: "Hemoglobin", asOfDate: "2026-04-03", value: "12" }),
+      candidate({ trackedMarkerLabel: "WBC Count", asOfDate: "2026-04-03", value: "7000" }),
+    ],
+    staff.id,
+  );
+  expect(result.createdFactIds).toHaveLength(2);
+
+  const facts = await sql`SELECT coverage_status FROM facts WHERE id IN ${sql(result.createdFactIds)}`;
+  expect(facts.every((f: any) => f.coverage_status === "extraction_uncertain")).toBe(true);
+
+  const [conflict] = await sql`
+    SELECT id FROM conflicts
+    WHERE (fact_id_a = ${result.createdFactIds[0]} AND fact_id_b = ${result.createdFactIds[1]})
+       OR (fact_id_a = ${result.createdFactIds[1]} AND fact_id_b = ${result.createdFactIds[0]})`;
+  expect(conflict).toBeUndefined();
+});
+
 test("copies null source fields through as-is rather than inventing them", async () => {
   const result = await persistExtractedFacts(
     docContext(),

@@ -172,6 +172,49 @@ test("PATCH as_of_date clears the fact's needs_manual_date and recomputes the do
   expect(doc.needs_manual_date).toBe(false);
 });
 
+test("PATCH as_of_date makes a previously-undated fact eligible for conflict detection against a live same-date fact", async () => {
+  const docId = await newDocument();
+  const dated = await newFact(docId, { value: "9.0", asOf: "2026-07-01", markerId: ceaMarkerId });
+  const undated = await newFact(docId, { value: "4.2", asOf: null, needsDate: true, markerId: ceaMarkerId });
+
+  const res = await patchFact(patchReq(undated, { as_of_date: "2026-07-01" }), asAuthedUser(staff));
+  expect(res.status).toBe(200);
+
+  expect((await factRow(dated)).coverage_status).toBe("conflicting_sources");
+  expect((await factRow(undated)).coverage_status).toBe("conflicting_sources");
+
+  const [conflict] = await sql`
+    SELECT id FROM conflicts
+    WHERE (fact_id_a = ${dated} AND fact_id_b = ${undated}) OR (fact_id_a = ${undated} AND fact_id_b = ${dated})`;
+  expect(conflict).toBeTruthy();
+  await sql`DELETE FROM conflicts WHERE id = ${conflict.id}`;
+});
+
+test("bulk date-entry (sequential per-fact PATCHes, the web 'apply date to all' path) detects a conflict only once both facts are dated", async () => {
+  // The web Extraction Review screen's "apply date to all" applies a date via
+  // sequential PATCH /facts/:id calls (docs/m2-backlog.md) — there is no
+  // separate bulk backend endpoint, so this exercises the same patchFact path.
+  const docId = await newDocument();
+  const a = await newFact(docId, { value: "4.2", asOf: null, needsDate: true, markerId: ceaMarkerId });
+  const b = await newFact(docId, { value: "9.0", asOf: null, needsDate: true, markerId: ceaMarkerId });
+
+  const r1 = await patchFact(patchReq(a, { as_of_date: "2026-08-01" }), asAuthedUser(staff));
+  expect(r1.status).toBe(200);
+  expect((await factRow(a)).coverage_status).toBe("value_found");
+  let [conflict] = await sql`
+    SELECT id FROM conflicts WHERE (fact_id_a = ${a} AND fact_id_b = ${b}) OR (fact_id_a = ${b} AND fact_id_b = ${a})`;
+  expect(conflict).toBeUndefined();
+
+  const r2 = await patchFact(patchReq(b, { as_of_date: "2026-08-01" }), asAuthedUser(staff));
+  expect(r2.status).toBe(200);
+  expect((await factRow(a)).coverage_status).toBe("conflicting_sources");
+  expect((await factRow(b)).coverage_status).toBe("conflicting_sources");
+  [conflict] = await sql`
+    SELECT id FROM conflicts WHERE (fact_id_a = ${a} AND fact_id_b = ${b}) OR (fact_id_a = ${b} AND fact_id_b = ${a})`;
+  expect(conflict).toBeTruthy();
+  await sql`DELETE FROM conflicts WHERE id = ${conflict.id}`;
+});
+
 test("PATCH returns 409 for an oncologist_signed_off fact and changes nothing", async () => {
   const docId = await newDocument();
   const id = await newFact(docId, { verification: "oncologist_signed_off" });
