@@ -1036,14 +1036,18 @@ function sourceDocumentRecord(overrides: Record<string, unknown> = {}) {
 }
 
 function sourceFact(overrides: Record<string, unknown> = {}) {
-  return {
+  const base = {
     id: "f1", patient_id: "p1", visit_id: "v1", document_id: "doc1", tracked_marker_id: null,
     tracked_marker_name: null, raw_marker_label: null, field_type: "radiology_impression",
     value: "Stable disease, no new lesions.", unit: null, reference_range: null, as_of_date: "2026-02-01",
     needs_manual_date: false, coverage_status: "value_found", verification_state: "unverified",
-    has_blocking_conflict: false, source_page: null, source_location: null, source_snippet: null,
+    has_blocking_conflict: false, source_page: null as number | null, source_location: null, source_snippet: null as string | null,
     ...overrides,
   };
+  // Mirrors the real provenanceFor rule (apps/api/src/services/provenance.ts), rather than
+  // hardcoding fallback_level per test, so overriding source_page/source_snippet alone is enough.
+  const fallback_level = base.source_page != null && base.source_snippet != null ? "exact" : base.source_page != null ? "page" : "document";
+  return { ...base, fallback_level };
 }
 
 const SOURCE_OCR = {

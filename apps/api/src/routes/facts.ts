@@ -2,6 +2,7 @@ import { sql } from "../db/client";
 import { jsonError } from "../middleware/auth";
 import type { AuthedUser } from "../middleware/auth";
 import { detectConflicts } from "../services/rules";
+import { provenanceFor } from "../services/provenance";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (s: unknown): s is string => typeof s === "string" && UUID.test(s);
@@ -10,7 +11,7 @@ type Exec = typeof sql;
 
 // Explicit column list (not f.*) so as_of_date is a YYYY-MM-DD string, never a JS Date.
 async function queryFacts(exec: Exec, filter: { documentId?: string; factId?: string }) {
-  return exec`
+  const rows = await exec`
     SELECT f.id, f.patient_id, f.visit_id, f.document_id, f.tracked_marker_id,
            tm.marker_name AS tracked_marker_name, f.raw_marker_label, f.field_type, f.value, f.unit,
            f.reference_range, to_char(f.as_of_date, 'YYYY-MM-DD') AS as_of_date, f.needs_manual_date,
@@ -30,6 +31,10 @@ async function queryFacts(exec: Exec, filter: { documentId?: string; factId?: st
       AND (${filter.factId ?? null}::uuid IS NULL OR f.id = ${filter.factId ?? null}::uuid)
     ORDER BY f.source_page NULLS LAST, tm.marker_name NULLS LAST, f.field_type, f.id
   `;
+  return rows.map((row: any) => ({
+    ...row,
+    fallback_level: provenanceFor(row.document_id, row.source_page, row.source_location, row.source_snippet).fallback_level,
+  }));
 }
 
 export async function getDocumentFacts(req: Request & { params: { id: string } }): Promise<Response> {

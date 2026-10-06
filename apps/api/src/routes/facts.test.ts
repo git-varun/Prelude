@@ -81,6 +81,25 @@ test("GET returns the document, its facts (dates as YYYY-MM-DD, marker name join
   expect(body.tracked_markers.map((m: any) => m.marker_name)).toEqual(["CEA"]);
 });
 
+test("GET facts carry fallback_level, computed the same way as the snapshot's provenance (exact / page / document)", async () => {
+  const docId = await newDocument();
+  const [exact] = await sql`
+    INSERT INTO facts (patient_id, visit_id, document_id, field_type, value, as_of_date, coverage_status, verification_state, source_page, source_snippet)
+    VALUES (${patientId}, ${visitId}, ${docId}, 'radiology_impression', 'Stable', '2026-02-01', 'value_found', 'unverified', 2, 'Stable disease') RETURNING id`;
+  const [page] = await sql`
+    INSERT INTO facts (patient_id, visit_id, document_id, field_type, value, as_of_date, coverage_status, verification_state, source_page, source_snippet)
+    VALUES (${patientId}, ${visitId}, ${docId}, 'radiology_impression', 'No change', '2026-02-01', 'value_found', 'unverified', 3, NULL) RETURNING id`;
+  const [doc] = await sql`
+    INSERT INTO facts (patient_id, visit_id, document_id, field_type, value, as_of_date, coverage_status, verification_state, source_page, source_snippet)
+    VALUES (${patientId}, ${visitId}, ${docId}, 'radiology_impression', 'Unremarkable', '2026-02-01', 'value_found', 'unverified', NULL, NULL) RETURNING id`;
+
+  const body = (await (await getDocumentFacts(getReq(docId))).json()) as any;
+  const levels = Object.fromEntries(body.facts.map((f: any) => [f.id, f.fallback_level]));
+  expect(levels[exact.id]).toBe("exact");
+  expect(levels[page.id]).toBe("page");
+  expect(levels[doc.id]).toBe("document");
+});
+
 test("GET returns 404 for an unknown or malformed document id", async () => {
   expect((await getDocumentFacts(getReq("00000000-0000-0000-0000-000000000000"))).status).toBe(404);
   expect((await getDocumentFacts(getReq("not-a-uuid"))).status).toBe(404);

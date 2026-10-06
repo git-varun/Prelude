@@ -6,6 +6,7 @@ import {
   deltaKey, deltaForCurrentFact, deltaForAbsentField, loadDeltaBaselines, LIVE_FACT_FILTER,
   type DeltaBaseline, type DeltaStatus,
 } from "../services/delta";
+import { provenanceFor, type Provenance } from "../services/provenance";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (s: unknown): s is string => typeof s === "string" && UUID.test(s);
@@ -268,18 +269,6 @@ async function loadRadiology(visitId: string): Promise<SnapshotFactRow[]> {
   `;
 }
 
-interface Provenance {
-  document_id: string;
-  source_page: number | null;
-  source_location: string | null;
-  source_snippet: string | null;
-  fallback_level: "exact" | "page" | "document";
-}
-
-function provenanceFor(documentId: string, sourcePage: number | null, sourceLocation: string | null, sourceSnippet: string | null): Provenance {
-  const fallback_level = sourcePage != null && sourceSnippet != null ? "exact" : sourcePage != null ? "page" : "document";
-  return { document_id: documentId, source_page: sourcePage, source_location: sourceLocation, source_snippet: sourceSnippet, fallback_level };
-}
 
 interface ConflictEntry {
   conflict_id: string;

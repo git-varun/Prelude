@@ -61,6 +61,7 @@ function toReviewFact(field: SnapshotField, patientId: string, visitId: string):
     source_page: provenance?.source_page ?? null,
     source_location: provenance?.source_location ?? null,
     source_snippet: provenance?.source_snippet ?? null,
+    fallback_level: provenance?.fallback_level ?? "document",
   };
 }
 

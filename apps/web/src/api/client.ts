@@ -129,6 +129,7 @@ export interface ReviewFact {
   source_page: number | null;
   source_location: string | null;
   source_snippet: string | null;
+  fallback_level: "exact" | "page" | "document";
 }
 
 export interface DocumentReview {

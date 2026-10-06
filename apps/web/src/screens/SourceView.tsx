@@ -2,17 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type DocumentFileCheck, type DocumentOcr, type DocumentRecord, type ReviewFact } from "../api/client";
 import { navigate } from "../router";
 
-export type FallbackLevel = "exact" | "page" | "document";
-
-// Mirrors apps/api/src/routes/patients.ts provenanceFor exactly: no OCR provider populates
-// source_location in practice (docs/M6 audit), so "exact" vs "page" vs "document" is derived
-// from source_page and source_snippet only.
-export function fallbackLevel(sourcePage: number | null, sourceSnippet: string | null): FallbackLevel {
-  if (sourcePage != null && sourceSnippet != null) return "exact";
-  if (sourcePage != null) return "page";
-  return "document";
-}
-
 function pageText(ocr: DocumentOcr | null, pageNumber: number | null): string | null {
   if (!ocr) return null;
   if (pageNumber === null) return ocr.fullText;
@@ -99,7 +88,7 @@ export function SourceView({ documentId, factId }: { documentId: string; factId:
   if (state.status === "error") return <div className="error-banner">{state.message}</div>;
 
   const { document, ocr, fact, fileCheck } = state;
-  const level = fallbackLevel(fact.source_page, fact.source_snippet);
+  const level = fact.fallback_level;
   const text = pageText(ocr, fact.source_page);
 
   return (
