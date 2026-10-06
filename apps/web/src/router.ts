@@ -38,6 +38,11 @@ export function matchPatientMarkers(path: string): string | null {
   return m ? m[1]! : null;
 }
 
+export function matchConflict(path: string): string | null {
+  const m = path.match(/^\/conflicts\/([^/]+)$/);
+  return m ? m[1]! : null;
+}
+
 // Hash routes carry their query string too (everything after '#' is one string), so the
 // ?fact= param is parsed out here rather than relying on window.location.search.
 export function matchDocumentSource(path: string): { documentId: string; factId: string } | null {

@@ -2,6 +2,7 @@ import { useState, useEffect } from "react";
 import { RoleGate } from "../auth/AuthContext";
 import { api, ApiError, type ReviewFact, type TrackedMarker } from "../api/client";
 import { flagForRange } from "../lib/referenceRange";
+import { navigate } from "../router";
 
 const RANGE_FLAG_LABEL: Record<"above" | "below", string> = {
   above: "Above laboratory reference interval",
@@ -77,6 +78,16 @@ export function FactCard({ fact, trackedMarkers, onChanged }: Props) {
       <div className="page-heading" style={{ marginBottom: 8 }}>
         <h2 style={{ margin: 0 }}>{heading}</h2>
         <span className={`tag ${needsReview ? "tag--pending" : ""}`}>{COVERAGE_LABELS[fact.coverage_status] ?? fact.coverage_status}</span>
+        {fact.has_blocking_conflict && fact.blocking_conflict_id && (
+          <button
+            className="tag tag--range-flag"
+            type="button"
+            style={{ marginLeft: 8, cursor: "pointer" }}
+            onClick={() => navigate(`/conflicts/${fact.blocking_conflict_id}`)}
+          >
+            Conflicting sources — review
+          </button>
+        )}
       </div>
       <p className="muted" style={{ marginTop: 0 }}>
         {FIELD_LABELS[fact.field_type] ?? fact.field_type} · {fact.verification_state.replace(/_/g, " ")} ·{" "}

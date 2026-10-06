@@ -39,6 +39,7 @@ const COVERAGE_LABELS: Record<string, string> = {
 // screen's sign-off gating — would silently drift from the real value.
 function toReviewFact(field: SnapshotField, patientId: string, visitId: string): ReviewFact {
   const provenance = field.provenance;
+  const blockingConflict = field.conflicts.find((c) => c.status === "open" || c.status === "annotated");
   return {
     id: field.fact_id!,
     patient_id: patientId,
@@ -55,7 +56,8 @@ function toReviewFact(field: SnapshotField, patientId: string, visitId: string):
     needs_manual_date: field.as_of_date === null,
     coverage_status: field.coverage_status,
     verification_state: field.verification_state!,
-    has_blocking_conflict: field.conflicts.some((c) => c.status === "open" || c.status === "annotated"),
+    has_blocking_conflict: blockingConflict !== undefined,
+    blocking_conflict_id: blockingConflict?.conflict_id ?? null,
     source_page: provenance?.source_page ?? null,
     source_location: provenance?.source_location ?? null,
     source_snippet: provenance?.source_snippet ?? null,

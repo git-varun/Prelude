@@ -169,7 +169,13 @@ test("a /config.json that never responds still ends in the connectivity error (n
 
 // Sign-off / reopen buttons on the review FactCard. The stub keeps mutable fact
 // state so a click's POST flips the card the way the real API would.
-type StubFact = { verification_state: string; has_blocking_conflict?: boolean; needs_manual_date?: boolean; unmapped?: boolean };
+type StubFact = {
+  verification_state: string;
+  has_blocking_conflict?: boolean;
+  blocking_conflict_id?: string | null;
+  needs_manual_date?: boolean;
+  unmapped?: boolean;
+};
 
 async function openReviewAs(role: "staff" | "oncologist", stub: StubFact) {
   const page = await browser.newPage();
@@ -194,6 +200,7 @@ async function openReviewAs(role: "staff" | "oncologist", stub: StubFact) {
     as_of_date: state.needs_manual_date ? null : "2026-02-01", needs_manual_date: state.needs_manual_date ?? false,
     coverage_status: "value_found", verification_state: state.verification_state,
     has_blocking_conflict: state.has_blocking_conflict ?? false,
+    blocking_conflict_id: state.has_blocking_conflict ? (state.blocking_conflict_id ?? "c1") : null,
     source_page: 1, source_location: null, source_snippet: "CEA 4.2 ng/mL",
   });
   await page.route(`${API}/**`, (route) => {
@@ -225,6 +232,13 @@ async function openReviewAs(role: "staff" | "oncologist", stub: StubFact) {
       posts.push(path);
       state.verification_state = "reopened_by_oncologist";
       return json(fact());
+    }
+    if (req.method() === "GET" && path === "/conflicts/c1") {
+      return json({
+        conflict: { id: "c1", fact_id_a: "f1", fact_id_b: "f9", status: "open", authoritative_fact_id: null, annotation_note: null, resolution_note: null, resolved_by: null, resolved_at: null },
+        fact_a: { ...fact(), id: "f1" },
+        fact_b: { ...fact(), id: "f9", value: "9.0" },
+      });
     }
     return route.fulfill({ status: 404, contentType: "application/json", headers: cors, body: "{}" });
   });
@@ -313,6 +327,17 @@ test("staff sees neither Sign off nor Reopen, in any verification state, and no 
     expect(await page.getByText("Blocked by an unresolved conflict").count()).toBe(0);
     await page.close();
   }
+}, 30_000);
+
+test("Extraction Review: a conflicted fact shows a 'Conflicting sources — review' badge that links to /conflicts/:id", async () => {
+  const { page, errors, card } = await openReviewAs("oncologist", { verification_state: "unverified", has_blocking_conflict: true });
+  const badge = card.getByRole("button", { name: "Conflicting sources — review" });
+  await badge.waitFor();
+  await badge.click();
+  await page.waitForURL(`${BASE}/#/conflicts/c1`);
+  await page.getByRole("heading", { name: "Conflict" }).waitFor();
+  expect(errors).toEqual([]);
+  await page.close();
 }, 30_000);
 
 test("per-fact undated fact: sign-off is disabled with a reason until its date is saved, then goes active without a reload", async () => {
@@ -430,7 +455,12 @@ function snapshotBody(overrides: Record<string, unknown> = {}) {
   };
 }
 
-async function openSnapshot(role: "staff" | "oncologist", body: unknown, trends: Record<string, unknown> = {}) {
+async function openSnapshot(
+  role: "staff" | "oncologist",
+  body: unknown,
+  trends: Record<string, unknown> = {},
+  extraRoute?: (path: string, method: string) => unknown | undefined,
+) {
   const page = await browser.newPage();
   page.setDefaultTimeout(5000);
   const errors: string[] = [];
@@ -440,12 +470,17 @@ async function openSnapshot(role: "staff" | "oncologist", body: unknown, trends:
   });
   const cors = { "Access-Control-Allow-Origin": BASE, "Access-Control-Allow-Credentials": "true" };
   await page.route(`${API}/**`, (route) => {
-    const path = new URL(route.request().url()).pathname;
+    const req = route.request();
+    const path = new URL(req.url()).pathname;
     const json = (b: unknown) => route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify(b) });
     if (path === "/auth/me") return json({ id: "u1", name: "Test", email: "t@opd.local", role });
     if (path === "/patients/p1/snapshot") return json(body);
     const trendMatch = path.match(/^\/patients\/p1\/markers\/([^/]+)\/trend$/);
     if (trendMatch) return json(trends[trendMatch[1]!] ?? { marker_name: "", points: [] });
+    if (extraRoute) {
+      const result = extraRoute(path, req.method());
+      if (result !== undefined) return json(result);
+    }
     return route.fulfill({ status: 404, contentType: "application/json", headers: cors, body: "{}" });
   });
   await page.goto(`${BASE}/#/patients/p1/snapshot`);
@@ -505,6 +540,34 @@ test("Snapshot: an open conflict on a field reaches FactCard through the adapter
   await signOff.waitFor();
   expect(await signOff.isDisabled()).toBe(true);
   await card.getByText("Blocked by an unresolved conflict").waitFor();
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Snapshot: a conflicted fact shows a 'Conflicting sources — review' badge that links to /conflicts/:id", async () => {
+  const body = snapshotBody({
+    tumor_markers: [
+      snapshotField({
+        fact_id: "f1", marker_name: "CEA",
+        conflicts: [{ conflict_id: "c1", status: "open", other_fact_id: "f9", other_value: "9.0", other_source: provenance(), authoritative_fact_id: null, historical: false }],
+      }),
+    ],
+  });
+  const conflictDetail = {
+    conflict: { id: "c1", fact_id_a: "f1", fact_id_b: "f9", status: "open", authoritative_fact_id: null, annotation_note: null, resolution_note: null, resolved_by: null, resolved_at: null },
+    fact_a: { id: "f1", patient_id: "p1", visit_id: "v2", document_id: "doc1", tracked_marker_id: "m1", tracked_marker_name: "CEA", field_type: "marker_value", value: "4.2", unit: "ng/mL", reference_range: "0-5", as_of_date: "2026-02-01", coverage_status: "conflicting_sources", verification_state: "unverified", source_page: 3, source_location: "line 4", source_snippet: "x" },
+    fact_b: { id: "f9", patient_id: "p1", visit_id: "v2", document_id: "doc1", tracked_marker_id: "m1", tracked_marker_name: "CEA", field_type: "marker_value", value: "9.0", unit: "ng/mL", reference_range: "0-5", as_of_date: "2026-02-01", coverage_status: "conflicting_sources", verification_state: "unverified", source_page: 3, source_location: "line 4", source_snippet: "y" },
+  };
+  const { page, errors } = await openSnapshot("oncologist", body, {}, (path, method) => {
+    if (path === "/conflicts/c1" && method === "GET") return conflictDetail;
+    return undefined;
+  });
+  const card = page.locator(".card", { has: page.getByRole("heading", { name: "CEA" }) });
+  const badge = card.getByRole("button", { name: "Conflicting sources — review" });
+  await badge.waitFor();
+  await badge.click();
+  await page.waitForURL(`${BASE}/#/conflicts/c1`);
+  await page.getByRole("heading", { name: "Conflict" }).waitFor();
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);
@@ -655,6 +718,195 @@ test("Snapshot: Thyroglobulin always renders adjacent to Anti-Tg, even when the 
   const tgIndex = headings.indexOf("Thyroglobulin (Tg)");
   expect(tgIndex).toBeGreaterThan(-1);
   expect(headings[tgIndex + 1]).toBe("Anti-Tg (TgAb)");
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+// --- Conflict Resolution screen: annotate / resolve flows, driven from the Snapshot ---
+
+function conflictFact(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "f1", patient_id: "p1", visit_id: "v2", document_id: "doc1", tracked_marker_id: null,
+    tracked_marker_name: null, field_type: "treatment_regimen", value: "FOLFOX", unit: null,
+    reference_range: null, as_of_date: "2026-02-01", coverage_status: "conflicting_sources",
+    verification_state: "unverified", source_page: 1, source_location: null, source_snippet: "FOLFOX regimen",
+    ...overrides,
+  };
+}
+
+type ConflictScenarioState = {
+  status: "open" | "annotated" | "resolved";
+  authoritativeFactId: string | null;
+  annotationNote: string | null;
+  resolutionNote: string | null;
+};
+
+async function openConflictScenario(
+  role: "staff" | "oncologist",
+  initial: Partial<ConflictScenarioState>,
+  startAt: "snapshot" | "conflict",
+) {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  const errors: string[] = [];
+  page.on("pageerror", (err) => errors.push(`pageerror: ${err.message}`));
+  page.on("console", (msg) => {
+    if (msg.type() === "error") errors.push(`console: ${msg.text()}`);
+  });
+  const state: ConflictScenarioState = { status: "open", authoritativeFactId: null, annotationNote: null, resolutionNote: null, ...initial };
+  const posts: { path: string; body: unknown }[] = [];
+  const cors = { "Access-Control-Allow-Origin": BASE, "Access-Control-Allow-Credentials": "true" };
+
+  function coverageFor(factId: "f1" | "f9"): string {
+    if (state.status !== "resolved") return "conflicting_sources";
+    if (state.authoritativeFactId === null) return "value_found"; // both_stand
+    return state.authoritativeFactId === factId ? "value_found" : "conflicting_sources";
+  }
+  const factA = () => conflictFact({ id: "f1", value: "FOLFOX", coverage_status: coverageFor("f1") });
+  const factB = () => conflictFact({ id: "f9", value: "FOLFIRI", coverage_status: coverageFor("f9") });
+
+  function conflictRecord() {
+    return {
+      id: "c1", fact_id_a: "f1", fact_id_b: "f9", status: state.status,
+      authoritative_fact_id: state.authoritativeFactId, annotation_note: state.annotationNote,
+      resolution_note: state.resolutionNote, resolved_by: state.status === "resolved" ? "onc1" : null,
+      resolved_at: state.status === "resolved" ? "2026-02-02T00:00:00Z" : null,
+    };
+  }
+
+  function treatmentField(fact: ReturnType<typeof factA>) {
+    return {
+      fact_id: fact.id, field_type: fact.field_type, tracked_marker_id: null, marker_name: null,
+      value: fact.value, unit: fact.unit, reference_range: fact.reference_range, as_of_date: fact.as_of_date,
+      coverage_status: fact.coverage_status, verification_state: fact.verification_state, delta_status: null,
+      conflicts: [{
+        conflict_id: "c1", status: state.status, other_fact_id: fact.id === "f1" ? "f9" : "f1",
+        other_value: fact.id === "f1" ? "FOLFIRI" : "FOLFOX", other_source: provenance(),
+        authoritative_fact_id: state.authoritativeFactId, historical: state.status === "resolved" && state.authoritativeFactId !== null,
+      }],
+      provenance: provenance({ document_id: "doc1" }),
+    };
+  }
+
+  // Mirrors the real loadCurrentTreatment query: a live, non-blocked fact loses its conflict
+  // pairing's loser entirely once resolved with a winner; a tie (both_stand) keeps both.
+  function currentTreatment() {
+    if (state.status !== "resolved" || state.authoritativeFactId === null) {
+      return [treatmentField(factA()), treatmentField(factB())];
+    }
+    return [treatmentField(state.authoritativeFactId === "f1" ? factA() : factB())];
+  }
+
+  await page.route(`${API}/**`, async (route) => {
+    const req = route.request();
+    const path = new URL(req.url()).pathname;
+    const json = (b: unknown) => route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify(b) });
+    if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+    if (path === "/auth/me") return json({ id: role === "oncologist" ? "onc1" : "staff1", name: "Test", email: "t@opd.local", role });
+    if (path === "/patients/p1/snapshot") return json(snapshotBody({ current_treatment: currentTreatment() }));
+    if (path === "/conflicts/c1" && req.method() === "GET") return json({ conflict: conflictRecord(), fact_a: factA(), fact_b: factB() });
+    if (path === "/conflicts/c1/annotate" && req.method() === "POST") {
+      const body = req.postDataJSON() as { annotation_note: string };
+      posts.push({ path, body });
+      state.status = "annotated";
+      state.annotationNote = body.annotation_note;
+      return json(conflictRecord());
+    }
+    if (path === "/conflicts/c1/resolve" && req.method() === "POST") {
+      const body = req.postDataJSON() as { authoritative_fact_id?: string; both_stand?: true };
+      posts.push({ path, body });
+      state.status = "resolved";
+      state.authoritativeFactId = "authoritative_fact_id" in body ? (body.authoritative_fact_id ?? null) : null;
+      state.resolutionNote = state.authoritativeFactId
+        ? `Fact ${state.authoritativeFactId} marked authoritative.`
+        : "Both values stand as independently valid.";
+      return json(conflictRecord());
+    }
+    if (path === "/facts/f1/sign-off" && req.method() === "POST") {
+      posts.push({ path, body: null });
+      return json({ ...factA(), has_blocking_conflict: false, blocking_conflict_id: null, verification_state: "oncologist_signed_off" });
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", headers: cors, body: "{}" });
+  });
+
+  if (startAt === "snapshot") {
+    await page.goto(`${BASE}/#/patients/p1/snapshot`);
+    await page.getByRole("heading", { name: "Test Patient" }).waitFor();
+  } else {
+    await page.goto(`${BASE}/#/conflicts/c1`);
+    await page.getByRole("heading", { name: "Conflict" }).waitFor();
+  }
+  return { page, errors, posts };
+}
+
+test("ConflictResolution: staff can annotate, and sees no resolve controls", async () => {
+  const { page, errors, posts } = await openConflictScenario("staff", {}, "conflict");
+  expect(await page.getByRole("button", { name: "Mark Fact A authoritative" }).count()).toBe(0);
+  expect(await page.getByRole("button", { name: "Mark Fact B authoritative" }).count()).toBe(0);
+  expect(await page.getByRole("button", { name: "Both values stand" }).count()).toBe(0);
+
+  await page.getByLabel("What did you find?").fill("Confirmed with the referring clinic.");
+  await page.getByRole("button", { name: "Save annotation" }).click();
+  await page.getByText("annotated").first().waitFor();
+
+  expect(posts).toEqual([{ path: "/conflicts/c1/annotate", body: { annotation_note: "Confirmed with the referring clinic." } }]);
+  expect(await page.getByRole("button", { name: "Mark Fact A authoritative" }).count()).toBe(0);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("ConflictResolution: oncologist authoritative-pick — the loser disappears from the Snapshot after navigating back, and the winner's Sign off becomes active", async () => {
+  const { page, errors, posts } = await openConflictScenario("oncologist", {}, "snapshot");
+  await page.getByText("FOLFOX").first().waitFor();
+  await page.getByText("FOLFIRI").first().waitFor();
+
+  await page.getByRole("button", { name: "Conflicting sources — review" }).first().click();
+  await page.getByRole("heading", { name: "Conflict" }).waitFor();
+  await page.getByRole("button", { name: "Mark Fact A authoritative" }).click();
+  await page.getByText("resolved").first().waitFor();
+  expect(posts).toEqual([{ path: "/conflicts/c1/resolve", body: { authoritative_fact_id: "f1" } }]);
+
+  await page.getByRole("button", { name: "Back to snapshot" }).click();
+  await page.getByRole("heading", { name: "Test Patient" }).waitFor();
+  await page.getByText("FOLFOX").first().waitFor();
+  expect(await page.getByText("FOLFIRI").count()).toBe(0);
+
+  const signOff = page.getByRole("button", { name: "Sign off", exact: true });
+  await signOff.waitFor();
+  expect(await signOff.isEnabled()).toBe(true);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("ConflictResolution: oncologist both-stand — both facts remain, and neither shows 'Conflicting sources' any more", async () => {
+  const { page, errors, posts } = await openConflictScenario("oncologist", {}, "snapshot");
+  await page.getByRole("button", { name: "Conflicting sources — review" }).first().click();
+  await page.getByRole("heading", { name: "Conflict" }).waitFor();
+  await page.getByRole("button", { name: "Both values stand" }).click();
+  await page.getByText("resolved").first().waitFor();
+  expect(posts).toEqual([{ path: "/conflicts/c1/resolve", body: { both_stand: true } }]);
+
+  await page.getByRole("button", { name: "Back to snapshot" }).click();
+  await page.getByRole("heading", { name: "Test Patient" }).waitFor();
+  await page.getByText("FOLFOX").first().waitFor();
+  await page.getByText("FOLFIRI").first().waitFor();
+  expect(await page.getByRole("button", { name: "Conflicting sources — review" }).count()).toBe(0);
+  expect(await page.getByText("Conflicting values, see sources").count()).toBe(0);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("ConflictResolution: a resolved conflict renders read-only (no annotation box, no resolve controls)", async () => {
+  const { page, errors } = await openConflictScenario(
+    "oncologist",
+    { status: "resolved", authoritativeFactId: "f1", resolutionNote: "Fact f1 marked authoritative." },
+    "conflict",
+  );
+  await page.getByText("Fact f1 marked authoritative.").waitFor();
+  expect(await page.getByRole("button", { name: "Save annotation" }).count()).toBe(0);
+  expect(await page.getByLabel("What did you find?").count()).toBe(0);
+  expect(await page.getByRole("button", { name: "Mark Fact A authoritative" }).count()).toBe(0);
+  expect(await page.getByRole("button", { name: "Both values stand" }).count()).toBe(0);
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);

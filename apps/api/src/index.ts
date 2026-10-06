@@ -4,6 +4,7 @@ import { createPatient, listPatients, getPatient, addMarker, getPatientSnapshot,
 import { createOrOpenVisit } from "./routes/visits";
 import { uploadDocument, getDocument, getDocumentFile } from "./routes/documents";
 import { getDocumentFacts, patchFact, signOffFact, reopenFact } from "./routes/facts";
+import { getConflict, annotateConflict, resolveConflict } from "./routes/conflicts";
 import { requireRole } from "./middleware/roles";
 import { cors } from "./middleware/cors";
 
@@ -59,6 +60,15 @@ const server = Bun.serve({
     }),
     "/facts/:id/reopen": cors({
       POST: requireRole(["oncologist"], reopenFact),
+    }),
+    "/conflicts/:id": cors({
+      GET: requireRole(["staff", "oncologist"], getConflict),
+    }),
+    "/conflicts/:id/annotate": cors({
+      POST: requireRole(["staff", "oncologist"], annotateConflict),
+    }),
+    "/conflicts/:id/resolve": cors({
+      POST: requireRole(["oncologist"], resolveConflict),
     }),
   },
   development: {

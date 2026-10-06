@@ -592,6 +592,24 @@ test("has_blocking_conflict flips true for both facts of an open or annotated co
   }
 });
 
+test("blocking_conflict_id carries the conflict id for a blocked fact, so the UI can link to it; null once resolved", async () => {
+  const docId = await newDocument();
+  const a = await newFact(docId);
+  const b = await newFact(docId);
+  const [row] = await sql`INSERT INTO conflicts (fact_id_a, fact_id_b, status) VALUES (${a}, ${b}, 'open') RETURNING id`;
+  try {
+    const body = (await (await getDocumentFacts(getReq(docId))).json()) as any;
+    const factA = body.facts.find((f: any) => f.id === a);
+    expect(factA.blocking_conflict_id).toBe(row.id);
+
+    await sql`UPDATE conflicts SET status = 'resolved' WHERE id = ${row.id}`;
+    const bodyAfter = (await (await getDocumentFacts(getReq(docId))).json()) as any;
+    expect(bodyAfter.facts.find((f: any) => f.id === a).blocking_conflict_id).toBeNull();
+  } finally {
+    await sql`DELETE FROM conflicts WHERE id = ${row.id}`;
+  }
+});
+
 test("sign-off and reopen responses carry has_blocking_conflict too", async () => {
   const id = await newFact(await newDocument(), { markerId: ceaMarkerId });
   const res = await signOffFact(signOffReq(id), asAuthedUser(oncologist));

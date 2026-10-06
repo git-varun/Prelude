@@ -18,7 +18,12 @@ async function queryFacts(exec: Exec, filter: { documentId?: string; factId?: st
            EXISTS (
              SELECT 1 FROM conflicts c
              WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated')
-           ) AS has_blocking_conflict
+           ) AS has_blocking_conflict,
+           (
+             SELECT c.id FROM conflicts c
+             WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated')
+             LIMIT 1
+           ) AS blocking_conflict_id
     FROM facts f
     LEFT JOIN tracked_markers tm ON tm.id = f.tracked_marker_id
     WHERE (${filter.documentId ?? null}::uuid IS NULL OR f.document_id = ${filter.documentId ?? null}::uuid)

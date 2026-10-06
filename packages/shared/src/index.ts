@@ -119,6 +119,7 @@ export interface Conflict {
   fact_id_b: string;
   status: ConflictStatus;
   authoritative_fact_id: string | null;
+  annotation_note: string | null;
   resolution_note: string | null;
   resolved_by: string | null;
   resolved_at: string | null;

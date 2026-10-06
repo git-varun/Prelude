@@ -125,6 +125,7 @@ export interface ReviewFact {
   coverage_status: string;
   verification_state: string;
   has_blocking_conflict: boolean;
+  blocking_conflict_id: string | null;
   source_page: number | null;
   source_location: string | null;
   source_snippet: string | null;
@@ -220,6 +221,43 @@ export interface MarkerTrend {
   points: MarkerTrendPoint[];
 }
 
+export interface Conflict {
+  id: string;
+  fact_id_a: string;
+  fact_id_b: string;
+  status: "open" | "annotated" | "resolved";
+  authoritative_fact_id: string | null;
+  annotation_note: string | null;
+  resolution_note: string | null;
+  resolved_by: string | null;
+  resolved_at: string | null;
+}
+
+export interface ConflictFact {
+  id: string;
+  patient_id: string;
+  visit_id: string;
+  document_id: string;
+  tracked_marker_id: string | null;
+  tracked_marker_name: string | null;
+  field_type: string;
+  value: string | null;
+  unit: string | null;
+  reference_range: string | null;
+  as_of_date: string | null;
+  coverage_status: string;
+  verification_state: string;
+  source_page: number | null;
+  source_location: string | null;
+  source_snippet: string | null;
+}
+
+export interface ConflictDetail {
+  conflict: Conflict;
+  fact_a: ConflictFact;
+  fact_b: ConflictFact;
+}
+
 export const api = {
   login: (email: string, password: string) =>
     request<SessionUser>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
@@ -285,4 +323,15 @@ export const api = {
   signOffFact: (factId: string) => request<ReviewFact>(`/facts/${factId}/sign-off`, { method: "POST" }),
 
   reopenFact: (factId: string) => request<ReviewFact>(`/facts/${factId}/reopen`, { method: "POST" }),
+
+  getConflict: (conflictId: string) => request<ConflictDetail>(`/conflicts/${conflictId}`),
+
+  annotateConflict: (conflictId: string, annotationNote: string) =>
+    request<Conflict>(`/conflicts/${conflictId}/annotate`, {
+      method: "POST",
+      body: JSON.stringify({ annotation_note: annotationNote }),
+    }),
+
+  resolveConflict: (conflictId: string, body: { authoritative_fact_id: string } | { both_stand: true }) =>
+    request<Conflict>(`/conflicts/${conflictId}/resolve`, { method: "POST", body: JSON.stringify(body) }),
 };
