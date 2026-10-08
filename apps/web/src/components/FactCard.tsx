@@ -112,19 +112,21 @@ export function FactCard({ fact, trackedMarkers, onChanged, badge }: Props) {
 
       {error && <div className="error-banner">{error}</div>}
 
-      <p className="fact-value" style={{ marginTop: 0 }}>
-        {fact.value ?? <span className="muted">(no value)</span>}
-        {fact.unit && ` ${fact.unit}`}
-        {fact.reference_range && <span className="muted"> · ref {fact.reference_range}</span>}
+      <div className="fact-value-row" style={{ marginTop: 0 }}>
+        <p className="fact-value" style={{ margin: 0 }}>
+          {fact.value ?? <span className="muted">(no value)</span>}
+          {fact.unit && ` ${fact.unit}`}
+          {fact.reference_range && <span className="muted"> · ref {fact.reference_range}</span>}
+        </p>
         {(() => {
           const flag = flagForRange(fact.value, fact.reference_range);
           return flag ? (
-            <span className="tag tag--range-flag" style={{ marginLeft: 8 }} title={rangeFlagTooltip(fact.reference_range)}>
+            <span className="tag tag--range-flag" title={rangeFlagTooltip(fact.reference_range)}>
               {RANGE_FLAG_LABEL[flag]}
             </span>
           ) : null;
         })()}
-      </p>
+      </div>
 
       <details className="fact-correction">
         <summary>Correct this value</summary>

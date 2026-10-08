@@ -214,6 +214,15 @@ select {
   font-family: var(--font-serif);
 }
 
+/* Value + its out-of-range flag as aligned flex siblings, not inline text --
+   avoids the flag tag wrapping mid-baseline against the much larger value text. */
+.fact-value-row {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
 /* Correction/mapping UI is collapsed by default -- a doctor scanning the
    Snapshot shouldn't see an editable text box and raw-source panel for
    every already-signed-off value, only when they ask for it. */
