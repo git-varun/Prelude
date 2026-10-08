@@ -54,9 +54,18 @@ export function PatientList() {
               navigate(`/patients/${p.id}/snapshot`);
             }}
           >
-            <span className="patient-row__name">{p.name || "(unnamed patient)"}</span>
+            <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span className="patient-row__name">{p.name || "(unnamed patient)"}</span>
+              {p.patient_origin === "referral" && <span className="tag">Referral</span>}
+              {p.stage && <span className="tag">Stage {p.stage}</span>}
+            </span>
             <span style={{ display: "flex", alignItems: "center", gap: 12 }}>
-              <span className="patient-row__meta">{p.cancer_type || "cancer type not set"}</span>
+              <span className="patient-row__meta">
+                {p.cancer_type || "cancer type not set"}
+                {p.mrn && ` · MRN ${p.mrn}`}
+                {" · "}
+                {p.last_visit_date ? `last visit ${p.last_visit_date}` : "no visits yet"}
+              </span>
               <button
                 className="btn btn--ghost"
                 type="button"

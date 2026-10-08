@@ -134,20 +134,24 @@ export async function listPatients(req: Request): Promise<Response> {
   );
   const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);
 
+  // Most recently seen first is more clinically useful than most recently
+  // registered -- a patient with no visits yet sorts last (NULLS LAST).
   const rows = search
     ? await sql`
-        SELECT id, name, cancer_type, created_at, created_by, mrn, patient_origin,
-               to_char(date_of_birth, 'YYYY-MM-DD') AS date_of_birth, stage
-        FROM patients
-        WHERE name ILIKE ${"%" + search + "%"}
-        ORDER BY created_at DESC
+        SELECT p.id, p.name, p.cancer_type, p.created_at, p.created_by, p.mrn, p.patient_origin,
+               to_char(p.date_of_birth, 'YYYY-MM-DD') AS date_of_birth, p.stage,
+               (SELECT to_char(MAX(v.visit_date), 'YYYY-MM-DD') FROM visits v WHERE v.patient_id = p.id) AS last_visit_date
+        FROM patients p
+        WHERE p.name ILIKE ${"%" + search + "%"}
+        ORDER BY last_visit_date DESC NULLS LAST
         LIMIT ${limit} OFFSET ${offset}
       `
     : await sql`
-        SELECT id, name, cancer_type, created_at, created_by, mrn, patient_origin,
-               to_char(date_of_birth, 'YYYY-MM-DD') AS date_of_birth, stage
-        FROM patients
-        ORDER BY created_at DESC
+        SELECT p.id, p.name, p.cancer_type, p.created_at, p.created_by, p.mrn, p.patient_origin,
+               to_char(p.date_of_birth, 'YYYY-MM-DD') AS date_of_birth, p.stage,
+               (SELECT to_char(MAX(v.visit_date), 'YYYY-MM-DD') FROM visits v WHERE v.patient_id = p.id) AS last_visit_date
+        FROM patients p
+        ORDER BY last_visit_date DESC NULLS LAST
         LIMIT ${limit} OFFSET ${offset}
       `;
 

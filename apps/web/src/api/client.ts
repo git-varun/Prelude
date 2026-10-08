@@ -84,6 +84,7 @@ export interface PatientSummary {
   patient_origin: PatientOrigin;
   date_of_birth: string | null;
   stage: Stage | null;
+  last_visit_date: string | null;
 }
 
 export interface TrackedMarker {
