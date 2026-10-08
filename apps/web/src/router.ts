@@ -38,6 +38,11 @@ export function matchPatientMarkers(path: string): string | null {
   return m ? m[1]! : null;
 }
 
+export function matchPatientEdit(path: string): string | null {
+  const m = path.match(/^\/patients\/([^/]+)\/edit$/);
+  return m ? m[1]! : null;
+}
+
 export function matchConflict(path: string): string | null {
   const m = path.match(/^\/conflicts\/([^/]+)$/);
   return m ? m[1]! : null;

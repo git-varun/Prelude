@@ -15,10 +15,50 @@ interface MarkerInput {
   marker_name?: string;
 }
 
+const SEX_VALUES = ["male", "female", "other", "unknown"] as const;
+const STAGE_VALUES = ["0", "I", "II", "III", "IV"] as const;
+const PATIENT_ORIGIN_VALUES = ["own_hospital", "referral"] as const;
+
 interface CreatePatientBody {
   name?: string;
   cancer_type?: string;
   markers?: MarkerInput[];
+  date_of_birth?: string | null;
+  sex?: (typeof SEX_VALUES)[number] | null;
+  mrn?: string | null;
+  diagnosis_date?: string | null;
+  stage?: (typeof STAGE_VALUES)[number] | null;
+  referring_physician?: string | null;
+  patient_origin?: (typeof PATIENT_ORIGIN_VALUES)[number];
+}
+
+interface UpdatePatientBody {
+  name?: string;
+  cancer_type?: string;
+  date_of_birth?: string | null;
+  sex?: (typeof SEX_VALUES)[number] | null;
+  mrn?: string | null;
+  diagnosis_date?: string | null;
+  stage?: (typeof STAGE_VALUES)[number] | null;
+  referring_physician?: string | null;
+  patient_origin?: (typeof PATIENT_ORIGIN_VALUES)[number];
+}
+
+function validateDemographics(body: {
+  sex?: string | null;
+  stage?: string | null;
+  patient_origin?: string;
+}): string | null {
+  if (body.sex != null && !(SEX_VALUES as readonly string[]).includes(body.sex)) {
+    return `sex must be one of: ${SEX_VALUES.join(", ")}.`;
+  }
+  if (body.stage != null && !(STAGE_VALUES as readonly string[]).includes(body.stage)) {
+    return `stage must be one of: ${STAGE_VALUES.join(", ")}.`;
+  }
+  if (body.patient_origin !== undefined && !(PATIENT_ORIGIN_VALUES as readonly string[]).includes(body.patient_origin)) {
+    return `patient_origin must be one of: ${PATIENT_ORIGIN_VALUES.join(", ")}.`;
+  }
+  return null;
 }
 
 function markerRow(name: string) {
@@ -40,10 +80,22 @@ export async function createPatient(req: Request, user: AuthedUser): Promise<Res
     }
   }
 
+  const demographicsError = validateDemographics(body);
+  if (demographicsError) {
+    return jsonError(400, "bad_request", demographicsError);
+  }
+
   const [patient] = await sql`
-    INSERT INTO patients (name, cancer_type, created_by)
-    VALUES (${body.name ?? null}, ${body.cancer_type ?? null}, ${user.id})
-    RETURNING id, name, cancer_type, created_at, created_by
+    INSERT INTO patients (
+      name, cancer_type, created_by, date_of_birth, sex, mrn, diagnosis_date, stage, referring_physician, patient_origin
+    )
+    VALUES (
+      ${body.name ?? null}, ${body.cancer_type ?? null}, ${user.id},
+      ${body.date_of_birth ?? null}, ${body.sex ?? null}, ${body.mrn ?? null},
+      ${body.diagnosis_date ?? null}, ${body.stage ?? null}, ${body.referring_physician ?? null},
+      ${body.patient_origin ?? "own_hospital"}
+    )
+    RETURNING id, name, cancer_type, created_at, created_by, date_of_birth, sex, mrn, diagnosis_date, stage, referring_physician, patient_origin
   `;
 
   const trackedMarkers = [];
@@ -82,13 +134,17 @@ export async function listPatients(req: Request): Promise<Response> {
 
   const rows = search
     ? await sql`
-        SELECT id, name, cancer_type, created_at, created_by FROM patients
+        SELECT id, name, cancer_type, created_at, created_by, mrn, patient_origin,
+               to_char(date_of_birth, 'YYYY-MM-DD') AS date_of_birth, stage
+        FROM patients
         WHERE name ILIKE ${"%" + search + "%"}
         ORDER BY created_at DESC
         LIMIT ${limit} OFFSET ${offset}
       `
     : await sql`
-        SELECT id, name, cancer_type, created_at, created_by FROM patients
+        SELECT id, name, cancer_type, created_at, created_by, mrn, patient_origin,
+               to_char(date_of_birth, 'YYYY-MM-DD') AS date_of_birth, stage
+        FROM patients
         ORDER BY created_at DESC
         LIMIT ${limit} OFFSET ${offset}
       `;
@@ -100,7 +156,10 @@ export async function getPatient(req: Request & { params: { id: string } }): Pro
   const patientId = req.params.id;
 
   const [patient] = await sql`
-    SELECT id, name, cancer_type, created_at, created_by FROM patients WHERE id = ${patientId}
+    SELECT id, name, cancer_type, created_at, created_by, mrn, sex, patient_origin, stage, referring_physician,
+           to_char(date_of_birth, 'YYYY-MM-DD') AS date_of_birth,
+           to_char(diagnosis_date, 'YYYY-MM-DD') AS diagnosis_date
+    FROM patients WHERE id = ${patientId}
   `;
   if (!patient) {
     return jsonError(404, "not_found", "Patient not found.");
@@ -113,6 +172,47 @@ export async function getPatient(req: Request & { params: { id: string } }): Pro
   `;
 
   return Response.json({ ...patient, tracked_markers: trackedMarkers });
+}
+
+// Partial update, same COALESCE-over-undefined pattern as PATCH /facts/:id
+// (facts.ts patchFact) -- a field omitted from the body is left unchanged,
+// not clearable to null via this endpoint.
+export async function updatePatient(req: Request & { params: { id: string } }): Promise<Response> {
+  const patientId = req.params.id;
+
+  let body: UpdatePatientBody;
+  try {
+    body = (await req.json()) as UpdatePatientBody;
+  } catch {
+    return jsonError(400, "bad_request", "Malformed JSON body.");
+  }
+
+  const demographicsError = validateDemographics(body);
+  if (demographicsError) {
+    return jsonError(400, "bad_request", demographicsError);
+  }
+
+  const [patient] = await sql`
+    UPDATE patients SET
+      name = COALESCE(${body.name ?? null}::text, name),
+      cancer_type = COALESCE(${body.cancer_type ?? null}::text, cancer_type),
+      date_of_birth = COALESCE(${body.date_of_birth ?? null}::date, date_of_birth),
+      sex = COALESCE(${body.sex ?? null}::text, sex),
+      mrn = COALESCE(${body.mrn ?? null}::text, mrn),
+      diagnosis_date = COALESCE(${body.diagnosis_date ?? null}::date, diagnosis_date),
+      stage = COALESCE(${body.stage ?? null}::text, stage),
+      referring_physician = COALESCE(${body.referring_physician ?? null}::text, referring_physician),
+      patient_origin = COALESCE(${body.patient_origin ?? null}::text, patient_origin)
+    WHERE id = ${patientId}
+    RETURNING id, name, cancer_type, created_at, created_by, mrn, sex, patient_origin, stage, referring_physician,
+              to_char(date_of_birth, 'YYYY-MM-DD') AS date_of_birth,
+              to_char(diagnosis_date, 'YYYY-MM-DD') AS diagnosis_date
+  `;
+  if (!patient) {
+    return jsonError(404, "not_found", "Patient not found.");
+  }
+
+  return Response.json(patient);
 }
 
 export async function addMarker(req: Request & { params: { id: string } }, user: AuthedUser): Promise<Response> {
@@ -366,7 +466,12 @@ export async function getPatientSnapshot(req: Request & { params: { id: string }
   const patientId = req.params.id;
   if (!isUuid(patientId)) return jsonError(404, "not_found", "Patient not found.");
 
-  const [patient] = await sql`SELECT id, name, cancer_type FROM patients WHERE id = ${patientId}`;
+  const [patient] = await sql`
+    SELECT id, name, cancer_type, mrn, sex, patient_origin, stage, referring_physician,
+           to_char(date_of_birth, 'YYYY-MM-DD') AS date_of_birth,
+           to_char(diagnosis_date, 'YYYY-MM-DD') AS diagnosis_date
+    FROM patients WHERE id = ${patientId}
+  `;
   if (!patient) return jsonError(404, "not_found", "Patient not found.");
 
   const visits = await sql`
@@ -403,7 +508,18 @@ export async function getPatientSnapshot(req: Request & { params: { id: string }
   );
 
   return Response.json({
-    patient: { id: patient.id, name: patient.name, cancer_type: patient.cancer_type },
+    patient: {
+      id: patient.id,
+      name: patient.name,
+      cancer_type: patient.cancer_type,
+      mrn: patient.mrn,
+      sex: patient.sex,
+      patient_origin: patient.patient_origin,
+      stage: patient.stage,
+      referring_physician: patient.referring_physician,
+      date_of_birth: patient.date_of_birth,
+      diagnosis_date: patient.diagnosis_date,
+    },
     current_visit: { id: currentVisit.id, visit_date: currentVisit.visit_date },
     previous_visit: previousVisit
       ? { id: previousVisit.id, visit_date: previousVisit.visit_date }

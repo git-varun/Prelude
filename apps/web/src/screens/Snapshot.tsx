@@ -12,6 +12,19 @@ const FIELD_LABELS: Record<string, string> = {
   radiology_impression: "Radiology impression",
 };
 
+function ageFromDob(dob: string | null): number | null {
+  if (dob === null) return null;
+  const birth = new Date(`${dob}T00:00:00Z`);
+  if (Number.isNaN(birth.getTime())) return null;
+  const now = new Date();
+  let age = now.getUTCFullYear() - birth.getUTCFullYear();
+  const hasHadBirthdayThisYear =
+    now.getUTCMonth() > birth.getUTCMonth() ||
+    (now.getUTCMonth() === birth.getUTCMonth() && now.getUTCDate() >= birth.getUTCDate());
+  if (!hasHadBirthdayThisYear) age -= 1;
+  return age;
+}
+
 const DELTA_LABELS: Record<string, string> = {
   new: "New",
   changed: "Changed",
@@ -208,14 +221,28 @@ export function Snapshot({ patientId }: { patientId: string }) {
   if (!data) return <div className="error-banner">{error ?? "Patient not found."}</div>;
 
   const visitId = data.current_visit.id;
+  const { patient } = data;
+  const age = ageFromDob(patient.date_of_birth);
 
   return (
     <div>
       <div className="page-heading">
         <div>
-          <h1>{data.patient.name || "(unnamed patient)"}</h1>
-          <p className="muted" style={{ margin: 0 }}>
-            {data.patient.cancer_type || "cancer type not set"} · visit {data.current_visit.visit_date}
+          <h1>{patient.name || "(unnamed patient)"}</h1>
+          <p className="muted" style={{ margin: 0, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span>
+              {patient.cancer_type || "cancer type not set"} · visit {data.current_visit.visit_date}
+              {age !== null && ` · ${age}y`}
+              {patient.sex && patient.sex !== "unknown" && ` ${patient.sex}`}
+              {patient.mrn && ` · MRN ${patient.mrn}`}
+              {patient.stage && ` · Stage ${patient.stage}`}
+            </span>
+            {patient.patient_origin === "referral" && (
+              <span className="tag">Referral{patient.referring_physician ? ` · ${patient.referring_physician}` : ""}</span>
+            )}
+            <button className="btn btn--ghost" type="button" onClick={() => navigate(`/patients/${patient.id}/edit`)}>
+              Edit info
+            </button>
           </p>
         </div>
         <button className="btn btn--ghost" onClick={() => navigate("/")}>

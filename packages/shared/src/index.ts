@@ -49,12 +49,29 @@ export type DeltaStatus = "new" | "changed" | "unchanged" | "not_observed_in_cur
 
 export type ConflictStatus = "open" | "annotated" | "resolved";
 
+export type Sex = "male" | "female" | "other" | "unknown";
+export type Stage = "0" | "I" | "II" | "III" | "IV";
+export type PatientOrigin = "own_hospital" | "referral";
+
+export const SEX_OPTIONS: readonly Sex[] = ["male", "female", "other", "unknown"];
+// Overall AJCC stage only (0-IV) -- full TNM sub-staging is disease-site-specific
+// and needs real clinical input to scope correctly, not guessed at here.
+export const STAGE_OPTIONS: readonly Stage[] = ["0", "I", "II", "III", "IV"];
+export const PATIENT_ORIGIN_OPTIONS: readonly PatientOrigin[] = ["own_hospital", "referral"];
+
 export interface Patient {
   id: string;
   name: string | null;
   cancer_type: string | null;
   created_at: string;
   created_by: string;
+  date_of_birth: string | null;
+  sex: Sex | null;
+  mrn: string | null;
+  diagnosis_date: string | null;
+  stage: Stage | null;
+  referring_physician: string | null;
+  patient_origin: PatientOrigin;
 }
 
 export interface Visit {

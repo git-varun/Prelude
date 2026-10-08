@@ -66,12 +66,24 @@ export interface SessionUser {
   role: UserRole;
 }
 
+export type Sex = "male" | "female" | "other" | "unknown";
+export type Stage = "0" | "I" | "II" | "III" | "IV";
+export type PatientOrigin = "own_hospital" | "referral";
+
+export const SEX_OPTIONS: readonly Sex[] = ["male", "female", "other", "unknown"];
+export const STAGE_OPTIONS: readonly Stage[] = ["0", "I", "II", "III", "IV"];
+export const PATIENT_ORIGIN_OPTIONS: readonly PatientOrigin[] = ["own_hospital", "referral"];
+
 export interface PatientSummary {
   id: string;
   name: string | null;
   cancer_type: string | null;
   created_at: string;
   created_by: string;
+  mrn: string | null;
+  patient_origin: PatientOrigin;
+  date_of_birth: string | null;
+  stage: Stage | null;
 }
 
 export interface TrackedMarker {
@@ -83,6 +95,9 @@ export interface TrackedMarker {
 }
 
 export interface PatientDetail extends PatientSummary {
+  sex: Sex | null;
+  diagnosis_date: string | null;
+  referring_physician: string | null;
   tracked_markers: TrackedMarker[];
 }
 
@@ -199,7 +214,18 @@ export interface SnapshotField {
 }
 
 export interface PatientSnapshot {
-  patient: { id: string; name: string | null; cancer_type: string | null };
+  patient: {
+    id: string;
+    name: string | null;
+    cancer_type: string | null;
+    mrn: string | null;
+    sex: Sex | null;
+    patient_origin: PatientOrigin;
+    stage: Stage | null;
+    referring_physician: string | null;
+    date_of_birth: string | null;
+    diagnosis_date: string | null;
+  };
   current_visit: { id: string; visit_date: string };
   previous_visit: { id: string | null; visit_date: string | null };
   current_treatment: SnapshotField[];
@@ -277,8 +303,33 @@ export const api = {
   getMarkerTrend: (patientId: string, trackedMarkerId: string) =>
     request<MarkerTrend>(`/patients/${patientId}/markers/${trackedMarkerId}/trend`),
 
-  createPatient: (input: { name: string; cancer_type: string; markers: { marker_name: string }[] }) =>
-    request<PatientDetail>("/patients", { method: "POST", body: JSON.stringify(input) }),
+  createPatient: (input: {
+    name: string;
+    cancer_type: string;
+    markers: { marker_name: string }[];
+    date_of_birth?: string;
+    sex?: Sex;
+    mrn?: string;
+    diagnosis_date?: string;
+    stage?: Stage;
+    referring_physician?: string;
+    patient_origin?: PatientOrigin;
+  }) => request<PatientDetail>("/patients", { method: "POST", body: JSON.stringify(input) }),
+
+  updatePatient: (
+    id: string,
+    patch: Partial<{
+      name: string;
+      cancer_type: string;
+      date_of_birth: string;
+      sex: Sex;
+      mrn: string;
+      diagnosis_date: string;
+      stage: Stage;
+      referring_physician: string;
+      patient_origin: PatientOrigin;
+    }>,
+  ) => request<PatientDetail>(`/patients/${id}`, { method: "PATCH", body: JSON.stringify(patch) }),
 
   addMarker: (patientId: string, markerName: string) =>
     request<TrackedMarker>(`/patients/${patientId}/markers`, {

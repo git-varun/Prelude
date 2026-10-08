@@ -33,6 +33,7 @@ services:
       - ../apps/api/src/db/migrations/003_undated_facts_and_extraction_status.sql:/docker-entrypoint-initdb.d/04-undated-facts-and-extraction-status.sql:ro
       - ../apps/api/src/db/migrations/004_extraction_partial_status.sql:/docker-entrypoint-initdb.d/05-extraction-partial-status.sql:ro
       - ../apps/api/src/db/migrations/005_conflict_annotation.sql:/docker-entrypoint-initdb.d/06-conflict-annotation.sql:ro
+      - ../apps/api/src/db/migrations/006_patient_demographics.sql:/docker-entrypoint-initdb.d/07-patient-demographics.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U prelude -d prelude"]
       interval: 2s

@@ -1,11 +1,23 @@
 import { useState, type FormEvent } from "react";
 import { CONTROLLED_MARKERS, DISEASE_SITES, DISEASE_SITE_PANELS, FALLBACK_MARKER_SET } from "@prelude/shared";
-import { api, ApiError } from "../api/client";
+import { api, ApiError, SEX_OPTIONS, STAGE_OPTIONS, PATIENT_ORIGIN_OPTIONS, type Sex, type Stage, type PatientOrigin } from "../api/client";
 import { navigate } from "../router";
+
+const PATIENT_ORIGIN_LABELS: Record<PatientOrigin, string> = {
+  own_hospital: "Own patient",
+  referral: "Referral",
+};
 
 export function PatientCreate() {
   const [name, setName] = useState("");
   const [cancerType, setCancerType] = useState("");
+  const [dateOfBirth, setDateOfBirth] = useState("");
+  const [sex, setSex] = useState<Sex | "">("");
+  const [mrn, setMrn] = useState("");
+  const [diagnosisDate, setDiagnosisDate] = useState("");
+  const [stage, setStage] = useState<Stage | "">("");
+  const [referringPhysician, setReferringPhysician] = useState("");
+  const [patientOrigin, setPatientOrigin] = useState<PatientOrigin>("own_hospital");
   const [selectedSites, setSelectedSites] = useState<Set<string>>(new Set());
   // The checked set is derived, not stored directly: `auto` (the union of selected
   // sites' panels, or the fallback set when none is selected) with `manualOn`/
@@ -64,7 +76,18 @@ export function PatientCreate() {
     setSubmitting(true);
     try {
       const markers = [...selectedMarkers, ...customMarkers].map((marker_name) => ({ marker_name }));
-      const patient = await api.createPatient({ name, cancer_type: cancerType, markers });
+      const patient = await api.createPatient({
+        name,
+        cancer_type: cancerType,
+        markers,
+        date_of_birth: dateOfBirth || undefined,
+        sex: sex || undefined,
+        mrn: mrn || undefined,
+        diagnosis_date: diagnosisDate || undefined,
+        stage: stage || undefined,
+        referring_physician: referringPhysician || undefined,
+        patient_origin: patientOrigin,
+      });
       navigate(`/patients/${patient.id}/upload`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Failed to create patient.");
@@ -93,6 +116,65 @@ export function PatientCreate() {
           <div className="field">
             <label htmlFor="cancer-type">Cancer type</label>
             <input id="cancer-type" value={cancerType} onChange={(e) => setCancerType(e.target.value)} required />
+          </div>
+        </div>
+
+        <div className="card">
+          <h2>Patient details</h2>
+          <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+            <div className="field">
+              <label htmlFor="dob">Date of birth</label>
+              <input id="dob" type="date" value={dateOfBirth} onChange={(e) => setDateOfBirth(e.target.value)} />
+            </div>
+            <div className="field">
+              <label htmlFor="sex">Sex</label>
+              <select id="sex" value={sex} onChange={(e) => setSex(e.target.value as Sex | "")}>
+                <option value="">Not specified</option>
+                {SEX_OPTIONS.map((s) => (
+                  <option key={s} value={s}>
+                    {s}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="mrn">MRN</label>
+              <input id="mrn" value={mrn} onChange={(e) => setMrn(e.target.value)} placeholder="Medical record number" />
+            </div>
+            <div className="field">
+              <label htmlFor="patient-origin">Patient type</label>
+              <select id="patient-origin" value={patientOrigin} onChange={(e) => setPatientOrigin(e.target.value as PatientOrigin)}>
+                {PATIENT_ORIGIN_OPTIONS.map((o) => (
+                  <option key={o} value={o}>
+                    {PATIENT_ORIGIN_LABELS[o]}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field">
+              <label htmlFor="diagnosis-date">Diagnosis date</label>
+              <input id="diagnosis-date" type="date" value={diagnosisDate} onChange={(e) => setDiagnosisDate(e.target.value)} />
+            </div>
+            <div className="field">
+              <label htmlFor="stage">Stage</label>
+              <select id="stage" value={stage} onChange={(e) => setStage(e.target.value as Stage | "")}>
+                <option value="">Not specified</option>
+                {STAGE_OPTIONS.map((s) => (
+                  <option key={s} value={s}>
+                    Stage {s}
+                  </option>
+                ))}
+              </select>
+            </div>
+            <div className="field" style={{ gridColumn: "1 / -1" }}>
+              <label htmlFor="referring-physician">Referring physician</label>
+              <input
+                id="referring-physician"
+                value={referringPhysician}
+                onChange={(e) => setReferringPhysician(e.target.value)}
+                placeholder="Only relevant for a referral"
+              />
+            </div>
           </div>
         </div>
 
