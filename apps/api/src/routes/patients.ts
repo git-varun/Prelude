@@ -95,7 +95,9 @@ export async function createPatient(req: Request, user: AuthedUser): Promise<Res
       ${body.diagnosis_date ?? null}, ${body.stage ?? null}, ${body.referring_physician ?? null},
       ${body.patient_origin ?? "own_hospital"}
     )
-    RETURNING id, name, cancer_type, created_at, created_by, date_of_birth, sex, mrn, diagnosis_date, stage, referring_physician, patient_origin
+    RETURNING id, name, cancer_type, created_at, created_by, sex, mrn, stage, referring_physician, patient_origin,
+              to_char(date_of_birth, 'YYYY-MM-DD') AS date_of_birth,
+              to_char(diagnosis_date, 'YYYY-MM-DD') AS diagnosis_date
   `;
 
   const trackedMarkers = [];
