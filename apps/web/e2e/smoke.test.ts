@@ -82,7 +82,11 @@ async function openReview(extractionStatus: "pending" | "done") {
   const errors: string[] = [];
   page.on("pageerror", (err) => errors.push(`pageerror: ${err.message}`));
   page.on("console", (msg) => {
-    if (msg.type() === "error") errors.push(`console: ${msg.text()}`);
+    if (msg.type() !== "error") return;
+    // The file-availability probe (api.checkDocumentFile) legitimately 404s here -- this
+    // fixture has no real file -- and the browser logs that resource failure to console.
+    if (msg.location().url === `${API}/documents/doc1/file`) return;
+    errors.push(`console: ${msg.text()}`);
   });
   const cors = { "Access-Control-Allow-Origin": BASE, "Access-Control-Allow-Credentials": "true" };
   await page.route(`${API}/**`, (route) => {

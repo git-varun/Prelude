@@ -24,7 +24,7 @@ function HighlightedText({ text, snippet }: { text: string; snippet: string | nu
   );
 }
 
-function OriginalDocument({ fileCheck, sourcePage }: { fileCheck: DocumentFileCheck; sourcePage: number | null }) {
+export function OriginalDocument({ fileCheck, sourcePage }: { fileCheck: DocumentFileCheck; sourcePage: number | null }) {
   if (fileCheck.contentType?.startsWith("image/")) {
     return <img src={fileCheck.url} alt="Source document" data-testid="source-file-image" style={{ maxWidth: "100%" }} />;
   }

@@ -1,11 +1,13 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
-import { api, ApiError, type DocumentReview } from "../api/client";
+import { api, ApiError, type DocumentFileCheck, type DocumentReview } from "../api/client";
 import { FactCard } from "../components/FactCard";
 import { MarkerDisclaimerFooter } from "../components/MarkerDisclaimerFooter";
 import { navigate } from "../router";
+import { OriginalDocument } from "./SourceView";
 
 export function ExtractionReview({ documentId }: { documentId: string }) {
   const [data, setData] = useState<DocumentReview | null>(null);
+  const [fileCheck, setFileCheck] = useState<DocumentFileCheck | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [bulkDate, setBulkDate] = useState("");
@@ -26,6 +28,19 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
       if (token !== latestLoad.current) return;
       setData(result);
       setError(null);
+      // Only probe for the raw file when there's nothing else to show --
+      // the normal fact-review path never needed this endpoint before, and
+      // probing it unconditionally fires a 404 (logged as a console error
+      // by the browser regardless of try/catch) for documents with no file.
+      const needsFileFallback =
+        result.document.ocr_status === "done" &&
+        (result.document.extraction_status === "failed" ||
+          result.document.extraction_status === "pending" ||
+          result.facts.length === 0);
+      if (needsFileFallback) {
+        const fc = await api.checkDocumentFile(documentId);
+        if (token === latestLoad.current) setFileCheck(fc);
+      }
     } catch (err) {
       if (token !== latestLoad.current) return;
       setError(err instanceof ApiError ? err.message : "Failed to load document.");
@@ -113,15 +128,31 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
           </p>
         </div>
       ) : document.extraction_status === "failed" ? (
-        <div className="error-banner">
-          Fact extraction failed for this document — it was not analyzed. This is different from "nothing found".
-        </div>
+        <>
+          <div className="error-banner">
+            Fact extraction failed for this document — it was not analyzed. This is different from "nothing found".
+          </div>
+          {fileCheck?.ok && (
+            <div className="card">
+              <h2>Uploaded file</h2>
+              <OriginalDocument fileCheck={fileCheck} sourcePage={null} />
+            </div>
+          )}
+        </>
       ) : document.extraction_status === "pending" ? (
         <div className="card">
           <p className="muted">Extraction has not run for this document yet.</p>
         </div>
       ) : facts.length === 0 ? (
-        <div className="empty-state">Extraction ran and found no facts in this document.</div>
+        <>
+          <div className="empty-state">Extraction ran and found no facts in this document.</div>
+          {fileCheck?.ok && (
+            <div className="card">
+              <h2>Uploaded file</h2>
+              <OriginalDocument fileCheck={fileCheck} sourcePage={null} />
+            </div>
+          )}
+        </>
       ) : wholeDocumentUndated ? (
         <div className="card">
           <h2>No date found in this document</h2>

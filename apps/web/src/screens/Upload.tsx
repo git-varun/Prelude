@@ -165,7 +165,7 @@ export function Upload({ patientId }: { patientId: string }) {
                 {doc.document_type} · {doc.source_origin.replace(/_/g, " ")}
               </span>
               <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
-                <span className="tag tag--pending">{doc.ocr_status}</span>
+                <span className="tag tag--pending">OCR: {doc.ocr_status}</span>
                 {doc.ocr_status === "done" && (
                   <button className="btn btn--ghost" type="button" onClick={() => navigate(`/documents/${doc.id}/review`)}>
                     Review extraction
