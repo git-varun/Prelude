@@ -1,4 +1,4 @@
-import { GoogleGenAI } from "@google/genai";
+import { ApiError, GoogleGenAI } from "@google/genai";
 import { z } from "zod";
 import type { DocumentType, ExtractedFactCandidate, ExtractionProvider, ExtractionResult, FieldType, OcrResult } from "@prelude/shared";
 import {
@@ -16,6 +16,28 @@ import {
 const MODEL = process.env.GEMINI_MODEL ?? "gemini-flash-latest";
 
 const RESPONSE_SCHEMA = z.toJSONSchema(ExtractionResultSchema);
+
+// Gemini's free tier returns 503 UNAVAILABLE under shared-capacity load
+// often enough in practice to need a retry, not just a surfaced failure --
+// unlike a 404 (bad model) or 429 (quota), which won't resolve by retrying.
+const MAX_RETRIES = 3;
+const RETRY_BASE_DELAY_MS = 1000;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function withRetry<T>(fn: () => Promise<T>): Promise<T> {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await fn();
+    } catch (err) {
+      const isRetryable = err instanceof ApiError && err.status === 503;
+      if (!isRetryable || attempt >= MAX_RETRIES) throw err;
+      await sleep(RETRY_BASE_DELAY_MS * 2 ** attempt);
+    }
+  }
+}
 
 export class GeminiExtractionProvider implements ExtractionProvider {
   readonly name = "gemini";
@@ -54,14 +76,16 @@ export class GeminiExtractionProvider implements ExtractionProvider {
     documentType: DocumentType,
     ocrText: string,
   ): Promise<ExtractedFactCandidate[]> {
-    const response = await client.models.generateContent({
-      model: MODEL,
-      contents: promptFor(fieldType, documentType, ocrText),
-      config: {
-        responseMimeType: "application/json",
-        responseSchema: RESPONSE_SCHEMA,
-      },
-    });
+    const response = await withRetry(() =>
+      client.models.generateContent({
+        model: MODEL,
+        contents: promptFor(fieldType, documentType, ocrText),
+        config: {
+          responseMimeType: "application/json",
+          responseSchema: RESPONSE_SCHEMA,
+        },
+      }),
+    );
 
     if (!response.text) {
       return [];
