@@ -166,6 +166,16 @@ export function Upload({ patientId }: { patientId: string }) {
               </span>
               <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <span className="tag tag--pending">OCR: {doc.ocr_status}</span>
+                <button
+                  className="btn btn--ghost source-link"
+                  type="button"
+                  onClick={async () => {
+                    const fc = await api.checkDocumentFile(doc.id);
+                    if (fc.ok) window.open(fc.url, "_blank", "noopener");
+                  }}
+                >
+                  📄 View uploaded file
+                </button>
                 {doc.ocr_status === "done" && (
                   <button className="btn btn--ghost" type="button" onClick={() => navigate(`/documents/${doc.id}/review`)}>
                     Review extraction

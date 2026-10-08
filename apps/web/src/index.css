@@ -180,6 +180,40 @@ select {
   margin-top: var(--space-4);
 }
 
+/* A marker/field's fact card + its trend chart, grouped as one visual unit
+   (Snapshot screen) rather than floating as separate, unrelated-looking cards. */
+.snapshot-field + .snapshot-field {
+  margin-top: var(--space-4);
+}
+
+.snapshot-field__trend {
+  margin-top: var(--space-2);
+}
+
+.snapshot-field__trend .card {
+  border-top-left-radius: var(--radius-sm);
+  border-top-right-radius: var(--radius-sm);
+}
+
+.source-link {
+  background: var(--color-surface-sunken);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.source-link:hover:not(:disabled) {
+  background: var(--color-accent-soft);
+  color: var(--color-accent);
+}
+
+/* The extracted value is the single most important thing on a fact card —
+   size it to be scannable at a glance, not just another line of body text. */
+.fact-value {
+  font-size: 22px;
+  font-weight: 600;
+  font-family: var(--font-serif);
+}
+
 /* Buttons */
 
 .btn {
@@ -284,10 +318,17 @@ select {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: var(--space-3) 0;
+  padding: var(--space-3) var(--space-3);
+  margin: 0 calc(var(--space-3) * -1);
+  border-radius: var(--radius-md);
   border-bottom: 1px solid var(--color-border);
   text-decoration: none;
   color: inherit;
+  transition: background-color 0.12s ease;
+}
+
+.patient-row:hover {
+  background: var(--color-surface-sunken);
 }
 
 .patient-row:last-child {
@@ -296,6 +337,7 @@ select {
 
 .patient-row__name {
   font-weight: 600;
+  font-size: 16px;
 }
 
 .patient-row__meta {
@@ -362,6 +404,8 @@ select {
   display: flex;
   align-items: baseline;
   justify-content: space-between;
+  flex-wrap: wrap;
+  gap: var(--space-2);
   margin-bottom: var(--space-5);
 }
 

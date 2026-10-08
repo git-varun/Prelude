@@ -1,4 +1,4 @@
-import { useState, useEffect } from "react";
+import { useState, useEffect, type ReactNode } from "react";
 import { RoleGate } from "../auth/AuthContext";
 import { api, ApiError, type ReviewFact, type TrackedMarker } from "../api/client";
 import { flagForRange } from "../lib/referenceRange";
@@ -35,9 +35,11 @@ interface Props {
   fact: ReviewFact;
   trackedMarkers: TrackedMarker[];
   onChanged: () => void;
+  /** Extra badge rendered next to the coverage tag — e.g. the Snapshot's delta-since-last-visit status. */
+  badge?: ReactNode;
 }
 
-export function FactCard({ fact, trackedMarkers, onChanged }: Props) {
+export function FactCard({ fact, trackedMarkers, onChanged, badge }: Props) {
   const [value, setValue] = useState(fact.value ?? "");
   const [markerId, setMarkerId] = useState("");
   const [customName, setCustomName] = useState("");
@@ -77,7 +79,10 @@ export function FactCard({ fact, trackedMarkers, onChanged }: Props) {
     <div className="card">
       <div className="page-heading" style={{ marginBottom: 8 }}>
         <h2 style={{ margin: 0 }}>{heading}</h2>
-        <span className={`tag ${needsReview ? "tag--pending" : ""}`}>{COVERAGE_LABELS[fact.coverage_status] ?? fact.coverage_status}</span>
+        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span className={`tag ${needsReview ? "tag--pending" : ""}`}>{COVERAGE_LABELS[fact.coverage_status] ?? fact.coverage_status}</span>
+          {badge}
+        </span>
         {fact.has_blocking_conflict && fact.blocking_conflict_id && (
           <button
             className="tag tag--range-flag"
@@ -89,9 +94,20 @@ export function FactCard({ fact, trackedMarkers, onChanged }: Props) {
           </button>
         )}
       </div>
-      <p className="muted" style={{ marginTop: 0 }}>
-        {FIELD_LABELS[fact.field_type] ?? fact.field_type} · {fact.verification_state.replace(/_/g, " ")} ·{" "}
-        {fact.as_of_date ? `as of ${fact.as_of_date}` : "no as-of date"}
+      <p className="muted" style={{ marginTop: 0, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+        <span>
+          {FIELD_LABELS[fact.field_type] ?? fact.field_type} · {fact.verification_state.replace(/_/g, " ")} ·{" "}
+          {fact.as_of_date ? `as of ${fact.as_of_date}` : "no as-of date"}
+        </span>
+        {fact.document_id && (
+          <button
+            className="btn btn--ghost source-link"
+            type="button"
+            onClick={() => navigate(`/documents/${fact.document_id}/source?fact=${fact.id}`)}
+          >
+            📄 View uploaded document
+          </button>
+        )}
       </p>
 
       {error && <div className="error-banner">{error}</div>}
@@ -110,7 +126,7 @@ export function FactCard({ fact, trackedMarkers, onChanged }: Props) {
         </div>
         <div>
           <h3 style={{ marginTop: 0 }}>Extracted value</h3>
-          <p style={{ marginTop: 0 }}>
+          <p className="fact-value" style={{ marginTop: 0 }}>
             {fact.value ?? <span className="muted">(no value)</span>}
             {fact.unit && ` ${fact.unit}`}
             {fact.reference_range && <span className="muted"> · ref {fact.reference_range}</span>}

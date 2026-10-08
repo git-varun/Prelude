@@ -65,22 +65,6 @@ function toReviewFact(field: SnapshotField, patientId: string, visitId: string):
   };
 }
 
-function sourceLink(field: SnapshotField) {
-  const p = field.provenance;
-  if (!p) return null;
-  const label =
-    p.fallback_level === "exact"
-      ? `Page ${p.source_page} · ${p.source_location}`
-      : p.fallback_level === "page"
-        ? `Page ${p.source_page} (location not recorded)`
-        : "Open document (no page/location recorded)";
-  return (
-    <button className="btn btn--ghost" type="button" onClick={() => navigate(`/documents/${p.document_id}/source?fact=${field.fact_id}`)}>
-      {label}
-    </button>
-  );
-}
-
 function FieldEntry({
   field,
   patientId,
@@ -118,12 +102,12 @@ function FieldEntry({
   }
 
   return (
-    <div>
-      <FactCard fact={toReviewFact(field, patientId, visitId)} trackedMarkers={[]} onChanged={onChanged} />
-      {deltaBadge}
-      {sourceLink(field)}
+    <div className="snapshot-field">
+      <FactCard fact={toReviewFact(field, patientId, visitId)} trackedMarkers={[]} onChanged={onChanged} badge={deltaBadge} />
       {showTrend && field.tracked_marker_id && (
-        <MarkerTrendChart patientId={patientId} trackedMarkerId={field.tracked_marker_id} />
+        <div className="snapshot-field__trend">
+          <MarkerTrendChart patientId={patientId} trackedMarkerId={field.tracked_marker_id} />
+        </div>
       )}
     </div>
   );

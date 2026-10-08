@@ -1009,7 +1009,7 @@ test("Marker Management: lists tracked markers and adds one from the controlled 
   await page.close();
 }, 30_000);
 
-test("Snapshot: source link label varies by provenance.fallback_level (exact, page, document)", async () => {
+test("Snapshot: the view-uploaded-document link appears regardless of provenance.fallback_level", async () => {
   const body = snapshotBody({
     tumor_markers: [
       snapshotField({ fact_id: "f1", marker_name: "CEA", provenance: provenance({ fallback_level: "exact", source_page: 3, source_location: "line 4" }) }),
@@ -1020,9 +1020,7 @@ test("Snapshot: source link label varies by provenance.fallback_level (exact, pa
     ],
   });
   const { page, errors } = await openSnapshot("staff", body);
-  await page.getByRole("button", { name: "Page 3 · line 4" }).waitFor();
-  await page.getByRole("button", { name: "Page 5 (location not recorded)" }).waitFor();
-  await page.getByRole("button", { name: "Open document (no page/location recorded)" }).waitFor();
+  expect(await page.getByRole("button", { name: "View uploaded document" }).count()).toBe(3);
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);
