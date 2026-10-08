@@ -91,6 +91,6 @@ export class GeminiExtractionProvider implements ExtractionProvider {
       return [];
     }
     const parsed = ExtractionResultSchema.parse(JSON.parse(response.text));
-    return parsed.candidates.map((candidate) => toExtractedFactCandidate(fieldType, candidate));
+    return parsed.candidates.map((candidate) => toExtractedFactCandidate(fieldType, candidate, ocrText));
   }
 }

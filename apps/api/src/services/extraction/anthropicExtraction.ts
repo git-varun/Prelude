@@ -47,7 +47,7 @@ Rules:
 - asOfDate must be an ISO date (YYYY-MM-DD) taken from the document (report date, collection date, etc.), or null if none is stated.
 - confidence is your own calibrated confidence (0.0-1.0) that the extracted value is correct and complete.
 - coverageStatus is your own initial assessment: 'value_found' if you extracted a usable value; 'not_assessed' if there's no evidence of this in the document at all; 'not_applicable' if the document explicitly states the test/field was not performed or doesn't apply; 'extraction_uncertain' if the text is ambiguous, low-confidence, or contradictory. This is a signal, not the final answer — a separate deterministic step may override it.
-- The text below is marked with "--- Page N ---" separators. Use these to set sourcePage accurately. sourceSnippet must be a short verbatim quote from the text; use null for sourcePage/sourceLocation/sourceSnippet if you can't determine them — never fabricate a location.
+- The text below is marked with "--- Page N ---" separators. Use these to set sourcePage accurately. sourceSnippet must be copied character-for-character from the OCR text below — including any OCR typos, garbled characters, or odd spacing — never cleaned up, paraphrased, or corrected; a snippet that doesn't match verbatim cannot be highlighted against the source later. Keep it short (under ~120 characters). Use null for sourcePage/sourceLocation/sourceSnippet if you can't determine them — never fabricate a location.
 - Return one candidate per distinct fact found; return an empty candidates array if nothing relevant is present.
 
 OCR text:
@@ -109,7 +109,19 @@ export function normalizeAsOfDate(value: string | null): string | null {
   return s;
 }
 
-export function toExtractedFactCandidate(fieldType: FieldType, candidate: RawCandidate): ExtractedFactCandidate {
+// provenanceFor (services/provenance.ts) labels a fact "exact" source whenever
+// sourceSnippet is non-null, promising a highlighted quote -- but SourceView's
+// highlight is a plain text.indexOf(snippet) against the OCR text. The prompt
+// asks the model for a verbatim quote, but prompted instructions aren't a
+// guarantee: if the model paraphrases or cleans up OCR garbling anyway, the
+// highlight silently fails to render while the fact still claims "exact"
+// everywhere else. Verified here, not trusted from the model's output alone.
+function verifiedSnippet(snippet: string | null, ocrText: string): string | null {
+  if (snippet === null) return null;
+  return ocrText.includes(snippet) ? snippet : null;
+}
+
+export function toExtractedFactCandidate(fieldType: FieldType, candidate: RawCandidate, ocrText: string): ExtractedFactCandidate {
   // No verification_state field exists on ExtractedFactCandidate at all —
   // the extraction pass cannot self-authorize trust (docs/02 M2), so there
   // is nothing here that could set it.
@@ -123,7 +135,7 @@ export function toExtractedFactCandidate(fieldType: FieldType, candidate: RawCan
     coverageStatus: candidate.coverageStatus,
     sourcePage: candidate.sourcePage,
     sourceLocation: candidate.sourceLocation,
-    sourceSnippet: candidate.sourceSnippet,
+    sourceSnippet: verifiedSnippet(candidate.sourceSnippet, ocrText),
     confidence: candidate.confidence,
   };
 }
@@ -177,6 +189,6 @@ export class AnthropicExtractionProvider implements ExtractionProvider {
     if (!response.parsed_output) {
       return [];
     }
-    return response.parsed_output.candidates.map((candidate) => toExtractedFactCandidate(fieldType, candidate));
+    return response.parsed_output.candidates.map((candidate) => toExtractedFactCandidate(fieldType, candidate, ocrText));
   }
 }

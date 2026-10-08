@@ -1,6 +1,38 @@
 import { test, expect } from "bun:test";
 import type { ExtractedFactCandidate, FieldType } from "@prelude/shared";
-import { AnthropicExtractionProvider, normalizeAsOfDate, promptFor } from "./anthropicExtraction";
+import { AnthropicExtractionProvider, normalizeAsOfDate, promptFor, toExtractedFactCandidate, type RawCandidate } from "./anthropicExtraction";
+
+function rawCandidate(overrides: Partial<RawCandidate> = {}): RawCandidate {
+  return {
+    trackedMarkerLabel: null,
+    value: "4.2",
+    unit: null,
+    referenceRange: null,
+    asOfDate: "2026-01-01",
+    coverageStatus: "value_found",
+    sourcePage: 1,
+    sourceLocation: null,
+    sourceSnippet: null,
+    confidence: 0.9,
+    ...overrides,
+  };
+}
+
+// provenanceFor labels a fact "exact" source purely from sourceSnippet being
+// non-null, promising a highlight that SourceView renders via a plain
+// text.indexOf(snippet) against the OCR text -- so a snippet the model didn't
+// actually quote verbatim must never reach the database, or the UI silently
+// shows no highlight while still claiming "exact" provenance everywhere else.
+test("toExtractedFactCandidate drops a sourceSnippet that isn't a verbatim substring of the OCR text", () => {
+  const result = toExtractedFactCandidate("marker_value", rawCandidate({ sourceSnippet: "CEA: 5.9 ng/mL" }), "the actual ocr text has CEA : 5.9ng/mL somewhere");
+  expect(result.sourceSnippet).toBeNull();
+});
+
+test("toExtractedFactCandidate keeps a sourceSnippet that is a verbatim substring of the OCR text", () => {
+  const ocrText = "patient report\nCEA 5.9 ng/mL\nreference 0-5";
+  const result = toExtractedFactCandidate("marker_value", rawCandidate({ sourceSnippet: "CEA 5.9 ng/mL" }), ocrText);
+  expect(result.sourceSnippet).toBe("CEA 5.9 ng/mL");
+});
 
 // Deterministic marker matching (matchMarker, services/facts.ts) is the only place a raw
 // extracted label is ever resolved to a controlled canonical name — never the LLM, which
