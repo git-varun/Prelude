@@ -2,6 +2,7 @@ import type { ExtractionProvider, OcrProvider } from "@prelude/shared";
 import { AzureDocIntelligenceProvider } from "./ocr/azureDocIntelligence";
 import { GoogleDocumentAiProvider } from "./ocr/googleDocumentAi";
 import { AnthropicExtractionProvider } from "./extraction/anthropicExtraction";
+import { GeminiExtractionProvider } from "./extraction/geminiExtraction";
 
 let cachedProvider: OcrProvider | undefined;
 
@@ -60,10 +61,30 @@ function buildExtractionProvider(): ExtractionProvider {
     return new AnthropicExtractionProvider(apiKey);
   }
 
-  if (providerName === undefined) {
-    throw new Error("EXTRACTION_PROVIDER is not set. Expected 'anthropic'.");
+  if (providerName === "gemini") {
+    // Decisions Log, "Staging/production hosting": Gemini on the live
+    // server is scoped to pilot-testing the pipeline against Varun's own
+    // documents only, never real patient uploads — GEMINI_PILOT_TESTING_ONLY
+    // is a second, explicit flag so this can't be reached by EXTRACTION_PROVIDER
+    // alone (e.g. a copied .env), and must be switched back to anthropic
+    // before real patient use.
+    const apiKey = process.env.GEMINI_API_KEY;
+    const pilotFlag = process.env.GEMINI_PILOT_TESTING_ONLY;
+    if (!apiKey) {
+      throw new Error("GEMINI_API_KEY is required for EXTRACTION_PROVIDER=gemini.");
+    }
+    if (pilotFlag !== "true") {
+      throw new Error(
+        "EXTRACTION_PROVIDER=gemini also requires GEMINI_PILOT_TESTING_ONLY=true — this path is for pipeline testing against your own documents only, never real patient data.",
+      );
+    }
+    return new GeminiExtractionProvider(apiKey);
   }
-  throw new Error(`Unrecognized EXTRACTION_PROVIDER: ${providerName}. Expected 'anthropic'.`);
+
+  if (providerName === undefined) {
+    throw new Error("EXTRACTION_PROVIDER is not set. Expected 'anthropic' or 'gemini'.");
+  }
+  throw new Error(`Unrecognized EXTRACTION_PROVIDER: ${providerName}. Expected 'anthropic' or 'gemini'.`);
 }
 
 export function getExtractionProvider(): ExtractionProvider {

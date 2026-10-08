@@ -5,7 +5,7 @@ import type { DocumentType, ExtractedFactCandidate, ExtractionProvider, Extracti
 
 const MODEL = process.env.EXTRACTION_MODEL ?? "claude-sonnet-5-5";
 
-const CandidateSchema = z.object({
+export const CandidateSchema = z.object({
   trackedMarkerLabel: z.string().nullable(),
   value: z.string().nullable(),
   unit: z.string().nullable(),
@@ -18,22 +18,22 @@ const CandidateSchema = z.object({
   confidence: z.number().min(0).max(1),
 });
 
-const ExtractionResultSchema = z.object({
+export const ExtractionResultSchema = z.object({
   candidates: z.array(CandidateSchema),
 });
 
-type RawCandidate = z.infer<typeof CandidateSchema>;
+export type RawCandidate = z.infer<typeof CandidateSchema>;
 
 // docs/02 M2: which field types a document of this type could plausibly
 // state, so extraction runs one prompted call per relevant field_type
 // rather than all five against every upload.
-const FIELD_TYPES_BY_DOCUMENT_TYPE: Record<DocumentType, FieldType[]> = {
+export const FIELD_TYPES_BY_DOCUMENT_TYPE: Record<DocumentType, FieldType[]> = {
   blood: ["marker_value", "reference_range"],
   prescription: ["treatment_regimen"],
   radiology: ["radiology_impression", "disease_status_trend"],
 };
 
-function pageAnnotatedText(ocr: OcrResult): string {
+export function pageAnnotatedText(ocr: OcrResult): string {
   if (ocr.pages.length === 0) return ocr.fullText;
   return ocr.pages.map((page) => `--- Page ${page.pageNumber} ---\n${page.text}`).join("\n\n");
 }
@@ -109,7 +109,7 @@ export function normalizeAsOfDate(value: string | null): string | null {
   return s;
 }
 
-function toExtractedFactCandidate(fieldType: FieldType, candidate: RawCandidate): ExtractedFactCandidate {
+export function toExtractedFactCandidate(fieldType: FieldType, candidate: RawCandidate): ExtractedFactCandidate {
   // No verification_state field exists on ExtractedFactCandidate at all —
   // the extraction pass cannot self-authorize trust (docs/02 M2), so there
   // is nothing here that could set it.
