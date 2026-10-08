@@ -11,10 +11,7 @@ const server = Bun.serve({
     "/": index,
     "/config.json": () => Response.json({ apiUrl }, { headers: { "Cache-Control": "no-store" } }),
   },
-  development: {
-    hmr: true,
-    console: true,
-  },
+  development: process.env.NODE_ENV === "production" ? false : { hmr: true, console: true },
 });
 
 console.log(`Prelude web app listening on http://localhost:${server.port}`);
