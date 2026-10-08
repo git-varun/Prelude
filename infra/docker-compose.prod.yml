@@ -1,0 +1,69 @@
+# Production stack for the Prelude MVP proof: Caddy (HTTPS) + api + web +
+# self-hosted Postgres, single environment per the Decisions Log's
+# "Staging/production hosting" entry. Usage: docker compose -f infra/docker-compose.prod.yml up -d --build
+services:
+  caddy:
+    image: caddy:2-alpine
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      DOMAIN: ${DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on:
+      - api
+      - web
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: prelude
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: prelude
+    command: >
+      postgres -c shared_buffers=128MB -c work_mem=4MB
+               -c max_connections=20 -c effective_cache_size=256MB
+    volumes:
+      - prelude_postgres_prod_data:/var/lib/postgresql/data
+      - ../apps/api/src/db/schema.sql:/docker-entrypoint-initdb.d/01-schema.sql:ro
+      - ../apps/api/src/db/migrations/001_sessions.sql:/docker-entrypoint-initdb.d/02-sessions.sql:ro
+      - ../apps/api/src/db/migrations/002_extraction_columns.sql:/docker-entrypoint-initdb.d/03-extraction-columns.sql:ro
+      - ../apps/api/src/db/migrations/003_undated_facts_and_extraction_status.sql:/docker-entrypoint-initdb.d/04-undated-facts-and-extraction-status.sql:ro
+      - ../apps/api/src/db/migrations/004_extraction_partial_status.sql:/docker-entrypoint-initdb.d/05-extraction-partial-status.sql:ro
+      - ../apps/api/src/db/migrations/005_conflict_annotation.sql:/docker-entrypoint-initdb.d/06-conflict-annotation.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U prelude -d prelude"]
+      interval: 2s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ..
+      dockerfile: apps/api/Dockerfile
+    env_file: ../.env
+    environment:
+      DATABASE_URL: postgresql://prelude:${POSTGRES_PASSWORD}@postgres:5432/prelude
+      OBJECT_STORAGE_DRIVER: local
+      OBJECT_STORAGE_LOCAL_PATH: /data/documents
+      WEB_ORIGIN: https://${DOMAIN}
+    volumes:
+      - documents_data:/data/documents
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  web:
+    build:
+      context: ..
+      dockerfile: apps/web/Dockerfile
+    env_file: ../.env
+    environment:
+      PUBLIC_API_URL: https://${DOMAIN}/api
+
+volumes:
+  prelude_postgres_prod_data:
+  caddy_data:
+  documents_data:
