@@ -13,7 +13,7 @@ import {
 // documents while validating the pipeline end to end (Decisions Log,
 // "Staging/production hosting"), before switching EXTRACTION_PROVIDER back
 // to anthropic for real patient use.
-const MODEL = process.env.GEMINI_MODEL ?? "gemini-3.1-pro-preview";
+const MODEL = process.env.GEMINI_MODEL ?? "gemini-2.5-flash";
 
 const RESPONSE_SCHEMA = z.toJSONSchema(ExtractionResultSchema);
 
