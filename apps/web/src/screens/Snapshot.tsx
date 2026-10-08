@@ -243,6 +243,9 @@ export function Snapshot({ patientId }: { patientId: string }) {
             <button className="btn btn--ghost" type="button" onClick={() => navigate(`/patients/${patient.id}/edit`)}>
               Edit info
             </button>
+            <button className="btn btn--ghost" type="button" onClick={() => navigate(`/patients/${patient.id}/history`)}>
+              Visit history
+            </button>
           </p>
         </div>
         <button className="btn btn--ghost" onClick={() => navigate("/")}>

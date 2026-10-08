@@ -12,6 +12,7 @@ import {
   matchPatientSnapshot,
   matchPatientMarkers,
   matchPatientEdit,
+  matchPatientHistory,
   matchDocumentSource,
   matchConflict,
 } from "./router";
@@ -19,6 +20,7 @@ import { ExtractionReview } from "./screens/ExtractionReview";
 import { Snapshot } from "./screens/Snapshot";
 import { MarkerManagement } from "./screens/MarkerManagement";
 import { PatientEdit } from "./screens/PatientEdit";
+import { VisitHistory } from "./screens/VisitHistory";
 import { SourceView } from "./screens/SourceView";
 import { ConflictResolution } from "./screens/ConflictResolution";
 
@@ -34,6 +36,7 @@ function Routed() {
   const snapshotPatientId = matchPatientSnapshot(route);
   const markersPatientId = matchPatientMarkers(route);
   const editPatientId = matchPatientEdit(route);
+  const historyPatientId = matchPatientHistory(route);
   const source = matchDocumentSource(route);
   const conflictId = matchConflict(route);
 
@@ -48,6 +51,8 @@ function Routed() {
     screen = <ExtractionReview documentId={reviewDocumentId} />;
   } else if (editPatientId) {
     screen = <PatientEdit patientId={editPatientId} />;
+  } else if (historyPatientId) {
+    screen = <VisitHistory patientId={historyPatientId} />;
   } else if (snapshotPatientId) {
     screen = <Snapshot patientId={snapshotPatientId} />;
   } else if (markersPatientId) {

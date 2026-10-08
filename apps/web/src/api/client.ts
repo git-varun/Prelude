@@ -107,6 +107,14 @@ export interface Visit {
   visit_date: string;
 }
 
+export interface VisitHistoryEntry {
+  id: string;
+  visit_date: string;
+  document_count: number;
+  fact_count: number;
+  signed_off_count: number;
+}
+
 export interface DocumentRecord {
   id: string;
   patient_id: string;
@@ -342,6 +350,8 @@ export const api = {
       method: "POST",
       body: JSON.stringify(visitDate ? { visit_date: visitDate } : {}),
     }),
+
+  listVisits: (patientId: string) => request<VisitHistoryEntry[]>(`/patients/${patientId}/visits`),
 
   uploadDocument: (
     patientId: string,

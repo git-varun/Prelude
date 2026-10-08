@@ -1,7 +1,7 @@
 import { login, logout, me } from "./routes/auth";
 import { createUser } from "./routes/users";
 import { createPatient, listPatients, getPatient, updatePatient, addMarker, getPatientSnapshot, getMarkerTrend } from "./routes/patients";
-import { createOrOpenVisit } from "./routes/visits";
+import { createOrOpenVisit, listVisits } from "./routes/visits";
 import { uploadDocument, getDocument, getDocumentFile } from "./routes/documents";
 import { getDocumentFacts, patchFact, signOffFact, reopenFact } from "./routes/facts";
 import { getConflict, annotateConflict, resolveConflict } from "./routes/conflicts";
@@ -39,6 +39,7 @@ const server = Bun.serve({
       GET: requireRole(["staff", "oncologist"], getMarkerTrend),
     }),
     "/patients/:id/visits": cors({
+      GET: requireRole(["staff", "oncologist"], listVisits),
       POST: requireRole(["staff", "oncologist"], createOrOpenVisit),
     }),
     "/patients/:id/documents": cors({
