@@ -503,8 +503,10 @@ test("Snapshot: 'Since last visit' shows only the changed marker, not the unchan
   const { page, errors } = await openSnapshot("staff", body);
   const sinceSection = page.locator("section", { has: page.getByRole("heading", { name: "Since last visit" }) });
   const markersSection = page.locator("section", { has: page.getByRole("heading", { name: "Tumor markers" }) });
-  await sinceSection.getByRole("heading", { name: "CEA" }).waitFor();
-  expect(await sinceSection.getByRole("heading", { name: "PSA" }).count()).toBe(0);
+  // Since Last Visit is a compact delta-summary row (not a full FactCard), so its
+  // marker names aren't headings -- just text within the row.
+  await sinceSection.getByText("CEA", { exact: true }).waitFor();
+  expect(await sinceSection.getByText("PSA", { exact: true }).count()).toBe(0);
   await markersSection.getByRole("heading", { name: "CEA" }).waitFor();
   await markersSection.getByRole("heading", { name: "PSA" }).waitFor();
   expect(errors).toEqual([]);

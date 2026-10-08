@@ -65,37 +65,57 @@ function toReviewFact(field: SnapshotField, patientId: string, visitId: string):
   };
 }
 
+// "Since last visit" is a terse delta summary across every block (docs/01 Screen
+// Inventory), not a second copy of each block's full correction-capable fact card --
+// a compact row per field, read-only, distinct in both purpose and appearance from
+// the full sections below where the same facts live for actual review/sign-off.
+function DeltaSummary({ fields }: { fields: SnapshotField[] }) {
+  if (fields.length === 0) {
+    return <p className="muted">No data recorded for this visit.</p>;
+  }
+  return (
+    <div className="card" style={{ padding: 0 }}>
+      {fields.map((f, i) => {
+        const heading = f.marker_name ?? FIELD_LABELS[f.field_type] ?? f.field_type;
+        return (
+          <div className="delta-row" key={`delta-${f.fact_id ?? "none"}-${f.tracked_marker_id ?? i}`}>
+            <span className="delta-row__name">{heading}</span>
+            <span className="delta-row__value">
+              {f.value ?? <span className="muted">—</span>}
+              {f.unit && ` ${f.unit}`}
+            </span>
+            <span className="delta-row__meta">
+              {f.delta_status && <span className="tag">{DELTA_LABELS[f.delta_status] ?? f.delta_status}</span>}
+              <span className="tag">{COVERAGE_LABELS[f.coverage_status] ?? f.coverage_status}</span>
+            </span>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
 function FieldEntry({
   field,
   patientId,
   visitId,
   onChanged,
-  showDelta,
   showTrend,
 }: {
   field: SnapshotField;
   patientId: string;
   visitId: string;
   onChanged: () => void;
-  showDelta?: boolean;
   showTrend?: boolean;
 }) {
   const heading = field.marker_name ?? FIELD_LABELS[field.field_type] ?? field.field_type;
-  const deltaBadge = showDelta && field.delta_status ? (
-    <span className="tag" style={{ marginLeft: 8 }}>
-      {DELTA_LABELS[field.delta_status] ?? field.delta_status}
-    </span>
-  ) : null;
 
   if (field.fact_id === null) {
     return (
       <div className="card">
         <div className="page-heading" style={{ marginBottom: 0 }}>
           <h2 style={{ margin: 0 }}>{heading}</h2>
-          <span>
-            <span className="tag">{COVERAGE_LABELS[field.coverage_status] ?? field.coverage_status}</span>
-            {deltaBadge}
-          </span>
+          <span className="tag">{COVERAGE_LABELS[field.coverage_status] ?? field.coverage_status}</span>
         </div>
       </div>
     );
@@ -103,7 +123,7 @@ function FieldEntry({
 
   return (
     <div className="snapshot-field">
-      <FactCard fact={toReviewFact(field, patientId, visitId)} trackedMarkers={[]} onChanged={onChanged} badge={deltaBadge} />
+      <FactCard fact={toReviewFact(field, patientId, visitId)} trackedMarkers={[]} onChanged={onChanged} />
       {showTrend && field.tracked_marker_id && (
         <div className="snapshot-field__trend">
           <MarkerTrendChart patientId={patientId} trackedMarkerId={field.tracked_marker_id} />
@@ -119,7 +139,6 @@ function Section({
   patientId,
   visitId,
   onChanged,
-  showDelta,
   showTrend,
 }: {
   title: string;
@@ -127,7 +146,6 @@ function Section({
   patientId: string;
   visitId: string;
   onChanged: () => void;
-  showDelta?: boolean;
   showTrend?: boolean;
 }) {
   return (
@@ -143,7 +161,6 @@ function Section({
             patientId={patientId}
             visitId={visitId}
             onChanged={onChanged}
-            showDelta={showDelta}
             showTrend={showTrend}
           />
         ))
@@ -209,14 +226,10 @@ export function Snapshot({ patientId }: { patientId: string }) {
       {error && <div className="error-banner">{error}</div>}
 
       {data.previous_visit.id !== null && (
-        <Section
-          title="Since last visit"
-          fields={data.since_last_visit}
-          patientId={data.patient.id}
-          visitId={visitId}
-          onChanged={load}
-          showDelta
-        />
+        <section aria-labelledby="section-since-last-visit" style={{ marginBottom: 32 }}>
+          <h2 id="section-since-last-visit">Since last visit</h2>
+          <DeltaSummary fields={data.since_last_visit} />
+        </section>
       )}
 
       <Section

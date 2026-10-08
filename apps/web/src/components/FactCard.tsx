@@ -112,50 +112,53 @@ export function FactCard({ fact, trackedMarkers, onChanged, badge }: Props) {
 
       {error && <div className="error-banner">{error}</div>}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
-        <div>
-          <h3 style={{ marginTop: 0 }}>Raw text from document</h3>
-          {fact.source_snippet ? <blockquote style={{ margin: 0 }}>{fact.source_snippet}</blockquote> : <p className="muted">Source detail unavailable</p>}
-          {(fact.source_page !== null || fact.source_location) && (
-            <p className="field-hint">
-              {fact.source_page !== null && `Page ${fact.source_page}`}
-              {fact.source_page !== null && fact.source_location && " · "}
-              {fact.source_location}
-            </p>
-          )}
+      <p className="fact-value" style={{ marginTop: 0 }}>
+        {fact.value ?? <span className="muted">(no value)</span>}
+        {fact.unit && ` ${fact.unit}`}
+        {fact.reference_range && <span className="muted"> · ref {fact.reference_range}</span>}
+        {(() => {
+          const flag = flagForRange(fact.value, fact.reference_range);
+          return flag ? (
+            <span className="tag tag--range-flag" style={{ marginLeft: 8 }} title={rangeFlagTooltip(fact.reference_range)}>
+              {RANGE_FLAG_LABEL[flag]}
+            </span>
+          ) : null;
+        })()}
+      </p>
+
+      <details className="fact-correction">
+        <summary>Correct this value</summary>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 12 }}>
+          <div>
+            <h3 style={{ marginTop: 0 }}>Raw text from document</h3>
+            {fact.source_snippet ? <blockquote style={{ margin: 0 }}>{fact.source_snippet}</blockquote> : <p className="muted">Source detail unavailable</p>}
+            {(fact.source_page !== null || fact.source_location) && (
+              <p className="field-hint">
+                {fact.source_page !== null && `Page ${fact.source_page}`}
+                {fact.source_page !== null && fact.source_location && " · "}
+                {fact.source_location}
+              </p>
+            )}
+          </div>
+          <div>
+            <form
+              className="field"
+              onSubmit={(e) => {
+                e.preventDefault();
+                void run("value", () => api.patchFact(fact.id, { value }));
+              }}
+            >
+              <label htmlFor={`value-${fact.id}`}>Correct value (saving confirms it)</label>
+              <div style={{ display: "flex", gap: 8 }}>
+                <input id={`value-${fact.id}`} value={value} onChange={(e) => setValue(e.target.value)} />
+                <button className="btn btn--secondary" type="submit" disabled={busy !== null || value.trim() === ""}>
+                  {busy === "value" ? "Saving..." : "Save value"}
+                </button>
+              </div>
+            </form>
+          </div>
         </div>
-        <div>
-          <h3 style={{ marginTop: 0 }}>Extracted value</h3>
-          <p className="fact-value" style={{ marginTop: 0 }}>
-            {fact.value ?? <span className="muted">(no value)</span>}
-            {fact.unit && ` ${fact.unit}`}
-            {fact.reference_range && <span className="muted"> · ref {fact.reference_range}</span>}
-            {(() => {
-              const flag = flagForRange(fact.value, fact.reference_range);
-              return flag ? (
-                <span className="tag tag--range-flag" style={{ marginLeft: 8 }} title={rangeFlagTooltip(fact.reference_range)}>
-                  {RANGE_FLAG_LABEL[flag]}
-                </span>
-              ) : null;
-            })()}
-          </p>
-          <form
-            className="field"
-            onSubmit={(e) => {
-              e.preventDefault();
-              void run("value", () => api.patchFact(fact.id, { value }));
-            }}
-          >
-            <label htmlFor={`value-${fact.id}`}>Correct value (saving confirms it)</label>
-            <div style={{ display: "flex", gap: 8 }}>
-              <input id={`value-${fact.id}`} value={value} onChange={(e) => setValue(e.target.value)} />
-              <button className="btn btn--secondary" type="submit" disabled={busy !== null || value.trim() === ""}>
-                {busy === "value" ? "Saving..." : "Save value"}
-              </button>
-            </div>
-          </form>
-        </div>
-      </div>
+      </details>
 
       {fact.raw_marker_label && (
         <div className="field" style={{ marginTop: 16 }}>

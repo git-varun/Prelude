@@ -214,6 +214,71 @@ select {
   font-family: var(--font-serif);
 }
 
+/* Correction/mapping UI is collapsed by default -- a doctor scanning the
+   Snapshot shouldn't see an editable text box and raw-source panel for
+   every already-signed-off value, only when they ask for it. */
+.fact-correction {
+  margin-top: var(--space-3);
+}
+
+.fact-correction summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  list-style: none;
+}
+
+.fact-correction summary::-webkit-details-marker {
+  display: none;
+}
+
+.fact-correction summary::before {
+  content: "▸ ";
+}
+
+.fact-correction[open] summary::before {
+  content: "▾ ";
+}
+
+.fact-correction summary:hover {
+  color: var(--color-accent);
+}
+
+/* Since Last Visit: a compact scan row, deliberately not the same full
+   fact card shown again in Tumor Markers/Current Treatment/Radiology —
+   its whole purpose is a terse delta summary, not a second copy of the
+   same correction UI. */
+.delta-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: var(--space-3) var(--space-4);
+  gap: var(--space-3);
+}
+
+.delta-row + .delta-row {
+  border-top: 1px solid var(--color-border);
+}
+
+.delta-row__name {
+  font-weight: 600;
+  min-width: 140px;
+}
+
+.delta-row__value {
+  font-family: var(--font-serif);
+  font-weight: 600;
+}
+
+.delta-row__meta {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
 /* Buttons */
 
 .btn {
