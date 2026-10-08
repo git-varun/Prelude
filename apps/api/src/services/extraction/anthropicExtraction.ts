@@ -3,7 +3,7 @@ import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
 import type { DocumentType, ExtractedFactCandidate, ExtractionProvider, ExtractionResult, FieldType, OcrResult } from "@prelude/shared";
 
-const MODEL = "claude-opus-5";
+const MODEL = process.env.EXTRACTION_MODEL ?? "claude-sonnet-5-5";
 
 const CandidateSchema = z.object({
   trackedMarkerLabel: z.string().nullable(),
