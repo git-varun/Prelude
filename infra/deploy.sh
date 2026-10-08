@@ -6,5 +6,5 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 git pull origin main
-docker-compose -f infra/docker-compose.prod.yml --env-file .env up -d --build
-docker-compose -f infra/docker-compose.prod.yml --env-file .env ps
+/usr/local/bin/docker-compose -f infra/docker-compose.prod.yml --env-file .env up -d --build
+/usr/local/bin/docker-compose -f infra/docker-compose.prod.yml --env-file .env ps
