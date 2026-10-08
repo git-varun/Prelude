@@ -51,7 +51,7 @@ export function PatientList() {
             href="#"
             onClick={(e) => {
               e.preventDefault();
-              navigate(`/patients/${p.id}/upload`);
+              navigate(`/patients/${p.id}/snapshot`);
             }}
           >
             <span className="patient-row__name">{p.name || "(unnamed patient)"}</span>
@@ -74,10 +74,10 @@ export function PatientList() {
                 onClick={(e) => {
                   e.stopPropagation();
                   e.preventDefault();
-                  navigate(`/patients/${p.id}/snapshot`);
+                  navigate(`/patients/${p.id}/upload`);
                 }}
               >
-                Snapshot
+                Upload
               </button>
             </span>
           </a>
