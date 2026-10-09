@@ -38,3 +38,8 @@ apps/api/.eval-samples
 
 # Finder (MacOS) folder config
 .DS_Store
+
+# real patient reports (PHI) -- never commit
+docs/reports/
+apps/api/eval/fixtures/
+apps/api/eval/results/
