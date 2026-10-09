@@ -19,6 +19,13 @@ if (names.length === 0) {
   throw new Error(`No fixtures in ${FIXTURES.pathname}. Run \`bun run eval:fixtures\` and write the .expected.json answer keys first.`);
 }
 
+// Providers on free tiers rate-limit (Gemini: 15 req/min). EVAL_DELAY_MS paces documents; a document
+// whose call failed is retried (EVAL_RETRIES, default 2) after EVAL_RETRY_WAIT_MS (default 30s).
+const delayMs = Number(process.env.EVAL_DELAY_MS ?? 0);
+const retries = Number(process.env.EVAL_RETRIES ?? 2);
+const retryWaitMs = Number(process.env.EVAL_RETRY_WAIT_MS ?? 30_000);
+const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
 const provider = getExtractionProvider();
 const docs: DocScore[] = [];
 
@@ -26,7 +33,14 @@ for (let run = 1; run <= repeat; run++) {
   for (const name of names) {
     const ocr = (await Bun.file(new URL(`${name}.ocr.json`, FIXTURES)).json()) as OcrResult;
     const expected = ExpectedDocSchema.parse(await Bun.file(new URL(`${name}.expected.json`, FIXTURES)).json());
-    const { candidates, failedFieldTypes } = await provider.extractFacts(ocr, expected.documentType);
+    let result = await provider.extractFacts(ocr, expected.documentType);
+    for (let attempt = 1; attempt <= retries && result.failedFieldTypes.length > 0; attempt++) {
+      console.warn(`${name}: ${result.failedFieldTypes.join(",")} failed; retry ${attempt}/${retries} in ${retryWaitMs / 1000}s`);
+      await sleep(retryWaitMs);
+      result = await provider.extractFacts(ocr, expected.documentType);
+    }
+    const { candidates, failedFieldTypes } = result;
+    if (delayMs > 0) await sleep(delayMs);
     const score = scoreDoc(repeat > 1 ? `${name}#${run}` : name, expected.facts, candidates, failedFieldTypes, expected.source);
     docs.push(score);
     console.log(
