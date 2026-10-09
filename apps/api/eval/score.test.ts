@@ -129,3 +129,12 @@ test("calibration buckets count spurious facts as incorrect", () => {
   expect(s.calibration.meanConfidenceCorrect).toBeCloseTo(0.9);
   expect(s.calibration.meanConfidenceIncorrect).toBeCloseTo(0.3);
 });
+
+import { slugFor, toOcrResult } from "./buildFixtures";
+
+test("slugFor and toOcrResult", () => {
+  expect(slugFor("AJAY UPADHYAY .pdf")).toBe("ajay-upadhyay");
+  const r = toOcrResult("page one\fpage two\f");
+  expect(r.pages.map((p) => p.pageNumber)).toEqual([1, 2]);
+  expect(r.pages[1]!.text).toBe("page two");
+});

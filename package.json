@@ -9,7 +9,9 @@
   ],
   "scripts": {
     "eval:generate-samples": "bun apps/api/src/scripts/generateSampleDocs.ts",
-    "eval:ingestion": "bun apps/api/src/scripts/evalIngestion.ts"
+    "eval:ingestion": "bun apps/api/src/scripts/evalIngestion.ts",
+    "eval:fixtures": "bun apps/api/eval/buildFixtures.ts",
+    "eval:extraction": "bun apps/api/eval/run.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",
