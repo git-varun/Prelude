@@ -12,11 +12,14 @@ export const ExpectedFactSchema = z.object({
   asOfDate: z.string().nullable(),
   // Other dates also accepted as correct (e.g. report date when asOfDate is the collection date).
   altDates: z.array(z.string()).optional(),
+  // Other printed labels for the same test; merged with the shared table in aliases.ts.
+  aliases: z.array(z.string()).optional(),
   sourcePage: z.number().int().nullable(),
 });
 
 export const ExpectedDocSchema = z.object({
   documentType: z.enum(["prescription", "blood", "radiology"]),
+  source: z.enum(["real", "synthetic"]).default("real"),
   facts: z.array(ExpectedFactSchema),
 });
 

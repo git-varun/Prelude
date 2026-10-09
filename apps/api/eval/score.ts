@@ -1,5 +1,6 @@
 import { matchMarker } from "@prelude/shared";
 import type { ExtractedFactCandidate, FieldType } from "@prelude/shared";
+import { aliasKeys, squash } from "./aliases";
 import type { ExpectedFact } from "./types";
 
 const LABELLED: readonly FieldType[] = ["marker_value", "reference_range"];
@@ -11,6 +12,16 @@ function labelKey(fieldType: FieldType, label: string | null | undefined): strin
 
 const compact = (s: string) => s.toLowerCase().replace(/\s+/g, "");
 const collapse = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
+
+// Equivalent spellings of the same unit, after lowercasing, removing whitespace and mapping µ/μ -> u.
+const UNIT_EQUIV: Record<string, string> = {
+  "thou/ul": "10^3/ul", "k/ul": "10^3/ul", "x10^3/ul": "10^3/ul", "x10³/ul": "10^3/ul", "10³/ul": "10^3/ul", "10^9/l": "10^3/ul",
+  "millions/mm³": "10^6/ul", "millions/mm3": "10^6/ul", "mill/mm3": "10^6/ul", "m/ul": "10^6/ul", "x10^6/ul": "10^6/ul",
+};
+function normUnit(u: string): string {
+  const c = compact(u).replace(/[µμ]/g, "u");
+  return UNIT_EQUIV[c] ?? c;
+}
 
 export function valuesEqual(a: string | null, b: string | null): boolean {
   if (a === null || b === null) return a === b;
@@ -24,10 +35,13 @@ export function valuesEqual(a: string | null, b: string | null): boolean {
 
 export function unitsEqual(a: string | null, b: string | null): boolean {
   if (a === null || b === null) return a === b;
-  return compact(a) === compact(b);
+  return normUnit(a) === normUnit(b);
 }
 
-export const rangesEqual = unitsEqual;
+export function rangesEqual(a: string | null, b: string | null): boolean {
+  if (a === null || b === null) return a === b;
+  return compact(a) === compact(b);
+}
 
 function dateOk(e: ExpectedFact, c: ExtractedFactCandidate): boolean {
   return c.asOfDate === e.asOfDate || (c.asOfDate !== null && (e.altDates ?? []).includes(c.asOfDate));
@@ -46,7 +60,7 @@ function labelsRelated(a: string, b: string): boolean {
   return short.length >= 4 && long.includes(short);
 }
 
-// One-to-one passes: exact label+date, exact label, then containment label.
+// One-to-one passes: exact label+date, exact label, alias, then containment label.
 export function matchFacts(expected: ExpectedFact[], extracted: ExtractedFactCandidate[]): MatchResult {
   const usedExtracted = new Set<number>();
   const pairedExpected = new Map<number, number>();
@@ -55,6 +69,7 @@ export function matchFacts(expected: ExpectedFact[], extracted: ExtractedFactCan
   const passes: ((e: ExpectedFact, c: ExtractedFactCandidate) => boolean)[] = [
     (e, c) => sameField(e, c) && keys(e, c)[0] === keys(e, c)[1] && dateOk(e, c),
     (e, c) => sameField(e, c) && keys(e, c)[0] === keys(e, c)[1],
+    (e, c) => sameField(e, c) && LABELLED.includes(e.fieldType) && aliasKeys(e.markerLabel, e.aliases).has(keys(e, c)[1]),
     (e, c) => sameField(e, c) && labelsRelated(...keys(e, c)),
   ];
 
@@ -88,6 +103,7 @@ export interface FactResult {
 
 export interface DocScore {
   name: string;
+  source: "real" | "synthetic";
   expected: ExpectedFact[];
   extracted: ExtractedFactCandidate[];
   failedFieldTypes: FieldType[];
@@ -101,6 +117,7 @@ export function scoreDoc(
   expected: ExpectedFact[],
   extracted: ExtractedFactCandidate[],
   failedFieldTypes: FieldType[],
+  source: "real" | "synthetic" = "real",
 ): DocScore {
   const { pairs, missed, spurious } = matchFacts(expected, extracted);
   const results = pairs.map(({ expected: e, extracted: c }): FactResult => {
@@ -110,7 +127,7 @@ export function scoreDoc(
     const d = dateOk(e, c);
     return { expected: e, extracted: c, valueOk: v, unitOk: u, rangeOk: r, dateOk: d, correct: v && u && d };
   });
-  return { name, expected, extracted, failedFieldTypes, results, missed, spurious };
+  return { name, source, expected, extracted, failedFieldTypes, results, missed, spurious };
 }
 
 export function ratio(n: number, d: number): number | null {
@@ -130,6 +147,8 @@ export interface Summary {
   dateAccuracy: number | null;
   factAccuracy: number | null;
   byFieldType: Record<string, { expected: number; matched: number }>;
+  bySource: Record<string, { expected: number; matched: number; recall: number | null; factAccuracy: number | null }>;
+  precisionByFieldType: Record<string, { extracted: number; matched: number; precision: number | null }>;
   markerMatch: { eligible: number; correct: number; falseCanonical: string[] };
   snippetRate: number | null;
   calibration: {
@@ -157,6 +176,19 @@ export function summarize(docs: DocScore[]): Summary {
   for (const e of expectedAll) (byFieldType[e.fieldType] ??= { expected: 0, matched: 0 }).expected++;
   for (const r of results) byFieldType[r.expected.fieldType]!.matched++;
 
+  const bySource: Summary["bySource"] = {};
+  for (const src of new Set(docs.map((d) => d.source))) {
+    const ds = docs.filter((d) => d.source === src);
+    const rs = ds.flatMap((d) => d.results);
+    const exp = ds.reduce((n, d) => n + d.expected.length, 0);
+    bySource[src] = { expected: exp, matched: rs.length, recall: ratio(rs.length, exp), factAccuracy: ratio(rs.filter((r) => r.correct).length, rs.length) };
+  }
+
+  const precisionByFieldType: Summary["precisionByFieldType"] = {};
+  for (const c of extractedAll) (precisionByFieldType[c.fieldType] ??= { extracted: 0, matched: 0, precision: null }).extracted++;
+  for (const r of results) precisionByFieldType[r.extracted.fieldType]!.matched++;
+  for (const p of Object.values(precisionByFieldType)) p.precision = ratio(p.matched, p.extracted);
+
   const eligible = results.filter((r) => r.expected.canonicalMarker !== null);
   const falseCanonical = results
     .filter((r) => r.expected.canonicalMarker === null && matchMarker(r.extracted.trackedMarkerLabel ?? "") !== null)
@@ -180,6 +212,8 @@ export function summarize(docs: DocScore[]): Summary {
     dateAccuracy: ratio(count((r) => r.dateOk), results.length),
     factAccuracy: ratio(count((r) => r.correct), results.length),
     byFieldType,
+    bySource,
+    precisionByFieldType,
     markerMatch: {
       eligible: eligible.length,
       correct: eligible.filter((r) => matchMarker(r.extracted.trackedMarkerLabel ?? "") === r.expected.canonicalMarker).length,
@@ -206,6 +240,8 @@ export function formatSummary(s: Summary): string {
     `of matched: value ${pct(s.valueAccuracy)} | unit ${pct(s.unitAccuracy)} | range ${pct(s.rangeAccuracy)} | date ${pct(s.dateAccuracy)} | all-correct ${pct(s.factAccuracy)}`,
     `snippet verified ${pct(s.snippetRate)}`,
     `marker match ${s.markerMatch.correct}/${s.markerMatch.eligible} eligible | false canonical matches ${s.markerMatch.falseCanonical.length}`,
+    "by source: " + Object.entries(s.bySource).map(([k, v]) => `${k} recall ${pct(v.recall)} (${v.matched}/${v.expected}), all-correct ${pct(v.factAccuracy)}`).join(" | "),
+    "precision by field type: " + Object.entries(s.precisionByFieldType).map(([k, v]) => `${k} ${pct(v.precision)} (${v.matched}/${v.extracted})`).join(", "),
     "recall by field type: " + Object.entries(s.byFieldType).map(([k, v]) => `${k} ${v.matched}/${v.expected}`).join(", "),
     "confidence (n, correct): " + s.calibration.buckets.map((b) => `${b.label} ${b.n},${b.correct}`).join(" | ") +
       ` | mean correct ${s.calibration.meanConfidenceCorrect?.toFixed(2) ?? "n/a"}, incorrect ${s.calibration.meanConfidenceIncorrect?.toFixed(2) ?? "n/a"}`,

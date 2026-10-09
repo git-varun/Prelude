@@ -141,11 +141,49 @@ test("slugFor and toOcrResult", () => {
 
 test("label containment fallback pairs 'CALCIUM' with 'CALCIUM, Serum' but not short or unrelated labels", () => {
   expect(matchFacts([exp({ markerLabel: "CALCIUM" })], [cand({ trackedMarkerLabel: "CALCIUM , Serum" })]).pairs).toHaveLength(1);
-  expect(matchFacts([exp({ markerLabel: "INR" })], [cand({ trackedMarkerLabel: "INR Ratio" })]).pairs).toHaveLength(0);
+  expect(matchFacts([exp({ markerLabel: "CRP" })], [cand({ trackedMarkerLabel: "CRP Ratio" })]).pairs).toHaveLength(0);
   expect(matchFacts([exp({ markerLabel: "Neutrophils" })], [cand({ trackedMarkerLabel: "ABSOLUTE NEUTROPHIL COUNT" })]).pairs).toHaveLength(0);
 });
 
 test("exact label wins over containment when both are present", () => {
   const r = matchFacts([exp({ markerLabel: "CONTROL" })], [cand({ trackedMarkerLabel: "APTT CONTROL", value: "1" }), cand({ trackedMarkerLabel: "CONTROL", value: "2" })]);
   expect(r.pairs[0]!.extracted.value).toBe("2");
+});
+
+test("unit aliases: micro sign, case and thousand-per-microlitre spellings are equal", () => {
+  expect(unitsEqual("µIU/mL", "uIU/ml")).toBe(true);
+  expect(unitsEqual("µg/dl", "ug/dL")).toBe(true);
+  expect(unitsEqual("10^3/µL", "thou/uL")).toBe(true);
+  expect(unitsEqual("10^3/µL", "10^9/L")).toBe(true);
+  expect(unitsEqual("millions/mm³", "10^6/µL")).toBe(true);
+  expect(unitsEqual("ng/mL", "pg/mL")).toBe(false);
+});
+
+test("alias pass pairs different labels for the same test via the shared table", () => {
+  const pair = (el: string, cl: string) => matchFacts([exp({ markerLabel: el })], [cand({ trackedMarkerLabel: cl })]).pairs.length;
+  expect(pair("HAEMOGLOBIN (Hb)", "Hb")).toBe(1);
+  expect(pair("SGPT (ALT)", "ALT")).toBe(1);
+  expect(pair("THYROID STIMULATING HORMONE (TSH)", "TSH")).toBe(1);
+  expect(pair("T3 Total.", "T3, Total")).toBe(1);
+});
+
+test("alias table keeps free and total thyroid tests distinct", () => {
+  const pair = (el: string, cl: string) => matchFacts([exp({ markerLabel: el })], [cand({ trackedMarkerLabel: cl })]).pairs.length;
+  expect(pair("T3 Total", "Free T3")).toBe(0);
+  expect(pair("Free Thyroxine (FT4)", "T4, Total")).toBe(0);
+});
+
+test("per-fact aliases on the key are honoured", () => {
+  const r = matchFacts([exp({ markerLabel: "Zorblax", aliases: ["ZBX"] })], [cand({ trackedMarkerLabel: "zbx" })]);
+  expect(r.pairs).toHaveLength(1);
+});
+
+test("summary splits by source and reports precision by field type", () => {
+  const real = scoreDoc("r", [exp()], [cand(), cand({ fieldType: "reference_range", trackedMarkerLabel: "Q" })], [], "real");
+  const syn = scoreDoc("s", [exp()], [], [], "synthetic");
+  const s = summarize([real, syn]);
+  expect(s.bySource.real).toMatchObject({ expected: 1, matched: 1, recall: 1 });
+  expect(s.bySource.synthetic).toMatchObject({ expected: 1, matched: 0, recall: 0 });
+  expect(s.precisionByFieldType.marker_value).toMatchObject({ extracted: 1, matched: 1, precision: 1 });
+  expect(s.precisionByFieldType.reference_range).toMatchObject({ extracted: 1, matched: 0, precision: 0 });
 });
