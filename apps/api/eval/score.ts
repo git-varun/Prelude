@@ -39,17 +39,29 @@ export interface MatchResult {
   spurious: ExtractedFactCandidate[];
 }
 
-// One-to-one: first pass requires label+fieldType+date, second pass label+fieldType only.
+// Containment is a last-resort fallback for printed-label suffixes ("CALCIUM" vs
+// "CALCIUM , Serum"); the shorter key must be at least 4 chars to avoid "INR" in everything.
+function labelsRelated(a: string, b: string): boolean {
+  const [short, long] = a.length <= b.length ? [a, b] : [b, a];
+  return short.length >= 4 && long.includes(short);
+}
+
+// One-to-one passes: exact label+date, exact label, then containment label.
 export function matchFacts(expected: ExpectedFact[], extracted: ExtractedFactCandidate[]): MatchResult {
   const usedExtracted = new Set<number>();
   const pairedExpected = new Map<number, number>();
-  const sameKey = (e: ExpectedFact, c: ExtractedFactCandidate) =>
-    e.fieldType === c.fieldType && labelKey(e.fieldType, e.markerLabel) === labelKey(c.fieldType, c.trackedMarkerLabel);
+  const sameField = (e: ExpectedFact, c: ExtractedFactCandidate) => e.fieldType === c.fieldType;
+  const keys = (e: ExpectedFact, c: ExtractedFactCandidate) => [labelKey(e.fieldType, e.markerLabel), labelKey(c.fieldType, c.trackedMarkerLabel)] as const;
+  const passes: ((e: ExpectedFact, c: ExtractedFactCandidate) => boolean)[] = [
+    (e, c) => sameField(e, c) && keys(e, c)[0] === keys(e, c)[1] && dateOk(e, c),
+    (e, c) => sameField(e, c) && keys(e, c)[0] === keys(e, c)[1],
+    (e, c) => sameField(e, c) && labelsRelated(...keys(e, c)),
+  ];
 
-  for (const requireDate of [true, false]) {
+  for (const accepts of passes) {
     expected.forEach((e, ei) => {
       if (pairedExpected.has(ei)) return;
-      const ci = extracted.findIndex((c, i) => !usedExtracted.has(i) && sameKey(e, c) && (!requireDate || dateOk(e, c)));
+      const ci = extracted.findIndex((c, i) => !usedExtracted.has(i) && accepts(e, c));
       if (ci >= 0) {
         usedExtracted.add(ci);
         pairedExpected.set(ei, ci);

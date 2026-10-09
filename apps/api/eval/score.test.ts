@@ -138,3 +138,14 @@ test("slugFor and toOcrResult", () => {
   expect(r.pages.map((p) => p.pageNumber)).toEqual([1, 2]);
   expect(r.pages[1]!.text).toBe("page two");
 });
+
+test("label containment fallback pairs 'CALCIUM' with 'CALCIUM, Serum' but not short or unrelated labels", () => {
+  expect(matchFacts([exp({ markerLabel: "CALCIUM" })], [cand({ trackedMarkerLabel: "CALCIUM , Serum" })]).pairs).toHaveLength(1);
+  expect(matchFacts([exp({ markerLabel: "INR" })], [cand({ trackedMarkerLabel: "INR Ratio" })]).pairs).toHaveLength(0);
+  expect(matchFacts([exp({ markerLabel: "Neutrophils" })], [cand({ trackedMarkerLabel: "ABSOLUTE NEUTROPHIL COUNT" })]).pairs).toHaveLength(0);
+});
+
+test("exact label wins over containment when both are present", () => {
+  const r = matchFacts([exp({ markerLabel: "CONTROL" })], [cand({ trackedMarkerLabel: "APTT CONTROL", value: "1" }), cand({ trackedMarkerLabel: "CONTROL", value: "2" })]);
+  expect(r.pairs[0]!.extracted.value).toBe("2");
+});
