@@ -27,7 +27,7 @@ for (let run = 1; run <= repeat; run++) {
     const ocr = (await Bun.file(new URL(`${name}.ocr.json`, FIXTURES)).json()) as OcrResult;
     const expected = ExpectedDocSchema.parse(await Bun.file(new URL(`${name}.expected.json`, FIXTURES)).json());
     const { candidates, failedFieldTypes } = await provider.extractFacts(ocr, expected.documentType);
-    const score = scoreDoc(repeat > 1 ? `${name}#${run}` : name, expected.facts, candidates, failedFieldTypes);
+    const score = scoreDoc(repeat > 1 ? `${name}#${run}` : name, expected.facts, candidates, failedFieldTypes, expected.source);
     docs.push(score);
     console.log(
       `${score.name}: expected ${score.expected.length}, extracted ${score.extracted.length}, ` +
