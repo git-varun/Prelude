@@ -51,6 +51,7 @@ services:
       OBJECT_STORAGE_DRIVER: local
       OBJECT_STORAGE_LOCAL_PATH: /data/documents
       WEB_ORIGIN: https://${DOMAIN}
+      NODE_ENV: production
     volumes:
       - documents_data:/data/documents
     depends_on:
