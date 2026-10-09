@@ -100,3 +100,103 @@ export function scoreDoc(
   });
   return { name, expected, extracted, failedFieldTypes, results, missed, spurious };
 }
+
+export function ratio(n: number, d: number): number | null {
+  return d === 0 ? null : n / d;
+}
+
+export interface Summary {
+  documents: number;
+  expected: number;
+  extracted: number;
+  matched: number;
+  recall: number | null;
+  precision: number | null;
+  valueAccuracy: number | null;
+  unitAccuracy: number | null;
+  rangeAccuracy: number | null;
+  dateAccuracy: number | null;
+  factAccuracy: number | null;
+  byFieldType: Record<string, { expected: number; matched: number }>;
+  markerMatch: { eligible: number; correct: number; falseCanonical: string[] };
+  snippetRate: number | null;
+  calibration: {
+    buckets: { label: string; n: number; correct: number }[];
+    meanConfidenceCorrect: number | null;
+    meanConfidenceIncorrect: number | null;
+  };
+}
+
+const BUCKETS = [
+  { label: "0-0.5", lo: 0, hi: 0.5 },
+  { label: "0.5-0.8", lo: 0.5, hi: 0.8 },
+  { label: "0.8-1", lo: 0.8, hi: 1.0001 },
+];
+
+const mean = (xs: number[]): number | null => (xs.length === 0 ? null : xs.reduce((a, b) => a + b, 0) / xs.length);
+
+export function summarize(docs: DocScore[]): Summary {
+  const results = docs.flatMap((d) => d.results);
+  const extractedAll = docs.flatMap((d) => d.extracted);
+  const expectedAll = docs.flatMap((d) => d.expected);
+  const count = (f: (r: FactResult) => boolean) => results.filter(f).length;
+
+  const byFieldType: Summary["byFieldType"] = {};
+  for (const e of expectedAll) (byFieldType[e.fieldType] ??= { expected: 0, matched: 0 }).expected++;
+  for (const r of results) byFieldType[r.expected.fieldType]!.matched++;
+
+  const eligible = results.filter((r) => r.expected.canonicalMarker !== null);
+  const falseCanonical = results
+    .filter((r) => r.expected.canonicalMarker === null && matchMarker(r.extracted.trackedMarkerLabel ?? "") !== null)
+    .map((r) => r.extracted.trackedMarkerLabel ?? "");
+
+  const scored = [
+    ...results.map((r) => ({ confidence: r.extracted.confidence, ok: r.correct })),
+    ...docs.flatMap((d) => d.spurious).map((c) => ({ confidence: c.confidence, ok: false })),
+  ];
+
+  return {
+    documents: docs.length,
+    expected: expectedAll.length,
+    extracted: extractedAll.length,
+    matched: results.length,
+    recall: ratio(results.length, expectedAll.length),
+    precision: ratio(results.length, extractedAll.length),
+    valueAccuracy: ratio(count((r) => r.valueOk), results.length),
+    unitAccuracy: ratio(count((r) => r.unitOk), results.length),
+    rangeAccuracy: ratio(count((r) => r.rangeOk), results.length),
+    dateAccuracy: ratio(count((r) => r.dateOk), results.length),
+    factAccuracy: ratio(count((r) => r.correct), results.length),
+    byFieldType,
+    markerMatch: {
+      eligible: eligible.length,
+      correct: eligible.filter((r) => matchMarker(r.extracted.trackedMarkerLabel ?? "") === r.expected.canonicalMarker).length,
+      falseCanonical,
+    },
+    snippetRate: ratio(extractedAll.filter((c) => c.sourceSnippet !== null).length, extractedAll.length),
+    calibration: {
+      buckets: BUCKETS.map((b) => {
+        const inB = scored.filter((s) => s.confidence >= b.lo && s.confidence < b.hi);
+        return { label: b.label, n: inB.length, correct: inB.filter((s) => s.ok).length };
+      }),
+      meanConfidenceCorrect: mean(scored.filter((s) => s.ok).map((s) => s.confidence)),
+      meanConfidenceIncorrect: mean(scored.filter((s) => !s.ok).map((s) => s.confidence)),
+    },
+  };
+}
+
+const pct = (n: number | null) => (n === null ? "n/a" : `${(n * 100).toFixed(1)}%`);
+
+export function formatSummary(s: Summary): string {
+  const lines = [
+    `documents ${s.documents} | expected ${s.expected} | extracted ${s.extracted} | matched ${s.matched}`,
+    `recall ${pct(s.recall)} | precision ${pct(s.precision)}`,
+    `of matched: value ${pct(s.valueAccuracy)} | unit ${pct(s.unitAccuracy)} | range ${pct(s.rangeAccuracy)} | date ${pct(s.dateAccuracy)} | all-correct ${pct(s.factAccuracy)}`,
+    `snippet verified ${pct(s.snippetRate)}`,
+    `marker match ${s.markerMatch.correct}/${s.markerMatch.eligible} eligible | false canonical matches ${s.markerMatch.falseCanonical.length}`,
+    "recall by field type: " + Object.entries(s.byFieldType).map(([k, v]) => `${k} ${v.matched}/${v.expected}`).join(", "),
+    "confidence (n, correct): " + s.calibration.buckets.map((b) => `${b.label} ${b.n},${b.correct}`).join(" | ") +
+      ` | mean correct ${s.calibration.meanConfidenceCorrect?.toFixed(2) ?? "n/a"}, incorrect ${s.calibration.meanConfidenceIncorrect?.toFixed(2) ?? "n/a"}`,
+  ];
+  return lines.join("\n");
+}

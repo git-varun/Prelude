@@ -78,3 +78,54 @@ test("provider failure yields misses, not a crash", () => {
   expect(s.missed).toHaveLength(2);
   expect(s.failedFieldTypes).toEqual(["marker_value"]);
 });
+
+import { summarize, formatSummary, ratio } from "./score";
+
+test("ratio returns null for zero denominator", () => {
+  expect(ratio(0, 0)).toBeNull();
+  expect(ratio(1, 2)).toBe(0.5);
+});
+
+test("summarize with nothing expected or extracted gives null ratios, not NaN", () => {
+  const s = summarize([scoreDoc("d", [], [], [])]);
+  expect(s.recall).toBeNull();
+  expect(s.precision).toBeNull();
+  expect(s.factAccuracy).toBeNull();
+  expect(s.snippetRate).toBeNull();
+  expect(formatSummary(s)).toContain("n/a");
+});
+
+test("summarize computes recall, precision and accuracy", () => {
+  const docs = [scoreDoc("d", [exp(), exp({ markerLabel: "RBC", value: "3.6" })], [cand(), cand({ trackedMarkerLabel: "WBC" })], [])];
+  const s = summarize(docs);
+  expect(s.expected).toBe(2);
+  expect(s.matched).toBe(1);
+  expect(s.recall).toBe(0.5);
+  expect(s.precision).toBe(0.5);
+  expect(s.factAccuracy).toBe(1);
+});
+
+test("snippet rate counts candidates with a verified snippet", () => {
+  const s = summarize([scoreDoc("d", [exp()], [cand(), cand({ trackedMarkerLabel: "X", sourceSnippet: null })], [])]);
+  expect(s.snippetRate).toBe(0.5);
+});
+
+test("marker match: eligible correctness and false canonical matches", () => {
+  const withCanon = scoreDoc("d", [exp({ markerLabel: "Carcinoembryonic Antigen", canonicalMarker: "CEA", value: "5" })],
+    [cand({ trackedMarkerLabel: "Carcinoembryonic Antigen", value: "5" })], []);
+  const falseHit = scoreDoc("e", [exp({ markerLabel: "Something", canonicalMarker: null })], [cand({ trackedMarkerLabel: "CEA" })], []);
+  const s = summarize([withCanon, falseHit]);
+  expect(s.markerMatch.eligible).toBe(1);
+  expect(s.markerMatch.correct).toBe(1);
+  expect(s.markerMatch.falseCanonical).toEqual([]); // label mismatch -> spurious, not paired
+});
+
+test("calibration buckets count spurious facts as incorrect", () => {
+  const s = summarize([scoreDoc("d", [exp()], [cand({ confidence: 0.9 }), cand({ trackedMarkerLabel: "Z", confidence: 0.3 })], [])]);
+  const high = s.calibration.buckets.find((b) => b.label === "0.8-1")!;
+  const low = s.calibration.buckets.find((b) => b.label === "0-0.5")!;
+  expect(high).toMatchObject({ n: 1, correct: 1 });
+  expect(low).toMatchObject({ n: 1, correct: 0 });
+  expect(s.calibration.meanConfidenceCorrect).toBeCloseTo(0.9);
+  expect(s.calibration.meanConfidenceIncorrect).toBeCloseTo(0.3);
+});
