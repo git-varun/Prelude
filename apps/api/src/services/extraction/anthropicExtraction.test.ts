@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import type { ExtractedFactCandidate, FieldType } from "@prelude/shared";
+import type { ExtractedFactCandidate, FieldType, OcrResult } from "@prelude/shared";
 import { AnthropicExtractionProvider, normalizeAsOfDate, promptFor, toExtractedFactCandidate, type RawCandidate } from "./anthropicExtraction";
 
 function rawCandidate(overrides: Partial<RawCandidate> = {}): RawCandidate {
@@ -18,19 +18,58 @@ function rawCandidate(overrides: Partial<RawCandidate> = {}): RawCandidate {
   };
 }
 
+function ocrResult(overrides: Partial<OcrResult> = {}): OcrResult {
+  return {
+    fullText: "patient report\nCEA 5.9 ng/mL\nreference 0-5",
+    pages: [{ pageNumber: 1, text: "patient report\nCEA 5.9 ng/mL\nreference 0-5" }],
+    providerName: "test",
+    providerRaw: null,
+    ...overrides,
+  };
+}
+
 // provenanceFor labels a fact "exact" source purely from sourceSnippet being
 // non-null, promising a highlight that SourceView renders via a plain
 // text.indexOf(snippet) against the OCR text -- so a snippet the model didn't
 // actually quote verbatim must never reach the database, or the UI silently
 // shows no highlight while still claiming "exact" provenance everywhere else.
 test("toExtractedFactCandidate drops a sourceSnippet that isn't a verbatim substring of the OCR text", () => {
-  const result = toExtractedFactCandidate("marker_value", rawCandidate({ sourceSnippet: "CEA: 5.9 ng/mL" }), "the actual ocr text has CEA : 5.9ng/mL somewhere");
+  const result = toExtractedFactCandidate(
+    "marker_value",
+    rawCandidate({ sourceSnippet: "CEA: 5.9 ng/mL" }),
+    ocrResult({ fullText: "the actual ocr text has CEA : 5.9ng/mL somewhere", pages: [] }),
+  );
   expect(result.sourceSnippet).toBeNull();
 });
 
 test("toExtractedFactCandidate keeps a sourceSnippet that is a verbatim substring of the OCR text", () => {
-  const ocrText = "patient report\nCEA 5.9 ng/mL\nreference 0-5";
-  const result = toExtractedFactCandidate("marker_value", rawCandidate({ sourceSnippet: "CEA 5.9 ng/mL" }), ocrText);
+  const result = toExtractedFactCandidate("marker_value", rawCandidate({ sourceSnippet: "CEA 5.9 ng/mL", sourcePage: 1 }), ocrResult());
+  expect(result.sourceSnippet).toBe("CEA 5.9 ng/mL");
+});
+
+// Code review finding: verifying against the whole concatenated document let
+// a snippet attributed to page 2 that actually lives on page 1's text pass
+// verification, even though SourceView only ever searches the single page
+// named by sourcePage -- the highlight would still silently fail to render.
+test("toExtractedFactCandidate drops a sourceSnippet that exists on a different page than sourcePage claims", () => {
+  const ocr = ocrResult({
+    pages: [
+      { pageNumber: 1, text: "Header boilerplate: CEA 5.9 ng/mL appears here only" },
+      { pageNumber: 2, text: "Different content entirely, no marker mentioned" },
+    ],
+  });
+  const result = toExtractedFactCandidate("marker_value", rawCandidate({ sourceSnippet: "CEA 5.9 ng/mL", sourcePage: 2 }), ocr);
+  expect(result.sourceSnippet).toBeNull();
+});
+
+test("toExtractedFactCandidate keeps a sourceSnippet found on the page sourcePage actually names", () => {
+  const ocr = ocrResult({
+    pages: [
+      { pageNumber: 1, text: "Unrelated page 1 content" },
+      { pageNumber: 2, text: "CEA 5.9 ng/mL appears here" },
+    ],
+  });
+  const result = toExtractedFactCandidate("marker_value", rawCandidate({ sourceSnippet: "CEA 5.9 ng/mL", sourcePage: 2 }), ocr);
   expect(result.sourceSnippet).toBe("CEA 5.9 ng/mL");
 });
 

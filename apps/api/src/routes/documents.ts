@@ -93,22 +93,29 @@ export async function uploadDocument(req: Request & { params: { id: string } }, 
 
   let document;
   try {
-    [document] = await sql`
-      INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, ocr_status)
-      VALUES (${patientId}, ${visitId}, ${file_ref}, ${documentType}, ${sourceOrigin}, ${user.id}, 'pending')
-      RETURNING *
-    `;
+    // One transaction for the document row and its audit_log entry --
+    // previously two independent statements, so a failure between them left
+    // a document (and its file on disk) with no corresponding audit_log row,
+    // silently breaking the audit trail this PHI data otherwise maintains
+    // everywhere else (facts.ts/conflicts.ts already do this correctly).
+    document = await sql.begin(async (tx) => {
+      const [doc] = await tx`
+        INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, ocr_status)
+        VALUES (${patientId}, ${visitId}, ${file_ref}, ${documentType}, ${sourceOrigin}, ${user.id}, 'pending')
+        RETURNING *
+      `;
+      await tx`
+        INSERT INTO audit_log (actor_id, action, entity_type, entity_id, after_value)
+        VALUES (${user.id}, 'upload', 'document', ${doc.id}, ${JSON.stringify(doc)}::jsonb)
+      `;
+      return doc;
+    });
   } catch (err) {
     // m1-backlog B4: don't orphan the file already written to storage if the
-    // DB insert fails.
+    // transaction fails.
     await deleteDocumentFile(file_ref);
     throw err;
   }
-
-  await sql`
-    INSERT INTO audit_log (actor_id, action, entity_type, entity_id, after_value)
-    VALUES (${user.id}, 'upload', 'document', ${document.id}, ${JSON.stringify(document)}::jsonb)
-  `;
 
   document = await runOcr(document, file, documentType as (typeof DOCUMENT_TYPES)[number], user.id);
 
@@ -185,7 +192,6 @@ export async function runExtraction(
       ocr,
       documentType,
     );
-    const result = await persistExtractedFacts(document, candidates, actorId);
     // Nothing surviving only counts as 'failed' if a call actually failed;
     // an empty result with no failures is a legitimate "nothing extractable".
     const status =
@@ -196,7 +202,9 @@ export async function runExtraction(
         : `Field type(s) failed: ${failedFieldTypes
             .map((f) => (failureMessages?.[f] ? `${f} (${failureMessages[f]})` : f))
             .join("; ")}`.slice(0, 1000);
-    await sql`UPDATE documents SET extraction_status = ${status}, extraction_error = ${error} WHERE id = ${document.id}`;
+    // Written inside persistExtractedFacts' own transaction now (D6), atomic
+    // with the fact inserts it describes.
+    const result = await persistExtractedFacts(document, candidates, actorId, { status, error });
     console.log(
       `Document ${document.id}: extraction ${status}, persisted ${result.createdFactIds.length} fact(s)` +
         (result.needsManualDate ? " (some need a manual as_of_date)." : "."),

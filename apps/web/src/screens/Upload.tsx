@@ -10,9 +10,23 @@ const SOURCE_ORIGINS = ["own_hospital", "outside_paper", "outside_cd", "whatsapp
 // the same session. Cache per patient+day (module-level, so it survives
 // remounts but not a page reload) to skip the redundant round-trip; keyed
 // by day so it self-invalidates across a midnight rollover.
+//
+// Local date, not UTC: toISOString() is UTC, so a clinic anywhere east of
+// Greenwich (e.g. IST, UTC+5:30) filed documents under *yesterday* for the
+// first several hours of every local day, and clinics west of Greenwich get
+// the opposite problem in the evening -- either way, one real visit could
+// split across two visit rows. The server still has a UTC fallback for a
+// caller that omits the date, but this screen always supplies its own.
 const visitCache = new Map<string, Visit>();
+function localDateString(): string {
+  const now = new Date();
+  const year = now.getFullYear();
+  const month = String(now.getMonth() + 1).padStart(2, "0");
+  const day = String(now.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
 function visitCacheKey(patientId: string): string {
-  return `${patientId}:${new Date().toISOString().slice(0, 10)}`;
+  return `${patientId}:${localDateString()}`;
 }
 
 export function Upload({ patientId }: { patientId: string }) {
@@ -51,7 +65,7 @@ export function Upload({ patientId }: { patientId: string }) {
       setVisit(cachedVisit);
     } else {
       api
-        .createOrOpenVisit(patientId)
+        .createOrOpenVisit(patientId, localDateString())
         .then((v) => {
           visitCache.set(cacheKey, v);
           if (current) setVisit(v);

@@ -85,31 +85,39 @@ export async function createPatient(req: Request, user: AuthedUser): Promise<Res
     return jsonError(400, "bad_request", demographicsError);
   }
 
-  const [patient] = await sql`
-    INSERT INTO patients (
-      name, cancer_type, created_by, date_of_birth, sex, mrn, diagnosis_date, stage, referring_physician, patient_origin
-    )
-    VALUES (
-      ${body.name ?? null}, ${body.cancer_type ?? null}, ${user.id},
-      ${body.date_of_birth ?? null}, ${body.sex ?? null}, ${body.mrn ?? null},
-      ${body.diagnosis_date ?? null}, ${body.stage ?? null}, ${body.referring_physician ?? null},
-      ${body.patient_origin ?? "own_hospital"}
-    )
-    RETURNING id, name, cancer_type, created_at, created_by, sex, mrn, stage, referring_physician, patient_origin,
-              to_char(date_of_birth, 'YYYY-MM-DD') AS date_of_birth,
-              to_char(diagnosis_date, 'YYYY-MM-DD') AS diagnosis_date
-  `;
-
-  const trackedMarkers = [];
-  for (const m of markers) {
-    const { marker_name, is_custom } = markerRow(m.marker_name!);
-    const [row] = await sql`
-      INSERT INTO tracked_markers (patient_id, marker_name, is_custom, added_by)
-      VALUES (${patient.id}, ${marker_name}, ${is_custom}, ${user.id})
-      RETURNING id, marker_name, is_custom, added_at, added_by
+  // One transaction for the patient row plus every marker row: a mid-loop
+  // failure previously left a permanently partial patient (some markers
+  // committed, no client-visible id to retry against) -- same failure mode
+  // services/documents.ts's persistExtractedFacts already guards against
+  // for fact inserts (m2-backlog C5), just never applied here.
+  const { patient, trackedMarkers } = await sql.begin(async (tx) => {
+    const [patient] = await tx`
+      INSERT INTO patients (
+        name, cancer_type, created_by, date_of_birth, sex, mrn, diagnosis_date, stage, referring_physician, patient_origin
+      )
+      VALUES (
+        ${body.name ?? null}, ${body.cancer_type ?? null}, ${user.id},
+        ${body.date_of_birth ?? null}, ${body.sex ?? null}, ${body.mrn ?? null},
+        ${body.diagnosis_date ?? null}, ${body.stage ?? null}, ${body.referring_physician ?? null},
+        ${body.patient_origin ?? "own_hospital"}
+      )
+      RETURNING id, name, cancer_type, created_at, created_by, sex, mrn, stage, referring_physician, patient_origin,
+                to_char(date_of_birth, 'YYYY-MM-DD') AS date_of_birth,
+                to_char(diagnosis_date, 'YYYY-MM-DD') AS diagnosis_date
     `;
-    trackedMarkers.push(row);
-  }
+
+    const trackedMarkers = [];
+    for (const m of markers) {
+      const { marker_name, is_custom } = markerRow(m.marker_name!);
+      const [row] = await tx`
+        INSERT INTO tracked_markers (patient_id, marker_name, is_custom, added_by)
+        VALUES (${patient.id}, ${marker_name}, ${is_custom}, ${user.id})
+        RETURNING id, marker_name, is_custom, added_at, added_by
+      `;
+      trackedMarkers.push(row);
+    }
+    return { patient, trackedMarkers };
+  });
 
   return Response.json({ ...patient, tracked_markers: trackedMarkers }, { status: 201 });
 }

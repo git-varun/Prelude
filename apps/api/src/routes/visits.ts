@@ -59,20 +59,24 @@ export async function createOrOpenVisit(req: Request & { params: { id: string } 
     }
   }
 
+  // Falls back to the server's own UTC day only if a caller omits visit_date
+  // entirely -- the real client (Upload.tsx) always supplies its own local
+  // date now, since guessing a clinic's timezone from the server has no
+  // correct answer and previously misfiled documents near local midnight.
   const visitDate = body.visit_date ?? new Date().toISOString().slice(0, 10);
 
-  const [existing] = await sql`
-    SELECT id, patient_id, visit_date FROM visits
-    WHERE patient_id = ${patientId} AND visit_date = ${visitDate}
-  `;
-  if (existing) {
-    return Response.json(existing, { status: 200 });
-  }
-
-  const [visit] = await sql`
+  // Atomic upsert via the unique (patient_id, visit_date) constraint
+  // (migration 007) -- the previous check-then-insert raced under
+  // concurrent requests (two tabs/devices opening the same day's visit at
+  // once), each missing the other's row and fragmenting one consult across
+  // two visit rows.
+  const [row] = await sql`
     INSERT INTO visits (patient_id, visit_date)
     VALUES (${patientId}, ${visitDate})
-    RETURNING id, patient_id, visit_date
+    ON CONFLICT (patient_id, visit_date) DO UPDATE SET visit_date = EXCLUDED.visit_date
+    RETURNING id, patient_id, to_char(visit_date, 'YYYY-MM-DD') AS visit_date,
+              (xmax = 0) AS inserted
   `;
-  return Response.json(visit, { status: 201 });
+  const { inserted, ...visit } = row;
+  return Response.json(visit, { status: inserted ? 201 : 200 });
 }

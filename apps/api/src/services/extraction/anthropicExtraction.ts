@@ -116,12 +116,23 @@ export function normalizeAsOfDate(value: string | null): string | null {
 // guarantee: if the model paraphrases or cleans up OCR garbling anyway, the
 // highlight silently fails to render while the fact still claims "exact"
 // everywhere else. Verified here, not trusted from the model's output alone.
-function verifiedSnippet(snippet: string | null, ocrText: string): string | null {
+// Verified against the SAME text SourceView.tsx will actually search at
+// render time (pageText in SourceView.tsx): the one page named by
+// sourcePage, falling back to the full document only when sourcePage is
+// null or that page number isn't found -- mirroring SourceView's own
+// fallback exactly. Checking against the whole concatenated document (the
+// previous version of this check) let a snippet attributed to page 2 that
+// actually lives on page 1's boilerplate header pass verification and get
+// labeled "exact," while SourceView's page-2-only search still finds nothing.
+function verifiedSnippet(candidate: RawCandidate, ocr: OcrResult): string | null {
+  const snippet = candidate.sourceSnippet;
   if (snippet === null) return null;
-  return ocrText.includes(snippet) ? snippet : null;
+  const page = candidate.sourcePage !== null ? ocr.pages.find((p) => p.pageNumber === candidate.sourcePage) : undefined;
+  const searchText = page ? page.text : ocr.fullText;
+  return searchText.includes(snippet) ? snippet : null;
 }
 
-export function toExtractedFactCandidate(fieldType: FieldType, candidate: RawCandidate, ocrText: string): ExtractedFactCandidate {
+export function toExtractedFactCandidate(fieldType: FieldType, candidate: RawCandidate, ocr: OcrResult): ExtractedFactCandidate {
   // No verification_state field exists on ExtractedFactCandidate at all —
   // the extraction pass cannot self-authorize trust (docs/02 M2), so there
   // is nothing here that could set it.
@@ -135,7 +146,7 @@ export function toExtractedFactCandidate(fieldType: FieldType, candidate: RawCan
     coverageStatus: candidate.coverageStatus,
     sourcePage: candidate.sourcePage,
     sourceLocation: candidate.sourceLocation,
-    sourceSnippet: verifiedSnippet(candidate.sourceSnippet, ocrText),
+    sourceSnippet: verifiedSnippet(candidate, ocr),
     confidence: candidate.confidence,
   };
 }
@@ -151,7 +162,7 @@ export class AnthropicExtractionProvider implements ExtractionProvider {
     const fieldTypes = FIELD_TYPES_BY_DOCUMENT_TYPE[documentType];
 
     const settled = await Promise.allSettled(
-      fieldTypes.map((fieldType) => this.extractForFieldType(client, fieldType, documentType, ocrText)),
+      fieldTypes.map((fieldType) => this.extractForFieldType(client, fieldType, documentType, ocrText, ocr)),
     );
 
     const candidates: ExtractedFactCandidate[] = [];
@@ -178,6 +189,7 @@ export class AnthropicExtractionProvider implements ExtractionProvider {
     fieldType: FieldType,
     documentType: DocumentType,
     ocrText: string,
+    ocr: OcrResult,
   ): Promise<ExtractedFactCandidate[]> {
     const response = await client.messages.parse({
       model: MODEL,
@@ -189,6 +201,6 @@ export class AnthropicExtractionProvider implements ExtractionProvider {
     if (!response.parsed_output) {
       return [];
     }
-    return response.parsed_output.candidates.map((candidate) => toExtractedFactCandidate(fieldType, candidate, ocrText));
+    return response.parsed_output.candidates.map((candidate) => toExtractedFactCandidate(fieldType, candidate, ocr));
   }
 }

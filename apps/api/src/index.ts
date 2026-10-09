@@ -73,9 +73,20 @@ const server = Bun.serve({
       POST: requireRole(["oncologist"], resolveConflict),
     }),
   },
-  development: {
-    hmr: true,
-    console: true,
+  // Security review finding: this was hardcoded truthy regardless of
+  // NODE_ENV, so an unhandled exception in any route returned Bun's dev-mode
+  // error page (exception class/message, internal stack frames, the
+  // server's absolute working directory) to the caller -- reachable even
+  // unauthenticated, via a malformed /auth/login body that throws a Postgres
+  // type-mismatch error. apps/web/src/server.ts already gates this the same
+  // way; this brings the API in line with it.
+  development: process.env.NODE_ENV === "production" ? false : { hmr: true, console: true },
+  // Defense in depth alongside the NODE_ENV gate above: never let an
+  // unhandled exception's message/stack reach the client, even if something
+  // sets development wrong in a future change.
+  error(error) {
+    console.error(error);
+    return new Response("Something went wrong!", { status: 500 });
   },
 });
 

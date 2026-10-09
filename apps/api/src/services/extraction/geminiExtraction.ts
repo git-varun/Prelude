@@ -50,7 +50,7 @@ export class GeminiExtractionProvider implements ExtractionProvider {
     const fieldTypes = FIELD_TYPES_BY_DOCUMENT_TYPE[documentType];
 
     const settled = await Promise.allSettled(
-      fieldTypes.map((fieldType) => this.extractForFieldType(client, fieldType, documentType, ocrText)),
+      fieldTypes.map((fieldType) => this.extractForFieldType(client, fieldType, documentType, ocrText, ocr)),
     );
 
     const candidates: ExtractedFactCandidate[] = [];
@@ -75,6 +75,7 @@ export class GeminiExtractionProvider implements ExtractionProvider {
     fieldType: FieldType,
     documentType: DocumentType,
     ocrText: string,
+    ocr: OcrResult,
   ): Promise<ExtractedFactCandidate[]> {
     const response = await withRetry(() =>
       client.models.generateContent({
@@ -91,6 +92,6 @@ export class GeminiExtractionProvider implements ExtractionProvider {
       return [];
     }
     const parsed = ExtractionResultSchema.parse(JSON.parse(response.text));
-    return parsed.candidates.map((candidate) => toExtractedFactCandidate(fieldType, candidate, ocrText));
+    return parsed.candidates.map((candidate) => toExtractedFactCandidate(fieldType, candidate, ocr));
   }
 }

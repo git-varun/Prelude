@@ -48,7 +48,10 @@ export async function createUser(req: Request, _actor: AuthedUser): Promise<Resp
     `;
     return Response.json(user, { status: 201 });
   } catch (err) {
-    if (err instanceof Error && "errno" in err && (err as { errno?: string }).errno === "23505") {
+    // Bun's Postgres driver puts the SQLSTATE on .code, not .errno (confirmed
+    // against bun-types' sql.d.ts) -- this never matched, so a duplicate
+    // email fell through to an uncaught 500 instead of the documented 409.
+    if (err instanceof Error && "code" in err && (err as { code?: string }).code === "23505") {
       return jsonError(409, "conflict", "A user with this email already exists.");
     }
     throw err;

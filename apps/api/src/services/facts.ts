@@ -45,12 +45,25 @@ export interface PersistExtractionResult {
  * Logs an audit_log row (action='upload', entity_type='fact') per fact
  * created, attributed to the uploading user.
  */
+// m2-status-and-remaining-work D6: extraction_status was previously written
+// by the caller (documents.ts runExtraction) as a separate statement after
+// this function's own transaction already committed -- a failing status
+// update after a successful commit would show real, already-persisted facts
+// as "extraction failed". The caller now computes the status/error (it
+// already has everything needed: failedFieldTypes/candidates, before this
+// function even runs) and passes it in, so it's written atomically with the
+// fact inserts it describes.
 export async function persistExtractedFacts(
   document: DocumentContext,
   candidates: ExtractedFactCandidate[],
   actorId: string,
+  extractionStatus: { status: "done" | "partial" | "failed"; error: string | null } = { status: "done", error: null },
 ): Promise<PersistExtractionResult> {
   if (candidates.length === 0) {
+    await sql`
+      UPDATE documents SET extraction_status = ${extractionStatus.status}, extraction_error = ${extractionStatus.error}
+      WHERE id = ${document.id}
+    `;
     return { createdFactIds: [], needsManualDate: false };
   }
 
@@ -124,6 +137,10 @@ export async function persistExtractedFacts(
     if (needsManualDate) {
       await tx`UPDATE documents SET needs_manual_date = true WHERE id = ${document.id}`;
     }
+    await tx`
+      UPDATE documents SET extraction_status = ${extractionStatus.status}, extraction_error = ${extractionStatus.error}
+      WHERE id = ${document.id}
+    `;
 
     return { createdFactIds, needsManualDate };
   });
