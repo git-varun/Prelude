@@ -1,5 +1,13 @@
 import { useEffect, useRef, useState, type FormEvent } from "react";
-import { api, ApiError, type DocumentRecord, type PatientDetail, type Visit } from "../api/client";
+import {
+  api,
+  ApiError,
+  IMAGING_MODALITY_OPTIONS,
+  type DocumentRecord,
+  type ImagingModality,
+  type PatientDetail,
+  type Visit,
+} from "../api/client";
 import { navigate } from "../router";
 
 const DOCUMENT_TYPES = ["prescription", "blood", "radiology"] as const;
@@ -34,6 +42,7 @@ export function Upload({ patientId }: { patientId: string }) {
   const [visit, setVisit] = useState<Visit | null>(null);
   const [loadingPatient, setLoadingPatient] = useState(true);
   const [documentType, setDocumentType] = useState<(typeof DOCUMENT_TYPES)[number]>("blood");
+  const [imagingModality, setImagingModality] = useState<ImagingModality>("ct");
   const [sourceOrigin, setSourceOrigin] = useState<(typeof SOURCE_ORIGINS)[number]>("own_hospital");
   const [uploaded, setUploaded] = useState<DocumentRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -88,7 +97,13 @@ export function Upload({ patientId }: { patientId: string }) {
     setError(null);
     setUploading(true);
     try {
-      const doc = await api.uploadDocument(patientId, { visit_id: visit.id, document_type: documentType, source_origin: sourceOrigin, file });
+      const doc = await api.uploadDocument(patientId, {
+        visit_id: visit.id,
+        document_type: documentType,
+        imaging_modality: documentType === "radiology" ? imagingModality : undefined,
+        source_origin: sourceOrigin,
+        file,
+      });
       setUploaded((prev) => [doc, ...prev]);
       if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (err) {
@@ -146,6 +161,22 @@ export function Upload({ patientId }: { patientId: string }) {
               ))}
             </select>
           </div>
+          {documentType === "radiology" && (
+            <div className="field">
+              <label htmlFor="imaging_modality">Imaging modality</label>
+              <select
+                id="imaging_modality"
+                value={imagingModality}
+                onChange={(e) => setImagingModality(e.target.value as ImagingModality)}
+              >
+                {IMAGING_MODALITY_OPTIONS.map((m) => (
+                  <option key={m} value={m}>
+                    {m.replace(/_/g, " ")}
+                  </option>
+                ))}
+              </select>
+            </div>
+          )}
           <div className="field">
             <label htmlFor="source_origin">Source</label>
             <select
@@ -176,7 +207,8 @@ export function Upload({ patientId }: { patientId: string }) {
           {uploaded.map((doc) => (
             <div key={doc.id} className="patient-row">
               <span>
-                {doc.document_type} · {doc.source_origin.replace(/_/g, " ")}
+                {doc.document_type}
+                {doc.imaging_modality && ` (${doc.imaging_modality.replace(/_/g, " ")})`} · {doc.source_origin.replace(/_/g, " ")}
               </span>
               <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <span className="tag tag--pending">OCR: {doc.ocr_status}</span>

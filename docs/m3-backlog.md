@@ -6,7 +6,7 @@ Log. Unlike those, **this document is not frozen** — update it as items get
 resolved or new ones surface. Mirrors the pattern established in
 `docs/m1-backlog.md` / `docs/m2-backlog.md`.
 
-Last updated: 2026-10-09, after the pre-visit synthesis/triage feature shipped.
+Last updated: 2026-10-09, after granular imaging modality shipped.
 
 ---
 
@@ -28,7 +28,7 @@ Three gaps were identified, ranked by effort-to-impact:
 | --- | --- | --- |
 | 1 | No pre-visit synthesis/triage — doctor has to read every block to find what matters | **Done** (commit `95bcd2c`) |
 | 2 | Three disconnected blocks (Treatment/Markers/Radiology), no correlation | Open |
-| 3 | No granular imaging report types (CT/MRI/PET-CT/etc.) | Open (design approved, not implemented) |
+| 3 | No granular imaging report types (CT/MRI/PET-CT/etc.) | Implemented, **not deployed** (see below) |
 
 A fourth, smaller item (marker panel admin UI) was split out separately —
 panel *content* needs real oncologist input and is out of scope for design
@@ -55,6 +55,43 @@ distinguish "needs *oncologist* attention" (blocking sign-off) from "needs
 *staff* attention" (routine correction) — both currently count equally. If
 noisy in practice, split into two counts.
 
+### Granular imaging report types
+
+- New nullable `documents.imaging_modality` column (migration 008: `ct`,
+  `ct_contrast`, `mri`, `mri_contrast`, `pet_ct`, `ultrasound`, `xray`,
+  `mammography`, `other`), required by `uploadDocument` only when
+  `document_type = "radiology"`. Mounted in both compose files.
+- `Upload.tsx`: modality `<select>` shown only when "radiology" is chosen.
+- `ExtractionReview.tsx` and `SourceView.tsx`: modality shown next to the
+  document-type line (`SourceView.tsx` didn't actually have one yet — added
+  a one-line muted caption under the heading).
+- `Snapshot.tsx`'s Radiology section: shows modality as a badge on the
+  `FactCard`. Needed backend work beyond a display tweak — `SnapshotField`
+  only ever carried `document_id`, never joined back to `documents` — so
+  `loadRadiology` (`apps/api/src/routes/patients.ts`) now `LEFT JOIN`s
+  `documents` and the snapshot's radiology field objects carry
+  `imaging_modality` alongside `provenance`.
+- No extraction/prompt changes, as scoped.
+- **Deployment status: implemented and verified against local dev only,
+  NOT deployed.** Migration 008 was applied directly to the local dev
+  Postgres via `docker exec` (same dance as 006/007) — and 006/007 turned
+  out to still be missing from that volume too, so they were applied in the
+  same pass. None of this touched the real instance: `infra/deploy.sh` says
+  prod runs on an EC2 box (`/opt/prelude`) via `git pull` +
+  `docker-compose.prod.yml up -d --build`, no CI, no SSH access from here.
+  That rebuild alone won't run migration 008 — same as 006/007, prod's
+  Postgres volume already exists, so `docker-entrypoint-initdb.d` won't
+  rerun it. Before merging/deploying this: SSH to the instance and run
+  migration 008 via `docker exec`, in that order, since the `uploadDocument`
+  INSERT now names the `imaging_modality` column on every upload, not just
+  radiology ones — deploying the code first would break all uploads.
+- Tests: `uploadDocument` (4 new cases: require/validate/persist/ignore-for-
+  non-radiology `imaging_modality`), snapshot route (1 new case for the
+  `documents` join), and one new web e2e case (modality select
+  appears/disappears with document type, and reaches the upload POST) — all
+  green, alongside the full existing API suite (221 tests) and e2e smoke
+  (44 tests).
+
 ---
 
 ## Open
@@ -75,30 +112,7 @@ existing screen). Candidate angles to explore when picked up:
 - Whether this needs new backend aggregation or can be computed client-side
   from data the Snapshot/trend endpoints already return.
 
-### 3. Granular imaging report types (CT/MRI/PET-CT/Contrast CT/X-ray/etc.)
-
-**Status:** bounded design already presented and scoped, implementation
-paused mid-session for the full review detour. Design, for reference:
-
-- New nullable `documents.imaging_modality` column (enum: `ct`, `ct_contrast`,
-  `mri`, `mri_contrast`, `pet_ct`, `ultrasound`, `xray`, `mammography`,
-  `other`), required only when `document_type = "radiology"`.
-- `Upload.tsx`: a modality `<select>` shown only when "radiology" is chosen.
-- `ExtractionReview.tsx` / `SourceView.tsx` / `Snapshot.tsx`'s Radiology
-  section: display the modality alongside the existing document-type line.
-- **No extraction/prompt changes** — confirmed with you that the existing
-  `radiology_impression`/`disease_status_trend` prompt already extracts the
-  narrative impression generically regardless of scan type; modality is
-  purely descriptive metadata for this round.
-- Needs a new migration (008, following the `007_visits_unique_per_day.sql`
-  numbering) + the same prod-deploy dance as migrations 006/007 (apply
-  directly to the live, already-initialized Postgres via `docker exec`,
-  since `docker-entrypoint-initdb.d` only runs on a fresh volume).
-
-**Next step:** re-confirm the design still holds, implement, verify against
-the live instance same as the demographics/visit-history/patient-list work.
-
-### 4. Marker panel admin mechanism
+### 3. Marker panel admin mechanism
 
 **Status:** not yet brainstormed. Explicitly scoped to the *mechanism* only
 — a staff/oncologist screen to add/edit disease-site panels and their

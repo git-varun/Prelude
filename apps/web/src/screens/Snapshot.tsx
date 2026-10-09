@@ -151,7 +151,12 @@ function FieldEntry({
 
   return (
     <div className="snapshot-field">
-      <FactCard fact={toReviewFact(field, patientId, visitId)} trackedMarkers={[]} onChanged={onChanged} />
+      <FactCard
+        fact={toReviewFact(field, patientId, visitId)}
+        trackedMarkers={[]}
+        onChanged={onChanged}
+        badge={field.imaging_modality && <span className="tag">{field.imaging_modality.replace(/_/g, " ")}</span>}
+      />
       {showTrend && field.tracked_marker_id && (
         <div className="snapshot-field__trend">
           <MarkerTrendChart patientId={patientId} trackedMarkerId={field.tracked_marker_id} />

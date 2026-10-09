@@ -69,10 +69,15 @@ export interface SessionUser {
 export type Sex = "male" | "female" | "other" | "unknown";
 export type Stage = "0" | "I" | "II" | "III" | "IV";
 export type PatientOrigin = "own_hospital" | "referral";
+export type ImagingModality =
+  | "ct" | "ct_contrast" | "mri" | "mri_contrast" | "pet_ct" | "ultrasound" | "xray" | "mammography" | "other";
 
 export const SEX_OPTIONS: readonly Sex[] = ["male", "female", "other", "unknown"];
 export const STAGE_OPTIONS: readonly Stage[] = ["0", "I", "II", "III", "IV"];
 export const PATIENT_ORIGIN_OPTIONS: readonly PatientOrigin[] = ["own_hospital", "referral"];
+export const IMAGING_MODALITY_OPTIONS: readonly ImagingModality[] = [
+  "ct", "ct_contrast", "mri", "mri_contrast", "pet_ct", "ultrasound", "xray", "mammography", "other",
+];
 
 export interface PatientSummary {
   id: string;
@@ -123,6 +128,7 @@ export interface DocumentRecord {
   visit_id: string;
   file_ref: string;
   document_type: string;
+  imaging_modality: ImagingModality | null;
   source_origin: string;
   uploaded_by: string;
   uploaded_at: string;
@@ -221,6 +227,7 @@ export interface SnapshotField {
   delta_status: DeltaStatus | null;
   conflicts: ConflictEntry[];
   provenance: Provenance | null;
+  imaging_modality: ImagingModality | null;
 }
 
 export interface PatientSnapshot {
@@ -357,11 +364,18 @@ export const api = {
 
   uploadDocument: (
     patientId: string,
-    input: { visit_id: string; document_type: string; source_origin: string; file: File },
+    input: {
+      visit_id: string;
+      document_type: string;
+      imaging_modality?: ImagingModality;
+      source_origin: string;
+      file: File;
+    },
   ) => {
     const form = new FormData();
     form.set("visit_id", input.visit_id);
     form.set("document_type", input.document_type);
+    if (input.imaging_modality) form.set("imaging_modality", input.imaging_modality);
     form.set("source_origin", input.source_origin);
     form.set("file", input.file);
     return request<DocumentRecord>(`/patients/${patientId}/documents`, { method: "POST", body: form });

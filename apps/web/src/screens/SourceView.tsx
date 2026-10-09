@@ -94,7 +94,12 @@ export function SourceView({ documentId, factId }: { documentId: string; factId:
   return (
     <div>
       <div className="page-heading">
-        <h1>Source document</h1>
+        <div>
+          <h1>Source document</h1>
+          {document.imaging_modality && (
+            <p className="muted" style={{ margin: 0 }}>{document.imaging_modality.replace(/_/g, " ")}</p>
+          )}
+        </div>
         <button className="btn btn--ghost" onClick={() => navigate(`/documents/${document.id}/review`)}>
           Back to review
         </button>

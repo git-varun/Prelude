@@ -17,6 +17,8 @@ export interface User {
 }
 
 export type DocumentType = "prescription" | "blood" | "radiology";
+export type ImagingModality =
+  | "ct" | "ct_contrast" | "mri" | "mri_contrast" | "pet_ct" | "ultrasound" | "xray" | "mammography" | "other";
 export type SourceOrigin = "own_hospital" | "outside_paper" | "outside_cd" | "whatsapp_pdf";
 export type OcrStatus = "pending" | "done" | "partial" | "failed";
 export type ExtractionStatus = "pending" | "done" | "failed";
@@ -58,6 +60,9 @@ export const SEX_OPTIONS: readonly Sex[] = ["male", "female", "other", "unknown"
 // and needs real clinical input to scope correctly, not guessed at here.
 export const STAGE_OPTIONS: readonly Stage[] = ["0", "I", "II", "III", "IV"];
 export const PATIENT_ORIGIN_OPTIONS: readonly PatientOrigin[] = ["own_hospital", "referral"];
+export const IMAGING_MODALITY_OPTIONS: readonly ImagingModality[] = [
+  "ct", "ct_contrast", "mri", "mri_contrast", "pet_ct", "ultrasound", "xray", "mammography", "other",
+];
 
 export interface Patient {
   id: string;
@@ -95,6 +100,7 @@ export interface Document {
   visit_id: string;
   file_ref: string;
   document_type: DocumentType;
+  imaging_modality: ImagingModality | null;
   source_origin: SourceOrigin;
   uploaded_by: string;
   uploaded_at: string;

@@ -11,6 +11,9 @@ const isUuid = (s: unknown): s is string => typeof s === "string" && UUID.test(s
 
 const DOCUMENT_TYPES = ["prescription", "blood", "radiology"] as const;
 const SOURCE_ORIGINS = ["own_hospital", "outside_paper", "outside_cd", "whatsapp_pdf"] as const;
+const IMAGING_MODALITIES = [
+  "ct", "ct_contrast", "mri", "mri_contrast", "pet_ct", "ultrasound", "xray", "mammography", "other",
+] as const;
 
 // file_ref's suffix preserves the original upload's extension (saveDocumentFile), so the
 // content type for serving it back is inferred from that rather than a stored mime column.
@@ -61,6 +64,7 @@ export async function uploadDocument(req: Request & { params: { id: string } }, 
   const visitId = form.get("visit_id");
   const documentType = form.get("document_type");
   const sourceOrigin = form.get("source_origin");
+  const imagingModality = form.get("imaging_modality");
   const file = form.get("file");
 
   if (typeof visitId !== "string" || !visitId) {
@@ -71,6 +75,14 @@ export async function uploadDocument(req: Request & { params: { id: string } }, 
   }
   if (typeof sourceOrigin !== "string" || !(SOURCE_ORIGINS as readonly string[]).includes(sourceOrigin)) {
     return jsonError(400, "bad_request", `source_origin must be one of: ${SOURCE_ORIGINS.join(", ")}.`);
+  }
+  // Purely descriptive metadata (m3-backlog #3) -- required only for radiology, since
+  // the other document types have no scan modality to record.
+  if (
+    documentType === "radiology" &&
+    (typeof imagingModality !== "string" || !(IMAGING_MODALITIES as readonly string[]).includes(imagingModality))
+  ) {
+    return jsonError(400, "bad_request", `imaging_modality must be one of: ${IMAGING_MODALITIES.join(", ")}.`);
   }
   if (!(file instanceof File)) {
     return jsonError(400, "bad_request", "file is required.");
@@ -100,8 +112,8 @@ export async function uploadDocument(req: Request & { params: { id: string } }, 
     // everywhere else (facts.ts/conflicts.ts already do this correctly).
     document = await sql.begin(async (tx) => {
       const [doc] = await tx`
-        INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, ocr_status)
-        VALUES (${patientId}, ${visitId}, ${file_ref}, ${documentType}, ${sourceOrigin}, ${user.id}, 'pending')
+        INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, imaging_modality, uploaded_by, ocr_status)
+        VALUES (${patientId}, ${visitId}, ${file_ref}, ${documentType}, ${sourceOrigin}, ${documentType === "radiology" ? (imagingModality as string) : null}, ${user.id}, 'pending')
         RETURNING *
       `;
       await tx`

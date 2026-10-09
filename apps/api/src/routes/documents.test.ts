@@ -62,6 +62,53 @@ test("uploadDocument rejects an invalid document_type", async () => {
   expect(res.status).toBe(400);
 });
 
+test("uploadDocument requires imaging_modality when document_type is radiology", async () => {
+  const form = new FormData();
+  form.set("visit_id", visitId);
+  form.set("document_type", "radiology");
+  form.set("source_origin", "own_hospital");
+  form.set("file", new File(["data"], "a.pdf", { type: "application/pdf" }));
+  const res = await uploadDocument(uploadRequest(form), asAuthedUser(staff));
+  expect(res.status).toBe(400);
+});
+
+test("uploadDocument rejects an invalid imaging_modality value", async () => {
+  const form = new FormData();
+  form.set("visit_id", visitId);
+  form.set("document_type", "radiology");
+  form.set("imaging_modality", "x_ray_old_machine");
+  form.set("source_origin", "own_hospital");
+  form.set("file", new File(["data"], "a.pdf", { type: "application/pdf" }));
+  const res = await uploadDocument(uploadRequest(form), asAuthedUser(staff));
+  expect(res.status).toBe(400);
+});
+
+test("uploadDocument persists imaging_modality for a radiology document", async () => {
+  const form = new FormData();
+  form.set("visit_id", visitId);
+  form.set("document_type", "radiology");
+  form.set("imaging_modality", "pet_ct");
+  form.set("source_origin", "own_hospital");
+  form.set("file", new File(["data"], "a.pdf", { type: "application/pdf" }));
+  const res = await uploadDocument(uploadRequest(form), asAuthedUser(staff));
+  expect(res.status).toBe(201);
+  const body = (await res.json()) as any;
+  expect(body.imaging_modality).toBe("pet_ct");
+});
+
+test("uploadDocument ignores imaging_modality for a non-radiology document", async () => {
+  const form = new FormData();
+  form.set("visit_id", visitId);
+  form.set("document_type", "blood");
+  form.set("imaging_modality", "ct");
+  form.set("source_origin", "own_hospital");
+  form.set("file", new File(["data"], "a.pdf", { type: "application/pdf" }));
+  const res = await uploadDocument(uploadRequest(form), asAuthedUser(staff));
+  expect(res.status).toBe(201);
+  const body = (await res.json()) as any;
+  expect(body.imaging_modality).toBeNull();
+});
+
 test("uploadDocument rejects an unsupported file type", async () => {
   const form = new FormData();
   form.set("visit_id", visitId);

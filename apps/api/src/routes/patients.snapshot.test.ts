@@ -25,10 +25,14 @@ afterAll(async () => {
   await deleteTestUsers(staff.id, oncologist.id);
 });
 
-async function newDocument(visitId: string, documentType: "blood" | "prescription" | "radiology" = "blood"): Promise<string> {
+async function newDocument(
+  visitId: string,
+  documentType: "blood" | "prescription" | "radiology" = "blood",
+  imagingModality: string | null = null,
+): Promise<string> {
   const [doc] = await sql`
-    INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, ocr_status)
-    VALUES (${patientId}, ${visitId}, 'local://t/x.pdf', ${documentType}, 'own_hospital', ${staff.id}, 'done') RETURNING id`;
+    INSERT INTO documents (patient_id, visit_id, file_ref, document_type, imaging_modality, source_origin, uploaded_by, ocr_status)
+    VALUES (${patientId}, ${visitId}, 'local://t/x.pdf', ${documentType}, ${imagingModality}, 'own_hospital', ${staff.id}, 'done') RETURNING id`;
   return doc.id;
 }
 
@@ -176,6 +180,20 @@ test("a fact with only source_page (no source_snippet) gets fallback_level 'page
   expect(entry.provenance.fallback_level).toBe("page");
 });
 
+test("a radiology field includes its document's imaging_modality", async () => {
+  const docId = await newDocument(currentVisitId, "radiology", "pet_ct");
+  const factId = await newFact(docId, currentVisitId, {
+    fieldType: "radiology_impression",
+    value: "No new lesions",
+    asOf: "2026-02-03",
+  });
+
+  const res = await getPatientSnapshot(snapshotReq(patientId));
+  const body = (await res.json()) as any;
+  const entry = body.radiology.find((r: any) => r.fact_id === factId);
+  expect(entry.imaging_modality).toBe("pet_ct");
+});
+
 test("current_treatment returns only the latest treatment_regimen fact by as_of_date, not a history array", async () => {
   const docId = await newDocument(currentVisitId, "prescription");
   await newFact(docId, currentVisitId, { fieldType: "treatment_regimen", value: "Older regimen", asOf: "2026-01-15" });
@@ -192,6 +210,7 @@ test("field object shape matches the contract exactly, for both a real and a syn
   const expectedKeys = [
     "fact_id", "field_type", "tracked_marker_id", "marker_name", "value", "unit", "reference_range",
     "as_of_date", "coverage_status", "verification_state", "delta_status", "conflicts", "provenance",
+    "imaging_modality",
   ].sort();
 
   const [{ id: unmappedMarkerId }] = await sql`

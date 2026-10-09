@@ -103,7 +103,9 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
         <div>
           <h1>Extraction review</h1>
           <p className="muted" style={{ margin: 0 }}>
-            {document.document_type} · {document.source_origin.replace(/_/g, " ")}
+            {document.document_type}
+            {document.imaging_modality && ` (${document.imaging_modality.replace(/_/g, " ")})`} ·{" "}
+            {document.source_origin.replace(/_/g, " ")}
           </p>
         </div>
         <button className="btn btn--ghost" onClick={() => navigate(`/patients/${document.patient_id}/upload`)}>

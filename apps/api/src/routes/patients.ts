@@ -294,6 +294,7 @@ interface SnapshotFactRow {
   source_page: number | null;
   source_location: string | null;
   source_snippet: string | null;
+  imaging_modality?: string | null;
 }
 
 // For each tracked marker: one top-level entry, the live fact with the latest as_of_date
@@ -374,7 +375,9 @@ async function loadCurrentTreatment(visitId: string): Promise<SnapshotFactRow[]>
 
 // Single latest radiology_impression fact, same selection rule as tumor markers and
 // current_treatment: latest as_of_date among non-conflicted facts (undated never wins over
-// dated), plus any fact party to an open/annotated conflict regardless of date.
+// dated), plus any fact party to an open/annotated conflict regardless of date. Joins
+// documents for imaging_modality (m3-backlog #3) -- purely descriptive metadata, not part
+// of the selection rule itself.
 async function loadRadiology(visitId: string): Promise<SnapshotFactRow[]> {
   return sql`
     WITH live AS (
@@ -391,17 +394,21 @@ async function loadRadiology(visitId: string): Promise<SnapshotFactRow[]> {
       FROM live f
       WHERE f.id NOT IN (SELECT id FROM blocked)
     )
-    SELECT id AS fact_id, value, unit, reference_range,
-           to_char(as_of_date, 'YYYY-MM-DD') AS as_of_date,
-           coverage_status, verification_state,
-           document_id, source_page, source_location, source_snippet
-    FROM ranked WHERE rnk = 1
+    SELECT r.id AS fact_id, r.value, r.unit, r.reference_range,
+           to_char(r.as_of_date, 'YYYY-MM-DD') AS as_of_date,
+           r.coverage_status, r.verification_state,
+           r.document_id, r.source_page, r.source_location, r.source_snippet,
+           d.imaging_modality
+    FROM ranked r LEFT JOIN documents d ON d.id = r.document_id
+    WHERE r.rnk = 1
     UNION ALL
-    SELECT id AS fact_id, value, unit, reference_range,
-           to_char(as_of_date, 'YYYY-MM-DD') AS as_of_date,
-           coverage_status, verification_state,
-           document_id, source_page, source_location, source_snippet
-    FROM live WHERE id IN (SELECT id FROM blocked)
+    SELECT l.id AS fact_id, l.value, l.unit, l.reference_range,
+           to_char(l.as_of_date, 'YYYY-MM-DD') AS as_of_date,
+           l.coverage_status, l.verification_state,
+           l.document_id, l.source_page, l.source_location, l.source_snippet,
+           d.imaging_modality
+    FROM live l LEFT JOIN documents d ON d.id = l.document_id
+    WHERE l.id IN (SELECT id FROM blocked)
     ORDER BY as_of_date DESC NULLS LAST, fact_id
   `;
 }
@@ -475,13 +482,14 @@ function fieldObject(
     delta_status: deltaStatus,
     conflicts: factId ? (conflictsByFactId.get(factId) ?? []) : [],
     provenance: factId ? provenanceFor(row.document_id!, row.source_page, row.source_location, row.source_snippet) : null,
+    imaging_modality: factId ? (row.imaging_modality ?? null) : null,
   };
 }
 
 const EMPTY_ROW: SnapshotFactRow = {
   fact_id: null, value: null, unit: null, reference_range: null, as_of_date: null,
   coverage_status: null, verification_state: null, document_id: null,
-  source_page: null, source_location: null, source_snippet: null,
+  source_page: null, source_location: null, source_snippet: null, imaging_modality: null,
 };
 
 // Unlike tumor_markers (one row per tracked marker via its LEFT JOIN), synthesis here only fires when the block is empty and history shows this field_type was signed off before.

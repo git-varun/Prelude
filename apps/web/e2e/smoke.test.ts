@@ -1193,3 +1193,64 @@ test("Source view: the OCR-text-only fallback shows plain text with no highlight
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);
+
+test("Upload: the imaging modality select appears only when document type is radiology", async () => {
+  const page = await browser.newPage();
+  const errors: string[] = [];
+  page.on("pageerror", (err) => errors.push(`pageerror: ${err.message}`));
+  page.on("console", (msg) => { if (msg.type() === "error") errors.push(`console: ${msg.text()}`); });
+
+  const cors = { "Access-Control-Allow-Origin": BASE, "Access-Control-Allow-Credentials": "true" };
+  let uploadedBody = "";
+  await page.route(`${API}/**`, async (route) => {
+    const req = route.request();
+    const path = new URL(req.url()).pathname;
+    const json = (body: unknown) =>
+      route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify(body) });
+    if (path === "/auth/me") return json({ id: "u1", name: "Test Staff", email: "s@opd.local", role: "staff" });
+    if (path === "/patients/p1" && req.method() === "GET") {
+      return json({
+        id: "p1", name: "Jane Doe", cancer_type: "Breast", created_at: "2026-01-01T00:00:00Z", created_by: "u1",
+        mrn: null, patient_origin: "own_hospital", date_of_birth: null, stage: null, last_visit_date: null,
+        needs_attention_count: 0, sex: null, diagnosis_date: null, referring_physician: null, tracked_markers: [],
+      });
+    }
+    if (path === "/patients/p1/visits" && req.method() === "POST") {
+      return json({ id: "v1", patient_id: "p1", visit_date: "2026-01-01" });
+    }
+    if (path === "/patients/p1/documents" && req.method() === "POST") {
+      // Playwright's Request has no multipart() reader; the raw body still contains the
+      // field name/value pairs as plain text, which is enough to assert the browser sent them.
+      uploadedBody = (req.postData() ?? "").toString();
+      return json({
+        id: "doc1", patient_id: "p1", visit_id: "v1", file_ref: "local://p1/scan.pdf", document_type: "radiology",
+        imaging_modality: "pet_ct", source_origin: "own_hospital", uploaded_by: "u1",
+        uploaded_at: "2026-01-01T00:00:00Z", ocr_status: "pending", ocr_text_ref: null, needs_manual_date: false,
+        extraction_status: "pending", extraction_error: null,
+      });
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", headers: cors, body: "{}" });
+  });
+
+  await page.goto(`${BASE}/#/patients/p1/upload`);
+  await page.getByRole("heading", { name: "Jane Doe" }).waitFor();
+
+  expect(await page.getByLabel("Imaging modality").count()).toBe(0);
+
+  await page.getByLabel("Document type").selectOption("radiology");
+  await page.getByLabel("Imaging modality").waitFor();
+
+  await page.getByLabel("Document type").selectOption("blood");
+  expect(await page.getByLabel("Imaging modality").count()).toBe(0);
+
+  await page.getByLabel("Document type").selectOption("radiology");
+  await page.getByLabel("Imaging modality").selectOption("pet_ct");
+  await page.setInputFiles("#file", { name: "scan.pdf", mimeType: "application/pdf", buffer: Buffer.from("x") });
+  await page.getByRole("button", { name: "Upload" }).click();
+  await page.getByText("OCR: pending").waitFor();
+  expect(uploadedBody).toContain('name="imaging_modality"');
+  expect(uploadedBody).toContain("pet_ct");
+
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
