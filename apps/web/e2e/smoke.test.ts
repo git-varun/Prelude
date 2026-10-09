@@ -1029,13 +1029,14 @@ test("Snapshot: the view-uploaded-document link appears regardless of provenance
 
 test("Snapshot -> Timeline: navigates via the new button, renders the chart/legend/tick rows, and a tick click lands on Source view for the right fact", async () => {
   const timelineBody = {
+    patient: { id: "p1", name: "Test Patient", cancer_type: "Breast" },
     markers: [
       {
         tracked_marker_id: "m1",
         marker_name: "CEA",
         points: [
-          { fact_id: "f1", value: "3.0", unit: "ng/mL", as_of_date: "2026-01-01", visit_id: "v1" },
-          { fact_id: "f2", value: "9.0", unit: "ng/mL", as_of_date: "2026-02-01", visit_id: "v2" },
+          { fact_id: "f1", value: "3.0", unit: "ng/mL", as_of_date: "2026-01-01", visit_id: "v1", document_id: "doc1", source_page: null, source_location: null, source_snippet: null, fallback_level: "document" },
+          { fact_id: "f2", value: "9.0", unit: "ng/mL", as_of_date: "2026-02-01", visit_id: "v2", document_id: "doc1", source_page: null, source_location: null, source_snippet: null, fallback_level: "document" },
         ],
       },
     ],
@@ -1061,23 +1062,33 @@ test("Snapshot -> Timeline: navigates via the new button, renders the chart/lege
     // SourceView fetches document + facts + a file-availability probe in parallel
     // (apps/web/src/screens/SourceView.tsx); the probe 404ing is expected/ignored --
     // same as every other Source view scenario in this file -- but the facts list
-    // must contain a fact whose id matches the timeline tick's fact_id ("rf1"), or
-    // SourceView renders its "fact could not be found" error state instead of the
-    // document heading this test waits for.
+    // must contain a fact whose id matches the clicked point's fact_id ("f2" for the
+    // marker dot, "rf1" for the radiology tick), or SourceView renders its "fact could
+    // not be found" error state instead of the document heading this test waits for.
     if (path === "/documents/doc1") {
       return { document: timelineDocument, ocr: { fullText: "no new lesions", pages: [{ pageNumber: 1, text: "no new lesions" }] } };
     }
     if (path === "/documents/doc1/facts") {
       return {
         document: timelineDocument,
-        facts: [{
-          id: "rf1", patient_id: "p1", visit_id: "v2", document_id: "doc1", tracked_marker_id: null,
-          tracked_marker_name: null, raw_marker_label: null, field_type: "radiology_impression",
-          value: "no new lesions", unit: null, reference_range: null, as_of_date: "2026-02-01",
-          needs_manual_date: false, coverage_status: "value_found", verification_state: "oncologist_signed_off",
-          has_blocking_conflict: false, source_page: 2, source_location: null, source_snippet: "no new lesions",
-          fallback_level: "exact",
-        }],
+        facts: [
+          {
+            id: "rf1", patient_id: "p1", visit_id: "v2", document_id: "doc1", tracked_marker_id: null,
+            tracked_marker_name: null, raw_marker_label: null, field_type: "radiology_impression",
+            value: "no new lesions", unit: null, reference_range: null, as_of_date: "2026-02-01",
+            needs_manual_date: false, coverage_status: "value_found", verification_state: "oncologist_signed_off",
+            has_blocking_conflict: false, source_page: 2, source_location: null, source_snippet: "no new lesions",
+            fallback_level: "exact",
+          },
+          {
+            id: "f2", patient_id: "p1", visit_id: "v2", document_id: "doc1", tracked_marker_id: "m1",
+            tracked_marker_name: "CEA", raw_marker_label: null, field_type: "marker_value",
+            value: "9.0", unit: "ng/mL", reference_range: null, as_of_date: "2026-02-01",
+            needs_manual_date: false, coverage_status: "value_found", verification_state: "oncologist_signed_off",
+            has_blocking_conflict: false, source_page: null, source_location: null, source_snippet: null,
+            fallback_level: "document",
+          },
+        ],
         tracked_markers: [],
       };
     }
@@ -1085,9 +1096,16 @@ test("Snapshot -> Timeline: navigates via the new button, renders the chart/lege
   });
 
   await page.getByRole("button", { name: "Timeline" }).click();
-  await page.getByRole("heading", { name: "Timeline" }).waitFor();
+  await page.getByRole("heading", { name: "Test Patient" }).waitFor();
 
   await page.getByText("CEA — 9", { exact: false }).waitFor();
+
+  // Marker points click through to Source view too, same as treatment/radiology ticks.
+  await page.getByRole("button", { name: "CEA 2026-02-01: 9.0 ng/mL" }).click();
+  await page.getByRole("heading", { name: "Source document" }).waitFor();
+
+  await page.goBack();
+  await page.getByRole("heading", { name: "Test Patient" }).waitFor();
   await page.getByRole("button", { name: /Radiology 2026-02-01/ }).click();
   await page.getByRole("heading", { name: "Source document" }).waitFor();
 }, 30_000);

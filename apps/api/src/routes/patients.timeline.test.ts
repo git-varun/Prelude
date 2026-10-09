@@ -67,7 +67,11 @@ test("200 with all-empty arrays for a patient with no signed-off facts yet", asy
   try {
     const res = await getPatientTimeline(timelineReq(freshPatient.id));
     expect(res.status).toBe(200);
-    expect(await res.json()).toEqual({ markers: [], treatment: [], radiology: [] });
+    const body = (await res.json()) as any;
+    expect(body.patient.id).toBe(freshPatient.id);
+    expect(body.markers).toEqual([]);
+    expect(body.treatment).toEqual([]);
+    expect(body.radiology).toEqual([]);
   } finally {
     await deleteTestPatients(freshPatient.id);
   }
@@ -95,6 +99,37 @@ test("unverified and staff-corrected facts are excluded; only oncologist_signed_
   const body = (await res.json()) as any;
   const psa = body.markers.find((m: any) => m.tracked_marker_id === psaMarkerId);
   expect(psa.points.map((p: any) => p.fact_id)).toEqual([signedOff]);
+});
+
+test("a signed-off reference_range fact on a tracked marker is excluded from markers (only marker_value counts)", async () => {
+  const [{ id: afpMarkerId }] = await sql`
+    INSERT INTO tracked_markers (patient_id, marker_name, is_custom, added_by) VALUES (${patientId}, 'AFP-refrange-test', false, ${staff.id}) RETURNING id`;
+  const doc = await newDocument(visitBId);
+  const markerValueFact = await newFact(doc, visitBId, { markerId: afpMarkerId, fieldType: "marker_value", asOf: "2026-02-03", value: "4.2" });
+  await newFact(doc, visitBId, { markerId: afpMarkerId, fieldType: "reference_range", asOf: "2026-02-03", value: "0-5" });
+
+  const res = await getPatientTimeline(timelineReq(patientId));
+  const body = (await res.json()) as any;
+  const afp = body.markers.find((m: any) => m.tracked_marker_id === afpMarkerId);
+  expect(afp.points.map((p: any) => p.fact_id)).toEqual([markerValueFact]);
+});
+
+test("marker points carry document_id so they can click through to Source view, same as treatment/radiology events", async () => {
+  const doc = await newDocument(visitBId);
+  const factId = await newFact(doc, visitBId, { markerId: ceaMarkerId, asOf: "2026-02-04", value: "6.0", sourcePage: 1 });
+
+  const res = await getPatientTimeline(timelineReq(patientId));
+  const body = (await res.json()) as any;
+  const cea = body.markers.find((m: any) => m.tracked_marker_id === ceaMarkerId);
+  const point = cea.points.find((p: any) => p.fact_id === factId);
+  expect(point).toMatchObject({ document_id: doc, source_page: 1, fallback_level: "page" });
+});
+
+test("the response carries the patient's id/name/cancer_type for the screen's header", async () => {
+  const res = await getPatientTimeline(timelineReq(patientId));
+  const body = (await res.json()) as any;
+  expect(body.patient.id).toBe(patientId);
+  expect(typeof body.patient.name === "string" || body.patient.name === null).toBe(true);
 });
 
 test("a fact that lost an authoritative-pick conflict resolution is excluded", async () => {

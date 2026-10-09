@@ -271,6 +271,11 @@ export interface TimelineMarkerPoint {
   unit: string | null;
   as_of_date: string;
   visit_id: string;
+  document_id: string;
+  source_page: number | null;
+  source_location: string | null;
+  source_snippet: string | null;
+  fallback_level: "exact" | "page" | "document";
 }
 
 export interface TimelineMarkerSeries {
@@ -292,6 +297,7 @@ export interface TimelineEvent {
 }
 
 export interface TimelineResponse {
+  patient: { id: string; name: string | null; cancer_type: string | null };
   markers: TimelineMarkerSeries[];
   treatment: TimelineEvent[];
   radiology: TimelineEvent[];

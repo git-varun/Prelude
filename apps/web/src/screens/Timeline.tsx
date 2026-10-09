@@ -89,6 +89,18 @@ export function Timeline({ patientId }: { patientId: string }) {
 
   const isEmpty = data.markers.length === 0 && data.treatment.length === 0 && data.radiology.length === 0;
   const model: MultiSeriesLine[] = buildMultiSeriesModel(data.markers);
+  // buildMultiSeriesModel preserves marker and point order 1:1 (docs/superpowers/plans
+  // cross-block-correlation-timeline Task 3) -- zip back in fact_id/document_id, which the
+  // chart model itself doesn't carry, so each dot can click through to Source view too,
+  // same as the treatment/radiology ticks below.
+  const seriesWithSource = model.map((series, i) => ({
+    ...series,
+    points: series.points.map((p, j) => ({
+      ...p,
+      fact_id: data.markers[i]!.points[j]!.fact_id,
+      document_id: data.markers[i]!.points[j]!.document_id,
+    })),
+  }));
 
   const allDates = [
     ...data.markers.flatMap((m) => m.points.map((p) => p.as_of_date)),
@@ -104,7 +116,12 @@ export function Timeline({ patientId }: { patientId: string }) {
   return (
     <div>
       <div className="page-heading">
-        <h1>Timeline</h1>
+        <div>
+          <h1>{data.patient.name || "(unnamed patient)"}</h1>
+          <p className="muted" style={{ margin: 0 }}>
+            {data.patient.cancer_type || "cancer type not set"} · Timeline
+          </p>
+        </div>
         <button className="btn btn--ghost" onClick={() => navigate(`/patients/${patientId}/snapshot`)}>
           Back to snapshot
         </button>
@@ -124,9 +141,12 @@ export function Timeline({ patientId }: { patientId: string }) {
               role="img"
               aria-label="Cross-block correlation timeline"
             >
-              {model.map((series, i) => (
+              {seriesWithSource.map((series, i) => (
                 <g key={series.tracked_marker_id}>
-                  {series.points.length >= 2 && (
+                  {/* unitsMatch false means this marker's own points disagree on unit -- never draw
+                      a connecting line across them, same "units are never converted" rule
+                      buildTrendChartModel already enforces for the single-marker Snapshot chart. */}
+                  {series.points.length >= 2 && series.unitsMatch && (
                     <polyline
                       points={series.points.map((p) => `${x(new Date(p.date).getTime())},${yFromPct(p.pct)}`).join(" ")}
                       fill="none"
@@ -136,14 +156,19 @@ export function Timeline({ patientId }: { patientId: string }) {
                   )}
                   {series.points.map((p) => (
                     <circle
-                      key={`${series.tracked_marker_id}-${p.date}-${p.value}`}
+                      key={p.fact_id}
                       cx={x(new Date(p.date).getTime())}
                       cy={yFromPct(p.pct)}
                       r={3}
                       fill={MARKER_COLORS[i % MARKER_COLORS.length]}
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`${series.marker_name} ${p.date}: ${p.raw}${p.unit ? ` ${p.unit}` : ""}`}
+                      style={{ cursor: "pointer" }}
+                      onClick={() => navigate(`/documents/${p.document_id}/source?fact=${p.fact_id}`)}
                     >
                       <title>
-                        {series.marker_name} — {p.date}: {p.value}
+                        {series.marker_name} — {p.date}: {p.raw}
                         {p.unit ? ` ${p.unit}` : ""}
                       </title>
                     </circle>
@@ -163,7 +188,7 @@ export function Timeline({ patientId }: { patientId: string }) {
             </svg>
 
             <div style={{ display: "flex", flexWrap: "wrap", gap: 12, marginTop: 8 }}>
-              {model.map((series, i) => {
+              {seriesWithSource.map((series, i) => {
                 const last = series.points.at(-1);
                 return (
                   <span key={series.tracked_marker_id} style={{ display: "flex", alignItems: "center", gap: 4 }}>
@@ -177,7 +202,8 @@ export function Timeline({ patientId }: { patientId: string }) {
                       }}
                     />
                     {series.marker_name}
-                    {last && ` — ${last.value}${last.unit ? ` ${last.unit}` : ""}`}
+                    {last && ` — ${last.raw}${last.unit ? ` ${last.unit}` : ""}`}
+                    {!series.unitsMatch && <span className="field-hint"> (units differ)</span>}
                   </span>
                 );
               })}

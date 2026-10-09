@@ -612,18 +612,29 @@ interface TimelineMarkerRow {
   unit: string | null;
   as_of_date: string;
   visit_id: string;
+  document_id: string;
+  source_page: number | null;
+  source_location: string | null;
+  source_snippet: string | null;
 }
 
 // Full patient history (every visit), not scoped to the current visit like Snapshot --
 // this is where cross-block correlation actually pays off (m3-backlog #2 design spec).
 // Undated facts are excluded: a chronological axis has nowhere to put them.
+//
+// field_type = 'marker_value' is required: a tracked marker also carries reference_range
+// facts (services/facts.ts persists both for the same tracked_marker_id), which are
+// lab-reported ranges, not measured values, and must never be plotted as a marker point
+// (final-review finding -- Snapshot's own loadTumorMarkers filters the same way).
 async function loadTimelineMarkers(patientId: string): Promise<TimelineMarkerRow[]> {
   return sql`
     SELECT tm.id AS tracked_marker_id, tm.marker_name,
-           f.id AS fact_id, f.value, f.unit, to_char(f.as_of_date, 'YYYY-MM-DD') AS as_of_date, f.visit_id
+           f.id AS fact_id, f.value, f.unit, to_char(f.as_of_date, 'YYYY-MM-DD') AS as_of_date, f.visit_id,
+           f.document_id, f.source_page, f.source_location, f.source_snippet
     FROM tracked_markers tm
     JOIN facts f ON f.tracked_marker_id = tm.id
     WHERE tm.patient_id = ${patientId}
+      AND f.field_type = 'marker_value'
       AND f.verification_state = 'oncologist_signed_off'
       AND f.as_of_date IS NOT NULL
       AND ${LIVE_FACT_FILTER}
@@ -633,15 +644,36 @@ async function loadTimelineMarkers(patientId: string): Promise<TimelineMarkerRow
 
 // Map rather than GROUP BY: insertion order (first row seen per marker) already follows
 // tm.added_at ASC from the query above, which Map.values() preserves.
+//
+// Provenance fields flat on each point (not nested), same as timelineEventObject below --
+// marker points click through to Source view too (final-review finding; the spec's own
+// Provenance bullet says "every event (marker point, treatment change, radiology
+// impression)" links through).
 function groupTimelineMarkers(rows: TimelineMarkerRow[]) {
-  const byMarker = new Map<string, { tracked_marker_id: string; marker_name: string; points: Omit<TimelineMarkerRow, "tracked_marker_id" | "marker_name">[] }>();
+  const byMarker = new Map<
+    string,
+    {
+      tracked_marker_id: string;
+      marker_name: string;
+      points: {
+        fact_id: string; value: string; unit: string | null; as_of_date: string; visit_id: string;
+        document_id: string; source_page: number | null; source_location: string | null;
+        source_snippet: string | null; fallback_level: "exact" | "page" | "document";
+      }[];
+    }
+  >();
   for (const r of rows) {
     let entry = byMarker.get(r.tracked_marker_id);
     if (!entry) {
       entry = { tracked_marker_id: r.tracked_marker_id, marker_name: r.marker_name, points: [] };
       byMarker.set(r.tracked_marker_id, entry);
     }
-    entry.points.push({ fact_id: r.fact_id, value: r.value, unit: r.unit, as_of_date: r.as_of_date, visit_id: r.visit_id });
+    const p = provenanceFor(r.document_id, r.source_page, r.source_location, r.source_snippet);
+    entry.points.push({
+      fact_id: r.fact_id, value: r.value, unit: r.unit, as_of_date: r.as_of_date, visit_id: r.visit_id,
+      document_id: p.document_id, source_page: p.source_page, source_location: p.source_location,
+      source_snippet: p.source_snippet, fallback_level: p.fallback_level,
+    });
   }
   return [...byMarker.values()];
 }
@@ -696,7 +728,7 @@ export async function getPatientTimeline(req: Request & { params: { id: string }
   const patientId = req.params.id;
   if (!isUuid(patientId)) return jsonError(404, "not_found", "Patient not found.");
 
-  const [patient] = await sql`SELECT id FROM patients WHERE id = ${patientId}`;
+  const [patient] = await sql`SELECT id, name, cancer_type FROM patients WHERE id = ${patientId}`;
   if (!patient) return jsonError(404, "not_found", "Patient not found.");
 
   const [markerRows, treatmentRows, radiologyRows] = await Promise.all([
@@ -706,6 +738,7 @@ export async function getPatientTimeline(req: Request & { params: { id: string }
   ]);
 
   return Response.json({
+    patient: { id: patient.id, name: patient.name, cancer_type: patient.cancer_type },
     markers: groupTimelineMarkers(markerRows),
     treatment: treatmentRows.map(timelineEventObject),
     radiology: radiologyRows.map(timelineEventObject),
