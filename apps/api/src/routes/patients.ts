@@ -603,3 +603,111 @@ export async function getMarkerTrend(
 
   return Response.json({ marker_name: marker.marker_name, points });
 }
+
+interface TimelineMarkerRow {
+  tracked_marker_id: string;
+  marker_name: string;
+  fact_id: string;
+  value: string;
+  unit: string | null;
+  as_of_date: string;
+  visit_id: string;
+}
+
+// Full patient history (every visit), not scoped to the current visit like Snapshot --
+// this is where cross-block correlation actually pays off (m3-backlog #2 design spec).
+// Undated facts are excluded: a chronological axis has nowhere to put them.
+async function loadTimelineMarkers(patientId: string): Promise<TimelineMarkerRow[]> {
+  return sql`
+    SELECT tm.id AS tracked_marker_id, tm.marker_name,
+           f.id AS fact_id, f.value, f.unit, to_char(f.as_of_date, 'YYYY-MM-DD') AS as_of_date, f.visit_id
+    FROM tracked_markers tm
+    JOIN facts f ON f.tracked_marker_id = tm.id
+    WHERE tm.patient_id = ${patientId}
+      AND f.verification_state = 'oncologist_signed_off'
+      AND f.as_of_date IS NOT NULL
+      AND ${LIVE_FACT_FILTER}
+    ORDER BY tm.added_at ASC, f.as_of_date ASC
+  `;
+}
+
+// Map rather than GROUP BY: insertion order (first row seen per marker) already follows
+// tm.added_at ASC from the query above, which Map.values() preserves.
+function groupTimelineMarkers(rows: TimelineMarkerRow[]) {
+  const byMarker = new Map<string, { tracked_marker_id: string; marker_name: string; points: Omit<TimelineMarkerRow, "tracked_marker_id" | "marker_name">[] }>();
+  for (const r of rows) {
+    let entry = byMarker.get(r.tracked_marker_id);
+    if (!entry) {
+      entry = { tracked_marker_id: r.tracked_marker_id, marker_name: r.marker_name, points: [] };
+      byMarker.set(r.tracked_marker_id, entry);
+    }
+    entry.points.push({ fact_id: r.fact_id, value: r.value, unit: r.unit, as_of_date: r.as_of_date, visit_id: r.visit_id });
+  }
+  return [...byMarker.values()];
+}
+
+interface TimelineEventRow {
+  fact_id: string;
+  value: string | null;
+  as_of_date: string;
+  visit_id: string;
+  document_id: string;
+  source_page: number | null;
+  source_location: string | null;
+  source_snippet: string | null;
+}
+
+// Same signed-off + LIVE_FACT_FILTER + full-history rules as loadTimelineMarkers, for
+// treatment_regimen/radiology_impression instead of marker_value.
+async function loadTimelineEvents(
+  patientId: string,
+  fieldType: "treatment_regimen" | "radiology_impression",
+): Promise<TimelineEventRow[]> {
+  return sql`
+    SELECT f.id AS fact_id, f.value, to_char(f.as_of_date, 'YYYY-MM-DD') AS as_of_date, f.visit_id,
+           f.document_id, f.source_page, f.source_location, f.source_snippet
+    FROM facts f
+    WHERE f.patient_id = ${patientId} AND f.field_type = ${fieldType}
+      AND f.verification_state = 'oncologist_signed_off'
+      AND f.as_of_date IS NOT NULL
+      AND ${LIVE_FACT_FILTER}
+    ORDER BY f.as_of_date ASC
+  `;
+}
+
+// Provenance fields flat on the entry (not nested under a `provenance` key like Snapshot) --
+// the frontend tick-tooltip click-through needs document_id/fact_id directly.
+function timelineEventObject(r: TimelineEventRow) {
+  const p = provenanceFor(r.document_id, r.source_page, r.source_location, r.source_snippet);
+  return {
+    fact_id: r.fact_id,
+    value: r.value,
+    as_of_date: r.as_of_date,
+    visit_id: r.visit_id,
+    document_id: p.document_id,
+    source_page: p.source_page,
+    source_location: p.source_location,
+    source_snippet: p.source_snippet,
+    fallback_level: p.fallback_level,
+  };
+}
+
+export async function getPatientTimeline(req: Request & { params: { id: string } }): Promise<Response> {
+  const patientId = req.params.id;
+  if (!isUuid(patientId)) return jsonError(404, "not_found", "Patient not found.");
+
+  const [patient] = await sql`SELECT id FROM patients WHERE id = ${patientId}`;
+  if (!patient) return jsonError(404, "not_found", "Patient not found.");
+
+  const [markerRows, treatmentRows, radiologyRows] = await Promise.all([
+    loadTimelineMarkers(patientId),
+    loadTimelineEvents(patientId, "treatment_regimen"),
+    loadTimelineEvents(patientId, "radiology_impression"),
+  ]);
+
+  return Response.json({
+    markers: groupTimelineMarkers(markerRows),
+    treatment: treatmentRows.map(timelineEventObject),
+    radiology: radiologyRows.map(timelineEventObject),
+  });
+}
