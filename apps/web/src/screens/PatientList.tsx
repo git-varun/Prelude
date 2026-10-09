@@ -58,6 +58,11 @@ export function PatientList() {
               <span className="patient-row__name">{p.name || "(unnamed patient)"}</span>
               {p.patient_origin === "referral" && <span className="tag">Referral</span>}
               {p.stage && <span className="tag">Stage {p.stage}</span>}
+              {p.needs_attention_count > 0 && (
+                <span className="tag tag--range-flag">
+                  {p.needs_attention_count} need{p.needs_attention_count === 1 ? "s" : ""} review
+                </span>
+              )}
             </span>
             <span style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <span className="patient-row__meta">

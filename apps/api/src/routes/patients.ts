@@ -142,13 +142,35 @@ export async function listPatients(req: Request): Promise<Response> {
   );
   const offset = Math.max(0, Number(url.searchParams.get("offset")) || 0);
 
+  // Needs-attention: live facts (LIVE_FACT_FILTER, same rule used everywhere
+  // else) on the patient's current (most recent) visit that are either
+  // unreviewed by staff, flagged uncertain by extraction, or party to an
+  // open/annotated conflict -- the same three states that block sign-off.
+  // Scoped to the current visit only, matching what Snapshot would actually
+  // show if opened right now, not the patient's entire history.
+  const needsAttentionSubquery = sql`
+    (SELECT count(DISTINCT f.id)::int FROM facts f
+     WHERE f.visit_id = (SELECT id FROM visits WHERE patient_id = p.id ORDER BY visit_date DESC, id DESC LIMIT 1)
+       AND ${LIVE_FACT_FILTER}
+       AND (
+         f.verification_state = 'unverified'
+         OR f.coverage_status = 'extraction_uncertain'
+         OR EXISTS (
+           SELECT 1 FROM conflicts c
+           WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated')
+         )
+       )
+    ) AS needs_attention_count
+  `;
+
   // Most recently seen first is more clinically useful than most recently
   // registered -- a patient with no visits yet sorts last (NULLS LAST).
   const rows = search
     ? await sql`
         SELECT p.id, p.name, p.cancer_type, p.created_at, p.created_by, p.mrn, p.patient_origin,
                to_char(p.date_of_birth, 'YYYY-MM-DD') AS date_of_birth, p.stage,
-               (SELECT to_char(MAX(v.visit_date), 'YYYY-MM-DD') FROM visits v WHERE v.patient_id = p.id) AS last_visit_date
+               (SELECT to_char(MAX(v.visit_date), 'YYYY-MM-DD') FROM visits v WHERE v.patient_id = p.id) AS last_visit_date,
+               ${needsAttentionSubquery}
         FROM patients p
         WHERE p.name ILIKE ${"%" + search + "%"}
         ORDER BY last_visit_date DESC NULLS LAST
@@ -157,7 +179,8 @@ export async function listPatients(req: Request): Promise<Response> {
     : await sql`
         SELECT p.id, p.name, p.cancer_type, p.created_at, p.created_by, p.mrn, p.patient_origin,
                to_char(p.date_of_birth, 'YYYY-MM-DD') AS date_of_birth, p.stage,
-               (SELECT to_char(MAX(v.visit_date), 'YYYY-MM-DD') FROM visits v WHERE v.patient_id = p.id) AS last_visit_date
+               (SELECT to_char(MAX(v.visit_date), 'YYYY-MM-DD') FROM visits v WHERE v.patient_id = p.id) AS last_visit_date,
+               ${needsAttentionSubquery}
         FROM patients p
         ORDER BY last_visit_date DESC NULLS LAST
         LIMIT ${limit} OFFSET ${offset}

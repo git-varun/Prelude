@@ -85,6 +85,7 @@ export interface PatientSummary {
   date_of_birth: string | null;
   stage: Stage | null;
   last_visit_date: string | null;
+  needs_attention_count: number;
 }
 
 export interface TrackedMarker {

@@ -4,6 +4,7 @@ import { FactCard } from "../components/FactCard";
 import { MarkerDisclaimerFooter } from "../components/MarkerDisclaimerFooter";
 import { MarkerTrendChart } from "../components/MarkerTrendChart";
 import { withThyroglobulinAdjacency } from "../lib/markerOrder";
+import { flagForRange } from "../lib/referenceRange";
 import { navigate } from "../router";
 
 const FIELD_LABELS: Record<string, string> = {
@@ -82,13 +83,27 @@ function toReviewFact(field: SnapshotField, patientId: string, visitId: string):
 // Inventory), not a second copy of each block's full correction-capable fact card --
 // a compact row per field, read-only, distinct in both purpose and appearance from
 // the full sections below where the same facts live for actual review/sign-off.
+// Highest priority first: an out-of-range changed/new value outranks a
+// plain changed/new value, which outranks unchanged -- a doctor scanning
+// this list should see what actually needs a decision before the inert
+// "nothing moved" entries. Stable otherwise (no secondary sort key), so
+// equal-priority rows keep the API's own order.
+function deltaPriority(f: SnapshotField): number {
+  const outOfRange = flagForRange(f.value, f.reference_range) !== null;
+  const changed = f.delta_status === "changed" || f.delta_status === "new";
+  if (changed && outOfRange) return 0;
+  if (changed) return 1;
+  return 2;
+}
+
 function DeltaSummary({ fields }: { fields: SnapshotField[] }) {
   if (fields.length === 0) {
     return <p className="muted">No data recorded for this visit.</p>;
   }
+  const sorted = [...fields].sort((a, b) => deltaPriority(a) - deltaPriority(b));
   return (
     <div className="card" style={{ padding: 0 }}>
-      {fields.map((f, i) => {
+      {sorted.map((f, i) => {
         const heading = f.marker_name ?? FIELD_LABELS[f.field_type] ?? f.field_type;
         return (
           <div className="delta-row" key={`delta-${f.fact_id ?? "none"}-${f.tracked_marker_id ?? i}`}>
