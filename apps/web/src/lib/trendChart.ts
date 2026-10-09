@@ -46,3 +46,51 @@ export function bandRangeForPoints(points: TrendPoint[]): ParsedRange | null {
   if (first === null || normalized.some((r) => r !== first)) return null;
   return parseReferenceRange(first);
 }
+
+export interface MultiSeriesPoint {
+  fact_id: string;
+  value: string;
+  unit: string | null;
+  as_of_date: string;
+  visit_id: string;
+}
+
+export interface MultiSeriesInput {
+  tracked_marker_id: string;
+  marker_name: string;
+  points: MultiSeriesPoint[];
+}
+
+export interface MultiSeriesLine {
+  tracked_marker_id: string;
+  marker_name: string;
+  points: { date: string; value: number; unit: string | null; pct: number }[];
+}
+
+// Each marker is normalized to its own observed min/max (0-100% of its own range),
+// never a shared scale across markers — a shared scale would newly imply markers with
+// different units/biology are clinically comparable (m3-backlog #2 design spec). The
+// real value+unit is always carried alongside pct for tooltip/label display; pct is a
+// draw-time positioning detail only, never shown to the user as a number.
+//
+// A single-point series is positioned at the midpoint (50%): there's no range yet to
+// locate it within, but the point's existence on the shared timeline is itself
+// informative even before its own trajectory is.
+export function buildMultiSeriesModel(markers: MultiSeriesInput[]): MultiSeriesLine[] {
+  return markers.map((m) => {
+    const values = m.points.map((p) => Number(p.value));
+    const min = Math.min(...values);
+    const max = Math.max(...values);
+    const span = max - min || 1;
+    return {
+      tracked_marker_id: m.tracked_marker_id,
+      marker_name: m.marker_name,
+      points: m.points.map((p, i) => ({
+        date: p.as_of_date,
+        value: values[i]!,
+        unit: p.unit,
+        pct: values.length === 1 ? 50 : ((values[i]! - min) / span) * 100,
+      })),
+    };
+  });
+}
