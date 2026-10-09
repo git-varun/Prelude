@@ -48,6 +48,11 @@ export function matchPatientHistory(path: string): string | null {
   return m ? m[1]! : null;
 }
 
+export function matchPatientTimeline(path: string): string | null {
+  const m = path.match(/^\/patients\/([^/]+)\/timeline$/);
+  return m ? m[1]! : null;
+}
+
 export function matchConflict(path: string): string | null {
   const m = path.match(/^\/conflicts\/([^/]+)$/);
   return m ? m[1]! : null;

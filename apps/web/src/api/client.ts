@@ -265,6 +265,44 @@ export interface MarkerTrend {
   points: MarkerTrendPoint[];
 }
 
+export interface TimelineMarkerPoint {
+  fact_id: string;
+  value: string;
+  unit: string | null;
+  as_of_date: string;
+  visit_id: string;
+  document_id: string;
+  source_page: number | null;
+  source_location: string | null;
+  source_snippet: string | null;
+  fallback_level: "exact" | "page" | "document";
+}
+
+export interface TimelineMarkerSeries {
+  tracked_marker_id: string;
+  marker_name: string;
+  points: TimelineMarkerPoint[];
+}
+
+export interface TimelineEvent {
+  fact_id: string;
+  value: string | null;
+  as_of_date: string;
+  visit_id: string;
+  document_id: string;
+  source_page: number | null;
+  source_location: string | null;
+  source_snippet: string | null;
+  fallback_level: "exact" | "page" | "document";
+}
+
+export interface TimelineResponse {
+  patient: { id: string; name: string | null; cancer_type: string | null };
+  markers: TimelineMarkerSeries[];
+  treatment: TimelineEvent[];
+  radiology: TimelineEvent[];
+}
+
 export interface Conflict {
   id: string;
   fact_id_a: string;
@@ -319,6 +357,8 @@ export const api = {
 
   getMarkerTrend: (patientId: string, trackedMarkerId: string) =>
     request<MarkerTrend>(`/patients/${patientId}/markers/${trackedMarkerId}/trend`),
+
+  getTimeline: (patientId: string) => request<TimelineResponse>(`/patients/${patientId}/timeline`),
 
   createPatient: (input: {
     name: string;
