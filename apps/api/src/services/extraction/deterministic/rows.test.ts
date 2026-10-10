@@ -77,3 +77,19 @@ test("a long address-like line ending in a number is not a dash row", () => {
   const r = parse("House Of Diagnostics Healthcare Pvt Ltd. 14, 15 & 16 Hargovind Enclave Delhi - 110092");
   expect(r.rows).toHaveLength(0);
 });
+
+test("slashless units such as mL are recognised", () => {
+  const r = parse("VOLUME      30.00      mL");
+  expect(r.rows[0]).toMatchObject({ label: "VOLUME", value: "30.00", unit: "mL", shape: "value_unit" });
+});
+
+test("inline 'Label : value unit (Ref: range)' rows parse from a single cell", () => {
+  const r = parse("Fasting Glucose : 98 mg/dL (Ref: 70 to 100)\nTSH : 2.10 mIU/L (Ref: 0.35 to 5.50)");
+  expect(r.rows).toHaveLength(2);
+  expect(r.rows[0]).toMatchObject({ label: "Fasting Glucose", value: "98", unit: "mg/dL", range: "70 to 100", shape: "full" });
+});
+
+test("header-like inline lines are not rows", () => {
+  const r = parse("Phone : 8076964308\nCollected On : 14/03/2026\nPatient ID : 12345");
+  expect(r.rows).toHaveLength(0);
+});

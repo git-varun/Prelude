@@ -28,12 +28,13 @@ const NUM = /^[<>]?\s?\d[\d,]*(\.\d+)?$/;
 const COUNT = /^\d+\s?-\s?\d+$/;
 const DURATION = /^\d+\s*minutes?(\s*\d+\s*seconds?)?$/i;
 const QUAL = /^(negative|positive|nil|absent|present|clear|yellow|pale yellow|not increased|trace|normal|reactive|non[- ]reactive|detected|not detected)$/i;
-const UNIT = /^(%|[A-Za-zµμ0-9³^.]*\/[A-Za-zµμ0-9³^.]+|secs?|seconds?|ratio|inr|fl|pg|minutes?)$/i;
+const UNIT = /^(%|[A-Za-zµμ0-9³^.]*\/[A-Za-zµμ0-9³^.]+|secs?|seconds?|ratio|inr|fl|pg|minutes?|ml|dl|mg|g|gm|kg|ug|µg|ng|iu|meq|mmol|mm)$/i;
 const RANGE = /^([<>]\s?\d|\d[\d.]*\s?(-|to)\s?\d|\d[\d.]*\s?-$|normal\b|nil\b|deficiency|desirable|optimal)/i;
 const FLAG = /^(H|L|HH|LL|High|Low|\*|Abnormal)$/i;
+const INLINE = /^(.*?[A-Za-z].*?)\s*:\s*([<>]?\d[\d,]*(?:\.\d+)?)\s*([^\s(]+)?\s*(?:\((?:ref(?:erence)?\.?:?\s*)?([^)]*)\))?\s*$/i;
 const MERGED = /^(.*\S)\s+([<>]?\d[\d,]*(?:\.\d+)?)$/;
 const DASH = /^(.*[A-Za-z].*?)\s+-\s+(\d[\d.]*)\s*(%)?$/;
-const EXCLUDE_LABEL = /^(page|age|patient|pateint|ref|visit|lab\b|booking|mobile|sample|reg|collected|collection|received|receiving|reported|reporting|date|print|name|doctor|centre|center|address|barcode|accession|approved|dob|sex|gender|maxid|op\/ip|nationality|panel|test performed)/i;
+const EXCLUDE_LABEL = /^(page|age|patient|pateint|ref|visit|lab\b|booking|mobile|sample|reg|collected|collection|received|receiving|reported|reporting|date|print|name|doctor|centre|center|address|barcode|accession|approved|dob|sex|gender|maxid|op\/ip|nationality|panel|test performed|phone|tel\b|fax|email|pin\b|zip)/i;
 const NOTES_START = /^(clinical notes?|notes?\b|comment|interpretation|remarks?|possible causes|conditions of reporting|clinical significance|reference ranges?|factors|about |indications|disclaimer)/i;
 const TABLE_HEADER = /^(test name|test|investigation|observation|parameter)$/i;
 const RESULT_COLUMN = /^(result|results|value|observation)$/i;
@@ -74,6 +75,12 @@ function parseRowLine(cells: string[], line: Line, index: number, section: strin
     const m = first.match(DASH);
     if (m && plausibleLabel(m[1]!)) {
       return { ...base, label: clean(m[1]!), value: m[2]!, unit: m[3] ?? null, range: null, flag: null, shape: "dash" };
+    }
+    const inl = first.match(INLINE);
+    if (inl && inl[1]!.length <= 60) {
+      const unit = inl[3] && UNIT.test(inl[3]) ? inl[3] : null;
+      const range = inl[4]?.trim() || null;
+      return { ...base, label: clean(inl[1]!), value: inl[2]!, unit, range, flag: null, shape: unit && range ? "full" : unit ? "value_unit" : "value_only" };
     }
     return null;
   }

@@ -43,6 +43,11 @@ const AGE_KEYS = ["agegender", "agesex", "age"];
 const DOCTOR_KEYS = ["referredby", "referedby", "refby", "refdoctor", "referdoctor", "doctorname"];
 const LAB_PAIR_KEYS = ["testingdoneby", "testperformedat"];
 
+// A cell that starts a new `Label :` pair, so a blank `Address :` cell must not take it as its value.
+const LOOKS_LIKE_PAIR = /^[A-Za-z][A-Za-z .\/()_-]{1,35}\s*:/;
+const BARE_NAME = /^(mr|mrs|ms|miss|master|baby|dr|shri|smt)\.?\s+[A-Za-z]/i;
+const COMPANY = /([A-Z][A-Za-z0-9&.' -]{2,60}?\b(?:Pvt\.?\s*Ltd\.?|Private Limited|LLP|Limited))/;
+
 interface Pair {
   key: string;
   value: string;
@@ -60,7 +65,7 @@ function pairsOf(line: Line): Pair[] {
     const at = cell.indexOf(":");
     if (at <= 0 || at > 40) continue;
     let value = cell.slice(at + 1).trim();
-    if (!value && i + 1 < merged.length) value = merged[++i]!.replace(/^:\s*/, "").trim();
+    if (!value && i + 1 < merged.length && !LOOKS_LIKE_PAIR.test(merged[i + 1]!)) value = merged[++i]!.replace(/^:\s*/, "").trim();
     out.push({ key: squash(cell.slice(0, at)), value });
   }
   return out;
@@ -85,7 +90,21 @@ function findLabName(lines: Line[], pairs: Pair[]): string | null {
     }
   }
   const fromPair = pairs.find((p) => LAB_PAIR_KEYS.includes(p.key) && p.value);
-  return fromPair ? fromPair.value : null;
+  if (fromPair) return fromPair.value;
+  for (const line of lines) {
+    const text = line.cells.map((c) => c.text).join(" ");
+    const company = LAB_WORDS.test(text) ? text.match(COMPANY)?.[1] : undefined;
+    if (company) return company.trim();
+  }
+  return null;
+}
+
+function findBareName(lines: Line[]): string | null {
+  for (const line of lines.slice(0, 15)) {
+    const first = line.cells[0]?.text ?? "";
+    if (BARE_NAME.test(first) && !first.includes(":") && first.split(/\s+/).length <= 5) return first;
+  }
+  return null;
 }
 
 export function parseHeader(lines: Line[]): HeaderFields {
@@ -107,7 +126,7 @@ export function parseHeader(lines: Line[]): HeaderFields {
     collectedOn: dateOf(COLLECTED_KEYS) ?? dateOf(["date"]),
     receivedOn: dateOf(RECEIVED_KEYS),
     reportedOn: dateOf(REPORTED_KEYS),
-    patientName: first(NAME_KEYS),
+    patientName: first(NAME_KEYS) ?? findBareName(lines),
     labPatientRef: first(REF_KEYS),
     age,
     sex,

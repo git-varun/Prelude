@@ -63,7 +63,7 @@ export function buildSyntheticLab(style: 0 | 1 | 2, rowsPerPage: number): { ocr:
     }
     pages.push(lines.join("\n"));
   }
-  return { ocr: ocrFrom(pages), expected: { documentType: "blood", source: "synthetic", facts } };
+  return { ocr: ocrFrom(pages), expected: { documentType: "blood", source: "synthetic", keyOrigin: "hand", facts } };
 }
 
 export function buildSyntheticRadiology(): { ocr: OcrResult; expected: ExpectedDoc } {
@@ -72,7 +72,7 @@ export function buildSyntheticRadiology(): { ocr: OcrResult; expected: ExpectedD
   return {
     ocr,
     expected: {
-      documentType: "radiology", source: "synthetic",
+      documentType: "radiology", source: "synthetic", keyOrigin: "hand",
       facts: [{ fieldType: "radiology_impression", markerLabel: null, canonicalMarker: null, value: impression, unit: null, referenceRange: null, asOfDate: DATE, sourcePage: 1 }],
     },
   };
@@ -84,7 +84,7 @@ export function buildSyntheticPrescription(): { ocr: OcrResult; expected: Expect
   return {
     ocr,
     expected: {
-      documentType: "prescription", source: "synthetic",
+      documentType: "prescription", source: "synthetic", keyOrigin: "hand",
       facts: [{ fieldType: "treatment_regimen", markerLabel: null, canonicalMarker: null, value: regimen, unit: null, referenceRange: null, asOfDate: DATE, sourcePage: 1 }],
     },
   };

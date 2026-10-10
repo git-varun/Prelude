@@ -60,3 +60,23 @@ test("missing fields are null", () => {
     labPatientRef: null, age: null, sex: null, referringDoctor: null,
   });
 });
+
+test("a blank 'Address :' cell does not swallow the next pair", () => {
+  const h = header("Address :      Sample Date/Time : 20-07-2026 01:03:PM");
+  expect(h.collectedOn).toBe("2026-07-20");
+});
+
+test("a bare title+name line is used as the patient name when no keyed name exists", () => {
+  const h = header("NATIONALITY: Indian\nMr. TEST PERSON      R egistered O N:      12/D ec/2024 10:01PM");
+  expect(h.patientName).toBe("Mr. TEST PERSON");
+});
+
+test("a keyed patient name beats the bare-name fallback", () => {
+  const h = header("Mr. OTHER NAME\nPatient Name : Mr. TEST PERSON");
+  expect(h.patientName).toBe("Mr. TEST PERSON");
+});
+
+test("lab name falls back to a company name found anywhere in the document", () => {
+  const h = header("Hb      10.1      g/dL\nHouse Of Synthetic Diagnostics Healthcare Pvt Ltd. 14, 15 Some Road Delhi - 110092");
+  expect(h.labName).toContain("House Of Synthetic Diagnostics Healthcare Pvt Ltd");
+});

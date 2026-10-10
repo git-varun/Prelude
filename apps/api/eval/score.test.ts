@@ -187,3 +187,22 @@ test("summary splits by source and reports precision by field type", () => {
   expect(s.precisionByFieldType.marker_value).toMatchObject({ extracted: 1, matched: 1, precision: 1 });
   expect(s.precisionByFieldType.reference_range).toMatchObject({ extracted: 1, matched: 0, precision: 0 });
 });
+
+import { scoreHeader, evaluateGates } from "./score";
+
+test("scoreHeader compares dates exactly and names/labs loosely", () => {
+  const r = scoreHeader(
+    { labName: "Wellness Diagnostic", collectedOn: "2024-12-12", patientName: "Mr. VARUN", labPatientRef: "LDPL/1" },
+    { labName: "Wellness Diagnostic Pvt. Ltd", collectedOn: "2024-12-13", patientName: "MR. VARUN", labPatientRef: null },
+  );
+  expect(r.checked).toBe(4);
+  expect(r.correct).toBe(2);
+  expect(r.wrong).toEqual(["collectedOn", "labPatientRef"]);
+});
+
+test("evaluateGates passes only at 98% recall and 100% accuracy on real hand-keyed documents", () => {
+  const good = summarize([scoreDoc("d", [exp()], [cand()], [], "real")]);
+  expect(evaluateGates(good).every((g) => g.pass)).toBe(true);
+  const bad = summarize([scoreDoc("d", [exp(), exp({ markerLabel: "RBC" })], [cand()], [], "real")]);
+  expect(evaluateGates(bad).some((g) => !g.pass)).toBe(true);
+});
