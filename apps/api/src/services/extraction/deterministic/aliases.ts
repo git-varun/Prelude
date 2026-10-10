@@ -1,3 +1,5 @@
+import { MARKER_REGISTRY } from "@prelude/shared";
+
 // Groups of printed labels that name the same test across labs. Compared after
 // squashing (lowercase alphanumerics only). Free T3/T4 and total T3/T4 are
 // deliberately separate groups: they are different tests.
@@ -33,7 +35,7 @@ const GROUPS: string[][] = [
   ["CHOLESTEROL TOTAL", "Total Cholesterol", "Cholesterol, Total"],
   ["CHOLESTEROL - HDL (DIRECT)", "HDL Cholesterol", "HDL"],
   ["CHOLESTEROL-LDL (DIRECT)", "LDL Cholesterol", "LDL"],
-  ["TRIGLYCERIDES", "Triglyceride", "TG"],
+  ["TRIGLYCERIDES", "Triglyceride"],
   ["VITAMIN B12", "Vit B12", "Cyanocobalamin"],
   ["VITAMIN D(25 OH)", "Vitamin D", "25-OH Vitamin D", "Vitamin D 25-Hydroxy"],
   ["APTT", "aPTT", "Activated Partial Thromboplastin Time", "APTT Test"],
@@ -48,7 +50,7 @@ const GROUPS: string[][] = [
   ["TACROLIMUS", "Tacrolimus Level", "TACROLIMUS - DRUG", "FK506"],
 ];
 
-const SQUASHED = GROUPS.map((g) => new Set(g.map(squash)));
+const SQUASHED = [...GROUPS, ...MARKER_REGISTRY.map((m) => [m.canonical, ...m.aliases])].map((g) => new Set(g.map(squash)));
 
 // Every squashed label that names the same test as `label` (empty if unknown).
 export function aliasKeys(label: string | null | undefined, extra: readonly string[] = []): Set<string> {
