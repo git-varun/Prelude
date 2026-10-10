@@ -1,6 +1,7 @@
 import { matchMarker } from "@prelude/shared";
 import type { ExtractedFactCandidate, FieldType } from "@prelude/shared";
-import { aliasKeys, squash } from "./aliases";
+import { aliasKeys, squash } from "../src/services/extraction/deterministic/aliases";
+import { unitsEquivalent } from "../src/services/extraction/deterministic/units";
 import type { ExpectedFact } from "./types";
 
 const LABELLED: readonly FieldType[] = ["marker_value", "reference_range"];
@@ -13,16 +14,6 @@ function labelKey(fieldType: FieldType, label: string | null | undefined): strin
 const compact = (s: string) => s.toLowerCase().replace(/\s+/g, "");
 const collapse = (s: string) => s.trim().toLowerCase().replace(/\s+/g, " ");
 
-// Equivalent spellings of the same unit, after lowercasing, removing whitespace and mapping µ/μ -> u.
-const UNIT_EQUIV: Record<string, string> = {
-  "thou/ul": "10^3/ul", "k/ul": "10^3/ul", "x10^3/ul": "10^3/ul", "x10³/ul": "10^3/ul", "10³/ul": "10^3/ul", "10^9/l": "10^3/ul",
-  "millions/mm³": "10^6/ul", "millions/mm3": "10^6/ul", "mill/mm3": "10^6/ul", "m/ul": "10^6/ul", "x10^6/ul": "10^6/ul",
-};
-function normUnit(u: string): string {
-  const c = compact(u).replace(/[µμ]/g, "u");
-  return UNIT_EQUIV[c] ?? c;
-}
-
 export function valuesEqual(a: string | null, b: string | null): boolean {
   if (a === null || b === null) return a === b;
   if (a.trim() !== "" && b.trim() !== "") {
@@ -33,10 +24,7 @@ export function valuesEqual(a: string | null, b: string | null): boolean {
   return collapse(a) === collapse(b);
 }
 
-export function unitsEqual(a: string | null, b: string | null): boolean {
-  if (a === null || b === null) return a === b;
-  return normUnit(a) === normUnit(b);
-}
+export const unitsEqual = unitsEquivalent;
 
 export function rangesEqual(a: string | null, b: string | null): boolean {
   if (a === null || b === null) return a === b;
@@ -103,7 +91,7 @@ export interface FactResult {
 
 export interface DocScore {
   name: string;
-  source: "real" | "synthetic";
+  source: string;
   expected: ExpectedFact[];
   extracted: ExtractedFactCandidate[];
   failedFieldTypes: FieldType[];
@@ -117,7 +105,7 @@ export function scoreDoc(
   expected: ExpectedFact[],
   extracted: ExtractedFactCandidate[],
   failedFieldTypes: FieldType[],
-  source: "real" | "synthetic" = "real",
+  source: string = "real",
 ): DocScore {
   const { pairs, missed, spurious } = matchFacts(expected, extracted);
   const results = pairs.map(({ expected: e, extracted: c }): FactResult => {
@@ -247,4 +235,48 @@ export function formatSummary(s: Summary): string {
       ` | mean correct ${s.calibration.meanConfidenceCorrect?.toFixed(2) ?? "n/a"}, incorrect ${s.calibration.meanConfidenceIncorrect?.toFixed(2) ?? "n/a"}`,
   ];
   return lines.join("\n");
+}
+
+export interface HeaderExpect {
+  labName?: string | null;
+  collectedOn?: string | null;
+  patientName?: string | null;
+  labPatientRef?: string | null;
+}
+
+const stripTitle = (s: string) => s.replace(/^(mr|mrs|ms|miss|master|baby|dr|shri|smt)\.?\s+/i, "");
+
+const looseEqual = (a: string, b: string) => {
+  const x = squash(a);
+  const y = squash(b);
+  return x === y || (Math.min(x.length, y.length) >= 4 && (x.includes(y) || y.includes(x)));
+};
+
+export function scoreHeader(
+  expected: HeaderExpect,
+  actual: Partial<Record<keyof HeaderExpect, string | null>>,
+): { checked: number; correct: number; wrong: string[] } {
+  let checked = 0;
+  let correct = 0;
+  const wrong: string[] = [];
+  for (const key of ["labName", "collectedOn", "patientName", "labPatientRef"] as const) {
+    const want = expected[key];
+    if (want === undefined) continue;
+    checked++;
+    const got = actual[key] ?? null;
+    const ok = want === null ? got === null : got !== null && (key === "collectedOn" ? got === want : key === "labName" ? looseEqual(got, want) : squash(stripTitle(got)) === squash(stripTitle(want)));
+    if (ok) correct++;
+    else wrong.push(key);
+  }
+  return { checked, correct, wrong };
+}
+
+export function evaluateGates(s: Summary): { name: string; pass: boolean; detail: string }[] {
+  const real = s.bySource.real;
+  const pct = (n: number | null | undefined) => (n == null ? "n/a" : `${(n * 100).toFixed(1)}%`);
+  return [
+    { name: "real recall >= 98%", pass: (real?.recall ?? 0) >= 0.98, detail: pct(real?.recall) },
+    { name: "value accuracy 100% on matched", pass: s.valueAccuracy === 1, detail: pct(s.valueAccuracy) },
+    { name: "all-correct 100% on matched", pass: s.factAccuracy === 1, detail: pct(s.factAccuracy) },
+  ];
 }

@@ -33,6 +33,8 @@ export interface ExtractionResult {
   failedFieldTypes: FieldType[];
   // Error message per failed field type, for the document's extraction_error.
   failureMessages?: Partial<Record<FieldType, string>>;
+  // Optional diagnostics from rule-based parsers.
+  stats?: { rows: number; unplacedNumericLines: number; lines: number };
 }
 
 export interface ExtractionProvider {

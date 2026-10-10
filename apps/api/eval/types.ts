@@ -20,6 +20,17 @@ export const ExpectedFactSchema = z.object({
 export const ExpectedDocSchema = z.object({
   documentType: z.enum(["prescription", "blood", "radiology"]),
   source: z.enum(["real", "synthetic"]).default("real"),
+  // Optional header expectations (compared loosely for names, exactly for dates).
+  header: z
+    .object({
+      labName: z.string().nullable().optional(),
+      collectedOn: z.string().nullable().optional(),
+      patientName: z.string().nullable().optional(),
+      labPatientRef: z.string().nullable().optional(),
+    })
+    .optional(),
+  // "scripted" keys were generated from the document text by a script (not read by hand), so scoring a parser against them is circular.
+  keyOrigin: z.enum(["hand", "scripted"]).default("hand"),
   facts: z.array(ExpectedFactSchema),
 });
 

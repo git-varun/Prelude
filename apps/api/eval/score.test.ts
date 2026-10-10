@@ -133,7 +133,7 @@ test("calibration buckets count spurious facts as incorrect", () => {
 import { slugFor, toOcrResult } from "./buildFixtures";
 
 test("slugFor and toOcrResult", () => {
-  expect(slugFor("AJAY UPADHYAY .pdf")).toBe("ajay-upadhyay");
+  expect(slugFor("TEST PERSON .pdf")).toBe("test-person");
   const r = toOcrResult("page one\fpage two\f");
   expect(r.pages.map((p) => p.pageNumber)).toEqual([1, 2]);
   expect(r.pages[1]!.text).toBe("page two");
@@ -186,4 +186,29 @@ test("summary splits by source and reports precision by field type", () => {
   expect(s.bySource.synthetic).toMatchObject({ expected: 1, matched: 0, recall: 0 });
   expect(s.precisionByFieldType.marker_value).toMatchObject({ extracted: 1, matched: 1, precision: 1 });
   expect(s.precisionByFieldType.reference_range).toMatchObject({ extracted: 1, matched: 0, precision: 0 });
+});
+
+import { scoreHeader, evaluateGates } from "./score";
+
+test("scoreHeader compares dates exactly and names/labs loosely", () => {
+  const r = scoreHeader(
+    { labName: "Acme Diagnostic", collectedOn: "2024-12-12", patientName: "Mr. TESTER", labPatientRef: "LAB/1" },
+    { labName: "Acme Diagnostic Pvt. Ltd", collectedOn: "2024-12-13", patientName: "MR. TESTER", labPatientRef: null },
+  );
+  expect(r.checked).toBe(4);
+  expect(r.correct).toBe(2);
+  expect(r.wrong).toEqual(["collectedOn", "labPatientRef"]);
+});
+
+test("evaluateGates passes only at 98% recall and 100% accuracy on real hand-keyed documents", () => {
+  const good = summarize([scoreDoc("d", [exp()], [cand()], [], "real")]);
+  expect(evaluateGates(good).every((g) => g.pass)).toBe(true);
+  const bad = summarize([scoreDoc("d", [exp(), exp({ markerLabel: "RBC" })], [cand()], [], "real")]);
+  expect(evaluateGates(bad).some((g) => !g.pass)).toBe(true);
+});
+
+test("scoreHeader compares ids and patient names exactly (title-insensitive), not by substring", () => {
+  const r = scoreHeader({ patientName: "Mr. TESTER", labPatientRef: "LAB/1" }, { patientName: "Mr. TESTER KUMAR", labPatientRef: "LAB/12" });
+  expect(r.correct).toBe(0);
+  expect(scoreHeader({ patientName: "Mr. TESTER" }, { patientName: "TESTER" }).correct).toBe(1);
 });

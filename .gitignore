@@ -43,3 +43,4 @@ apps/api/.eval-samples
 docs/reports/
 apps/api/eval/fixtures/
 apps/api/eval/results/
+.worktrees/

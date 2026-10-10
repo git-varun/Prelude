@@ -2,7 +2,9 @@ import { readdir } from "node:fs/promises";
 import type { OcrResult } from "@prelude/shared";
 import { getExtractionProvider } from "../src/services/providerFactory";
 import { ExpectedDocSchema } from "./types";
-import { formatSummary, scoreDoc, summarize, type DocScore } from "./score";
+import { DeterministicExtractionProvider } from "../src/services/extraction/deterministic/provider";
+import { parseDocument } from "../src/services/extraction/deterministic/pipeline";
+import { evaluateGates, formatSummary, scoreDoc, scoreHeader, summarize, type DocScore } from "./score";
 
 const FIXTURES = new URL("./fixtures/", import.meta.url);
 const RESULTS = new URL("./results/", import.meta.url);
@@ -26,13 +28,20 @@ const retries = Number(process.env.EVAL_RETRIES ?? 2);
 const retryWaitMs = Number(process.env.EVAL_RETRY_WAIT_MS ?? 30_000);
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
-const provider = getExtractionProvider();
+const deterministic = process.env.EVAL_PROVIDER === "deterministic";
+const provider = deterministic ? new DeterministicExtractionProvider() : getExtractionProvider();
+let headerChecked = 0;
+let headerCorrect = 0;
 const docs: DocScore[] = [];
 
 for (let run = 1; run <= repeat; run++) {
   for (const name of names) {
     const ocr = (await Bun.file(new URL(`${name}.ocr.json`, FIXTURES)).json()) as OcrResult;
     const expected = ExpectedDocSchema.parse(await Bun.file(new URL(`${name}.expected.json`, FIXTURES)).json());
+    if (deterministic && expected.documentType !== "blood") {
+      console.log(`${name}: skipped (phase 1: blood only)`);
+      continue;
+    }
     let result = await provider.extractFacts(ocr, expected.documentType);
     for (let attempt = 1; attempt <= retries && result.failedFieldTypes.length > 0; attempt++) {
       console.warn(`${name}: ${result.failedFieldTypes.join(",")} failed; retry ${attempt}/${retries} in ${retryWaitMs / 1000}s`);
@@ -41,19 +50,33 @@ for (let run = 1; run <= repeat; run++) {
     }
     const { candidates, failedFieldTypes } = result;
     if (delayMs > 0) await sleep(delayMs);
-    const score = scoreDoc(repeat > 1 ? `${name}#${run}` : name, expected.facts, candidates, failedFieldTypes, expected.source);
+    const source = expected.keyOrigin === "scripted" ? "real_scripted" : expected.source;
+    const score = scoreDoc(repeat > 1 ? `${name}#${run}` : name, expected.facts, candidates, failedFieldTypes, source);
     docs.push(score);
+    let extra = "";
+    if (deterministic) {
+      extra = ` | unplaced ${result.stats?.unplacedNumericLines ?? 0}`;
+      if (expected.header) {
+        const h = scoreHeader(expected.header, parseDocument(ocr).header);
+        headerChecked += h.checked;
+        headerCorrect += h.correct;
+        extra += ` | header ${h.correct}/${h.checked}${h.wrong.length ? ` wrong: ${h.wrong.join(",")}` : ""}`;
+      }
+    }
     console.log(
       `${score.name}: expected ${score.expected.length}, extracted ${score.extracted.length}, ` +
         `matched ${score.results.length}, wrong ${score.results.filter((r) => !r.correct).length}, ` +
         `missed ${score.missed.length}, spurious ${score.spurious.length}` +
-        (failedFieldTypes.length ? ` | FAILED field types: ${failedFieldTypes.join(",")}` : ""),
+        (failedFieldTypes.length ? ` | FAILED field types: ${failedFieldTypes.join(",")}` : "") +
+        extra,
     );
   }
 }
 
 const summary = summarize(docs);
 console.log("\n" + formatSummary(summary));
+if (deterministic && headerChecked > 0) console.log(`header fields correct: ${headerCorrect}/${headerChecked}`);
+for (const g of evaluateGates(summary)) console.log(`${g.pass ? "PASS" : "FAIL"} ${g.name} (${g.detail})`);
 
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
 await Bun.write(
