@@ -93,3 +93,27 @@ test("header-like inline lines are not rows", () => {
   const r = parse("Phone : 8076964308\nCollected On : 14/03/2026\nPatient ID : 12345");
   expect(r.rows).toHaveLength(0);
 });
+
+test("reference-range prose lines are never parsed as results", () => {
+  const r = parse(
+    [
+      "Adults > 20 Yrs : 0.270 - 5.500",
+      "1-3 Days : 5.17 - 14.6",
+      "7 - 11Yrs : 0.66 - 4.14",
+      "Second trimester: 0.2-3.0",
+      "First trimester: less than 2.5 with a range of 0.1-2.5.",
+    ].join("\n"),
+  );
+  expect(r.rows).toEqual([]);
+});
+
+test("inline rows still work when the unit and range are valid", () => {
+  const r = parse("TSH : 2.10 mIU/L (Ref: 0.35 to 5.50)\nCreatinine : 0.92 mg/dL");
+  expect(r.rows.map((x) => [x.label, x.value, x.unit])).toEqual([["TSH", "2.10", "mIU/L"], ["Creatinine", "0.92", "mg/dL"]]);
+});
+
+test("letter-spaced header lines are neither rows nor unplaced numeric lines", () => {
+  const r = parse("Mr. TEST PERSON      R egistered O N:      12/D ec/2024 10:01PM\nB arcode N O:      4K741933      S ample C oll. D ate:      12/D ec/202410:01PM");
+  expect(r.rows).toEqual([]);
+  expect(r.unplacedNumeric).toEqual([]);
+});
