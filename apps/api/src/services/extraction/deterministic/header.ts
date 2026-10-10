@@ -15,23 +15,42 @@ export interface HeaderFields {
 
 const MON: Record<string, number> = { jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6, jul: 7, aug: 8, sep: 9, oct: 10, nov: 11, dec: 12 };
 
-function iso(y: string, m: number, d: number): string | null {
-  if (m < 1 || m > 12 || d < 1 || d > 31) return null;
+function validDate(y: string, m: number, d: number): string | null {
+  if (m < 1 || m > 12 || d < 1) return null;
+  const dt = new Date(Date.UTC(Number(y), m - 1, d));
+  if (dt.getUTCFullYear() !== Number(y) || dt.getUTCMonth() !== m - 1 || dt.getUTCDate() !== d) return null;
   return `${y}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
 }
 
-// Day-first (Indian labs). Spaces inside the value are removed first because some PDFs are letter-spaced ("12/D ec/2024").
-export function parseDate(input: string): string | null {
-  const c = input.replace(/\s+/g, "");
+// undefined = no date pattern matched; null = a pattern matched but the date is impossible.
+function parseStrict(s: string): string | null | undefined {
+  let m = s.match(/(\d{1,2})[\/\- ]([A-Za-z]{3})[A-Za-z]*[\/\- ]((?:19|20)\d{2})(?!\d)/);
+  if (m && MON[m[2]!.toLowerCase()]) return validDate(m[3]!, MON[m[2]!.toLowerCase()]!, Number(m[1]));
+  m = s.match(/(\d{1,2})[\/\- ]([A-Za-z]{3})[A-Za-z]*[\/\- ](\d{2})(?!\d)/);
+  if (m && MON[m[2]!.toLowerCase()]) return validDate(`20${m[3]}`, MON[m[2]!.toLowerCase()]!, Number(m[1]));
+  m = s.match(/((?:19|20)\d{2})-(\d{2})-(\d{2})(?!\d)/);
+  if (m) return validDate(m[1]!, Number(m[2]), Number(m[3]));
+  m = s.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.]((?:19|20)\d{2})(?!\d)/);
+  if (m) return validDate(m[3]!, Number(m[2]), Number(m[1]));
+  m = s.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2})(?!\d)/);
+  if (m) return validDate(`20${m[3]}`, Number(m[2]), Number(m[1]));
+  return undefined;
+}
+
+// Letter-spaced PDFs ("12/D ec/202410:01PM") only parse once spaces are removed, where a time can be glued to the year.
+function parseGlued(c: string): string | null {
   let m = c.match(/(\d{1,2})[\/\-]([A-Za-z]{3})[A-Za-z]*[\/\-]((?:19|20)\d{2})/);
-  if (m && MON[m[2]!.toLowerCase()]) return iso(m[3]!, MON[m[2]!.toLowerCase()]!, Number(m[1]));
-  m = c.match(/((?:19|20)\d{2})-(\d{2})-(\d{2})/);
-  if (m) return iso(m[1]!, Number(m[2]), Number(m[3]));
+  if (m && MON[m[2]!.toLowerCase()]) return validDate(m[3]!, MON[m[2]!.toLowerCase()]!, Number(m[1]));
   m = c.match(/(\d{1,2})[\/\-.](\d{1,2})[\/\-.]((?:19|20)\d{2})/);
-  if (m) return iso(m[3]!, Number(m[2]), Number(m[1]));
-  m = input.match(/(\d{1,2})[\/\- ]([A-Za-z]{3})[\/\- ](\d{2})(?!\d)/);
-  if (m && MON[m[2]!.toLowerCase()]) return iso(`20${m[3]}`, MON[m[2]!.toLowerCase()]!, Number(m[1]));
+  if (m) return validDate(m[3]!, Number(m[2]), Number(m[1]));
   return null;
+}
+
+// Day-first (Indian labs).
+export function parseDate(input: string): string | null {
+  const strict = parseStrict(input);
+  if (strict !== undefined) return strict;
+  return parseGlued(input.replace(/\s+/g, ""));
 }
 
 const COLLECTED_KEYS = ["collectedon", "collectiondate", "collectiondatetime", "samplecolldate", "samplecollecteddate", "sampledrawn", "sampledatetime", "sampledate", "collecteddate"];

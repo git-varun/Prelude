@@ -80,3 +80,17 @@ test("lab name falls back to a company name found anywhere in the document", () 
   const h = header("Hb      10.1      g/dL\nHouse Of Synthetic Diagnostics Healthcare Pvt Ltd. 14, 15 Some Road Delhi - 110092");
   expect(h.labName).toContain("House Of Synthetic Diagnostics Healthcare Pvt Ltd");
 });
+
+test("a two-digit year followed by a time is not read as a four-digit year", () => {
+  expect(parseDate("12-Dec-20 10:01")).toBe("2020-12-12");
+  expect(parseDate("05-Jan-19 20:30")).toBe("2019-01-05");
+  expect(parseDate("08-May-20 19:54")).toBe("2020-05-08");
+  expect(parseDate("05/06/20 14:30")).toBe("2020-06-05");
+  expect(parseDate("08/05/26")).toBe("2026-05-08");
+});
+
+test("calendar-impossible dates are rejected", () => {
+  expect(parseDate("31/02/2026")).toBeNull();
+  expect(parseDate("30/Feb/2026")).toBeNull();
+  expect(parseDate("29/02/2024")).toBe("2024-02-29");
+});

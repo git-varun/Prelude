@@ -74,7 +74,7 @@ test("a table header resets the notes state on the next page", () => {
 });
 
 test("a long address-like line ending in a number is not a dash row", () => {
-  const r = parse("House Of Diagnostics Healthcare Pvt Ltd. 14, 15 & 16 Hargovind Enclave Delhi - 110092");
+  const r = parse("House Of Synthetic Diagnostics Pvt Ltd. 14, 15 & 16 Example Road Delhi - 110000");
   expect(r.rows).toHaveLength(0);
 });
 
@@ -90,7 +90,7 @@ test("inline 'Label : value unit (Ref: range)' rows parse from a single cell", (
 });
 
 test("header-like inline lines are not rows", () => {
-  const r = parse("Phone : 8076964308\nCollected On : 14/03/2026\nPatient ID : 12345");
+  const r = parse("Phone : 9999900000\nCollected On : 14/03/2026\nPatient ID : 12345");
   expect(r.rows).toHaveLength(0);
 });
 
@@ -113,7 +113,63 @@ test("inline rows still work when the unit and range are valid", () => {
 });
 
 test("letter-spaced header lines are neither rows nor unplaced numeric lines", () => {
-  const r = parse("Mr. TEST PERSON      R egistered O N:      12/D ec/2024 10:01PM\nB arcode N O:      4K741933      S ample C oll. D ate:      12/D ec/202410:01PM");
+  const r = parse("Mr. TEST PERSON      R egistered O N:      12/D ec/2024 10:01PM\nB arcode N O:      ZZ000000      S ample C oll. D ate:      12/D ec/202410:01PM");
   expect(r.rows).toEqual([]);
   expect(r.unplacedNumeric).toEqual([]);
+});
+
+// ---- review fixes ----
+
+test("range prose such as 'Borderline 200 - 239' is not a dash row", () => {
+  expect(parse("Borderline 200 - 239\nMale 13 - 17\nGlucose Fasting 70 - 110").rows).toEqual([]);
+});
+
+test("a notes block is reset on a new page, and a result-shaped narrative line is counted not lost", () => {
+  const next = [...linesFromText("Factors affecting results\nNext page", 1), ...linesFromText("Hb      10.1      g/dL      13-17", 2)];
+  expect(parseRows(next).rows.map((x) => x.label)).toEqual(["Hb"]);
+  const inNotes = parse("Comment\nHb      10.1      g/dL      13-17");
+  expect(inNotes.rows).toEqual([]);
+  expect(inNotes.unplacedNumeric).toHaveLength(1);
+});
+
+test("header variants 'Test Description / Value(s)' and 'Observed Value' end the notes block", () => {
+  expect(parse("Notes\nCOMPLETE BLOOD COUNT\nTest Description   Value(s)   Unit\nHb      10.1      g/dL").rows.map((x) => x.label)).toEqual(["Hb"]);
+  expect(parse("Notes\nInvestigation   Observed Value   Unit\nHb      10.1      g/dL").rows.map((x) => x.label)).toEqual(["Hb"]);
+});
+
+test("single-cell lines with a number and unit are parsed or counted, never lost", () => {
+  for (const text of ["Hb : 10.1 g/dL H", "eGFR : 90 mL/min/1.73m2", "Hb 10.1 g/dL 13-17", "Total Leucocyte Count 5600 cells/cumm"]) {
+    const r = parse(text);
+    expect(r.rows.length + r.unplacedNumeric.length).toBe(1);
+  }
+});
+
+test("a label that already contains its number is not split into label + value", () => {
+  for (const text of ["CA 125      U/mL      0-35", "Vitamin B 12      pg/mL      200-900"]) {
+    const r = parse(text);
+    expect(r.rows).toEqual([]);
+    expect(r.unplacedNumeric).toHaveLength(1);
+  }
+});
+
+test("an unknown label+number merged cell is parsed with reduced confidence shape 'merged'", () => {
+  const r = parse("Interleukin 6      pg/mL      <7");
+  expect(r.rows[0]).toMatchObject({ label: "Interleukin", value: "6", shape: "merged" });
+});
+
+test("generic inline guide lines are not results, but inline rows need a unit or range", () => {
+  expect(parse("High: 240\nOptimal : 100\nDesirable : <200\nReport Status : 2").rows).toEqual([]);
+});
+
+test("a qualitative row does not take a numeric index as its range, and the index is counted", () => {
+  const r = parse("HbsAg      Reactive      1.20      S/CO");
+  expect(r.rows[0]).toMatchObject({ value: "Reactive", unit: "S/CO", range: null, shape: "qualitative" });
+  expect(r.unplacedNumeric).toHaveLength(1);
+});
+
+test("a wrapped label never swallows a section header or the next test name", () => {
+  const a = parse("PACKED CELL VOLUME (PCV) -   31.6   %\nDIFFERENTIAL LEUCOCYTE COUNT\nNeutrophils   68   %");
+  expect(a.rows.map((x) => [x.label, x.section])).toEqual([["PACKED CELL VOLUME (PCV) -", null], ["Neutrophils", "DIFFERENTIAL LEUCOCYTE COUNT"]]);
+  const b = parse("Neutrophils (Absolute -   4.2   10^3/uL\nLymphocytes");
+  expect(b.rows[0]!.label).toBe("Neutrophils (Absolute -");
 });

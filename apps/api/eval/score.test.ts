@@ -133,7 +133,7 @@ test("calibration buckets count spurious facts as incorrect", () => {
 import { slugFor, toOcrResult } from "./buildFixtures";
 
 test("slugFor and toOcrResult", () => {
-  expect(slugFor("AJAY UPADHYAY .pdf")).toBe("ajay-upadhyay");
+  expect(slugFor("TEST PERSON .pdf")).toBe("test-person");
   const r = toOcrResult("page one\fpage two\f");
   expect(r.pages.map((p) => p.pageNumber)).toEqual([1, 2]);
   expect(r.pages[1]!.text).toBe("page two");
@@ -192,8 +192,8 @@ import { scoreHeader, evaluateGates } from "./score";
 
 test("scoreHeader compares dates exactly and names/labs loosely", () => {
   const r = scoreHeader(
-    { labName: "Wellness Diagnostic", collectedOn: "2024-12-12", patientName: "Mr. VARUN", labPatientRef: "LDPL/1" },
-    { labName: "Wellness Diagnostic Pvt. Ltd", collectedOn: "2024-12-13", patientName: "MR. VARUN", labPatientRef: null },
+    { labName: "Acme Diagnostic", collectedOn: "2024-12-12", patientName: "Mr. TESTER", labPatientRef: "LAB/1" },
+    { labName: "Acme Diagnostic Pvt. Ltd", collectedOn: "2024-12-13", patientName: "MR. TESTER", labPatientRef: null },
   );
   expect(r.checked).toBe(4);
   expect(r.correct).toBe(2);
@@ -205,4 +205,10 @@ test("evaluateGates passes only at 98% recall and 100% accuracy on real hand-key
   expect(evaluateGates(good).every((g) => g.pass)).toBe(true);
   const bad = summarize([scoreDoc("d", [exp(), exp({ markerLabel: "RBC" })], [cand()], [], "real")]);
   expect(evaluateGates(bad).some((g) => !g.pass)).toBe(true);
+});
+
+test("scoreHeader compares ids and patient names exactly (title-insensitive), not by substring", () => {
+  const r = scoreHeader({ patientName: "Mr. TESTER", labPatientRef: "LAB/1" }, { patientName: "Mr. TESTER KUMAR", labPatientRef: "LAB/12" });
+  expect(r.correct).toBe(0);
+  expect(scoreHeader({ patientName: "Mr. TESTER" }, { patientName: "TESTER" }).correct).toBe(1);
 });

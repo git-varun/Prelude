@@ -244,6 +244,8 @@ export interface HeaderExpect {
   labPatientRef?: string | null;
 }
 
+const stripTitle = (s: string) => s.replace(/^(mr|mrs|ms|miss|master|baby|dr|shri|smt)\.?\s+/i, "");
+
 const looseEqual = (a: string, b: string) => {
   const x = squash(a);
   const y = squash(b);
@@ -262,7 +264,7 @@ export function scoreHeader(
     if (want === undefined) continue;
     checked++;
     const got = actual[key] ?? null;
-    const ok = want === null ? got === null : got !== null && (key === "collectedOn" ? got === want : looseEqual(got, want));
+    const ok = want === null ? got === null : got !== null && (key === "collectedOn" ? got === want : key === "labName" ? looseEqual(got, want) : squash(stripTitle(got)) === squash(stripTitle(want)));
     if (ok) correct++;
     else wrong.push(key);
   }

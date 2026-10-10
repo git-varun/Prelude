@@ -61,3 +61,9 @@ export function aliasKeys(label: string | null | undefined, extra: readonly stri
   for (const g of SQUASHED) if (g.has(key)) for (const k of g) keys.add(k);
   return keys;
 }
+
+// True when the label is a known member of any alias group (so "CA 125" is a label, not "CA" + 125).
+export function isKnownLabel(label: string): boolean {
+  const key = squash(label);
+  return SQUASHED.some((g) => g.has(key));
+}
