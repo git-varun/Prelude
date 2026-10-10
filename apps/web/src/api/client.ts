@@ -1,4 +1,8 @@
-import type { UserRole } from "@prelude/shared";
+import { IMAGING_MODALITY_OPTIONS } from "@prelude/shared";
+import type { ImagingModality, UserRole } from "@prelude/shared";
+
+export { IMAGING_MODALITY_OPTIONS };
+export type { ImagingModality };
 
 // Runtime config from server.ts (PUBLIC_API_URL). `process.env` doesn't exist in
 // the browser, so the client asks the server for its one public setting.
@@ -69,15 +73,9 @@ export interface SessionUser {
 export type Sex = "male" | "female" | "other" | "unknown";
 export type Stage = "0" | "I" | "II" | "III" | "IV";
 export type PatientOrigin = "own_hospital" | "referral";
-export type ImagingModality =
-  | "ct" | "ct_contrast" | "mri" | "mri_contrast" | "pet_ct" | "ultrasound" | "xray" | "mammography" | "other";
-
 export const SEX_OPTIONS: readonly Sex[] = ["male", "female", "other", "unknown"];
 export const STAGE_OPTIONS: readonly Stage[] = ["0", "I", "II", "III", "IV"];
 export const PATIENT_ORIGIN_OPTIONS: readonly PatientOrigin[] = ["own_hospital", "referral"];
-export const IMAGING_MODALITY_OPTIONS: readonly ImagingModality[] = [
-  "ct", "ct_contrast", "mri", "mri_contrast", "pet_ct", "ultrasound", "xray", "mammography", "other",
-];
 
 export interface PatientSummary {
   id: string;

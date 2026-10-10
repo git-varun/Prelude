@@ -4,6 +4,7 @@ import type { AuthedUser } from "../middleware/auth";
 import { deleteDocumentFile, documentFile, readOcrResult, saveDocumentFile, saveOcrResult } from "../services/storage";
 import { getExtractionProvider, getOcrProvider } from "../services/providerFactory";
 import { persistExtractedFacts } from "../services/facts";
+import { IMAGING_MODALITY_OPTIONS } from "@prelude/shared";
 import type { ExtractionProvider, OcrResult } from "@prelude/shared";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -11,9 +12,6 @@ const isUuid = (s: unknown): s is string => typeof s === "string" && UUID.test(s
 
 const DOCUMENT_TYPES = ["prescription", "blood", "radiology"] as const;
 const SOURCE_ORIGINS = ["own_hospital", "outside_paper", "outside_cd", "whatsapp_pdf"] as const;
-const IMAGING_MODALITIES = [
-  "ct", "ct_contrast", "mri", "mri_contrast", "pet_ct", "ultrasound", "xray", "mammography", "other",
-] as const;
 
 // file_ref's suffix preserves the original upload's extension (saveDocumentFile), so the
 // content type for serving it back is inferred from that rather than a stored mime column.
@@ -80,9 +78,9 @@ export async function uploadDocument(req: Request & { params: { id: string } }, 
   // the other document types have no scan modality to record.
   if (
     documentType === "radiology" &&
-    (typeof imagingModality !== "string" || !(IMAGING_MODALITIES as readonly string[]).includes(imagingModality))
+    (typeof imagingModality !== "string" || !(IMAGING_MODALITY_OPTIONS as readonly string[]).includes(imagingModality))
   ) {
-    return jsonError(400, "bad_request", `imaging_modality must be one of: ${IMAGING_MODALITIES.join(", ")}.`);
+    return jsonError(400, "bad_request", `imaging_modality must be one of: ${IMAGING_MODALITY_OPTIONS.join(", ")}.`);
   }
   if (!(file instanceof File)) {
     return jsonError(400, "bad_request", "file is required.");
