@@ -1,0 +1,97 @@
+const TITLES = new Set(["mr", "mrs", "ms", "dr", "shri", "smt", "master", "baby"]);
+
+// s/o, w/o, d/o introduce the father's/husband's name (common on Indian lab
+// reports), never the patient's own — everything from that marker onward is dropped.
+export function normalizeName(name: string): string[] {
+  const stripped = name
+    .toLowerCase()
+    .replace(/\b(s\/o|w\/o|d\/o)\b.*$/i, "")
+    .replace(/[^a-z\s]/g, " ");
+  const tokens = stripped.split(/\s+/).filter(Boolean);
+  const withoutTitles = tokens.filter((t) => !TITLES.has(t));
+  return withoutTitles.length > 0 ? withoutTitles : tokens;
+}
+
+function jaro(s1: string, s2: string): number {
+  if (s1 === s2) return 1;
+  const len1 = s1.length;
+  const len2 = s2.length;
+  if (len1 === 0 || len2 === 0) return 0;
+  const matchDistance = Math.floor(Math.max(len1, len2) / 2) - 1;
+  const s1Matches = new Array(len1).fill(false);
+  const s2Matches = new Array(len2).fill(false);
+  let matches = 0;
+  for (let i = 0; i < len1; i++) {
+    const start = Math.max(0, i - matchDistance);
+    const end = Math.min(i + matchDistance + 1, len2);
+    for (let j = start; j < end; j++) {
+      if (s2Matches[j] || s1[i] !== s2[j]) continue;
+      s1Matches[i] = true;
+      s2Matches[j] = true;
+      matches++;
+      break;
+    }
+  }
+  if (matches === 0) return 0;
+  let transpositions = 0;
+  let k = 0;
+  for (let i = 0; i < len1; i++) {
+    if (!s1Matches[i]) continue;
+    while (!s2Matches[k]) k++;
+    if (s1[i] !== s2[k]) transpositions++;
+    k++;
+  }
+  return (matches / len1 + matches / len2 + (matches - transpositions / 2) / matches) / 3;
+}
+
+export function jaroWinkler(s1: string, s2: string): number {
+  const jaroScore = jaro(s1, s2);
+  let prefix = 0;
+  for (let i = 0; i < Math.min(4, s1.length, s2.length); i++) {
+    if (s1[i] === s2[i]) prefix++;
+    else break;
+  }
+  return jaroScore + prefix * 0.1 * (1 - jaroScore);
+}
+
+function initialsMatch(a: string[], b: string[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((t, i) => t === b[i] || t[0] === b[i]![0]);
+}
+
+export type IdentityMatchStatus = "matched" | "partial" | "mismatch" | "unknown";
+
+export interface IdentityMatch {
+  status: IdentityMatchStatus;
+  reason: string;
+}
+
+// Rules, in priority order, from docs/superpowers/specs/2026-10-10-deterministic-extraction-design.md "Identity match".
+export function matchIdentity(patientName: string | null, reportName: string | null): IdentityMatch {
+  if (!patientName?.trim() || !reportName?.trim()) {
+    return { status: "unknown", reason: "no name on the report or no patient name on file" };
+  }
+  const a = normalizeName(patientName);
+  const b = normalizeName(reportName);
+  const setA = new Set(a);
+  const setB = new Set(b);
+  if (setA.size === setB.size && [...setA].every((t) => setB.has(t))) {
+    return { status: "matched", reason: "all name tokens match" };
+  }
+
+  const [shorter, longer] = a.length <= b.length ? [a, b] : [b, a];
+  if (shorter.length >= 2 && shorter.every((t) => longer.includes(t))) {
+    return { status: "matched", reason: "all tokens of the shorter name appear in the longer name" };
+  }
+
+  if (a[0] === b[0]) return { status: "partial", reason: "shares the first name token" };
+  if (shorter.length === 1 && longer.includes(shorter[0]!)) {
+    return { status: "partial", reason: "a single name token is present in the other name" };
+  }
+  if (initialsMatch(a, b)) return { status: "partial", reason: "matches by initials" };
+
+  const whole = jaroWinkler(a.join(" "), b.join(" "));
+  if (whole >= 0.9) return { status: "partial", reason: `fuzzy name match (${whole.toFixed(2)})` };
+
+  return { status: "mismatch", reason: "no shared name tokens or fuzzy similarity" };
+}
