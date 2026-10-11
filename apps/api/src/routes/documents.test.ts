@@ -570,6 +570,10 @@ test("extractWithFallback: an LLM that finds nothing does not discard what the d
   const llm: ExtractionProvider = { name: "llm", extractFacts: async () => ({ candidates: [], failedFieldTypes: [] }) };
   const out = await extractWithFallback(ocrResult, "blood", detProvider([datedCandidate()], stats(1, 4)), () => llm);
   expect(out.candidates).toHaveLength(1);
+  // The gap that triggered the fallback is still unresolved -- this must never compute to a
+  // silent 'done'. failedFieldTypes must be non-empty so runExtraction marks the document 'partial'.
+  expect(out.failedFieldTypes.length).toBeGreaterThan(0);
+  expect(out.header?.patientName).toBe("Test Patient");
 });
 
 test("OCR reuse is off in the default (llm) mode: the same bytes re-uploaded run OCR again", async () => {
