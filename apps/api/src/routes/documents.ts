@@ -242,8 +242,20 @@ export async function extractWithFallback(
   if (primary.name !== "deterministic" || !needsFallback(first)) return first;
   try {
     const second = await llm().extractFacts(ocr, documentType);
-    // An LLM that finds nothing must not discard what the deterministic pass did find.
-    return { ...second, candidates: second.candidates.length > 0 ? second.candidates : first.candidates, header: second.header ?? first.header };
+    if (second.candidates.length === 0) {
+      // The LLM fallback also found nothing: the gap that triggered it (the deterministic
+      // pass's unplaced lines) is still unresolved. Never report this as a clean "done" --
+      // keep the deterministic rows/header, but record it as a failure so the document
+      // comes out 'partial', the same as if the LLM call had thrown.
+      const failed = second.failedFieldTypes.length > 0 ? second.failedFieldTypes : (["marker_value"] as ExtractionResult["failedFieldTypes"]);
+      return {
+        ...first,
+        failedFieldTypes: failed,
+        failureMessages: { ...(second.failureMessages ?? {}), [failed[0]!]: "LLM fallback found nothing for the lines the deterministic pass could not place." },
+      };
+    }
+    // The LLM found something: trust its candidates, but keep the deterministic header if the LLM didn't return one.
+    return { ...second, header: second.header ?? first.header };
   } catch (err) {
     // The fallback failing must not lose the deterministic rows or header: record the gap as a failed field type so the
     // document is 'partial' (or 'failed' when nothing was found) instead of an exception that drops the identity check.
