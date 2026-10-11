@@ -22,6 +22,10 @@ export interface ExtractedFactCandidate {
   sourceLocation: string | null;
   sourceSnippet: string | null;
   confidence: number;
+  // Printed H/L/HH/LL flag as it appears on the report, independent of parseChecks.printedFlagAgrees. Null when the parser is an LLM or no flag was printed.
+  printedFlag?: string | null;
+  // Free-check results from validate.ts, keyed by check name; null/undefined for an LLM pass.
+  parseChecks?: Record<string, boolean | null> | null;
 }
 
 export interface ExtractionResult {
@@ -35,6 +39,8 @@ export interface ExtractionResult {
   failureMessages?: Partial<Record<FieldType, string>>;
   // Optional diagnostics from rule-based parsers.
   stats?: { rows: number; unplacedNumericLines: number; lines: number };
+  // Structured header fields from a rule-based parser (lab, dates, patient as printed). Undefined for an LLM pass or a document type it doesn't handle.
+  header?: { labName: string | null; collectedOn: string | null; receivedOn: string | null; reportedOn: string | null; patientName: string | null; labPatientRef: string | null };
 }
 
 export interface ExtractionProvider {
