@@ -20,6 +20,18 @@
 - Migrations are plain numbered `.sql` files applied with `psql $DATABASE_URL -f <file>` (no migration runner exists); `infra/docker-compose.yml` mounts each one explicitly as a Postgres init script, so a fresh container picks it up and an already-initialized local DB needs the direct `psql` apply too.
 - DB-backed tests need Postgres running: `docker compose -f infra/docker-compose.yml up -d` (healthcheck gates readiness), `DATABASE_URL` from `.env`.
 
+## Review corrections (applied after a review against the merged phase 1 code)
+
+- **Identity (Task 1):** a name with a *different surname* is evidence of a different person and is `mismatch`, not `partial`; initials only match when one side really is a single-letter initial; fuzzy matching is per token (a shared surname must not carry the score). The design spec's Identity match section was updated to match.
+- **Order of writes (Task 6) and confirm (Task 9):** identity status is written *before* conflict detection and a held document opens no conflicts; confirming runs conflict detection for its now-live facts. Without this a wrong-patient document's facts opened conflicts against the real patient's facts.
+- **`merged` row shape (Task 2):** phase 1 added a `merged` shape; the confidence map must include it or confidence becomes NaN.
+- **Silent empty (Task 8):** in `EXTRACTION_MODE=deterministic`, zero candidates falls back to the LLM provider (and Task 7 exposes `getLlmExtractionProvider`).
+
+## Open items needing a decision (not changed here)
+
+- **Marker collision before production use:** `MARKER_REGISTRY` holds `Tg` (thyroglobulin) and `matchMarker` is case-insensitive, so a lipid row `TG 150 mg/dL` would canonicalise to Thyroglobulin once candidates are matched in `persistExtractedFacts`. The list comes from the partner oncologist (Decisions Log), so changing the alias needs clinical input. Until decided, keep `EXTRACTION_MODE=llm` in production.
+- **Sign-off of a held document's facts:** reads exclude held facts, but a clinician can still sign off a held document's fact from the review screen. Decide whether sign-off should be blocked while `identity_status = 'mismatch'`.
+
 ## Review Focus
 
 - A document whose report has no printed patient name at all, or whose patient record has no name, must be `unknown`, never `mismatch` — a missing name is not evidence of a wrong patient. (Task 1)
@@ -61,14 +73,18 @@ test("identical and superset names are matched", () => {
   expect(matchIdentity("Varun Upadhyay", "Mr. Varun Kumar Upadhyay").status).toBe("matched");
 });
 
-test("a single shared token, a first-name-only report, or initials are partial, not matched or mismatch", () => {
+test("a first-name-only report, or an initial for the first name, is partial (not enough evidence either way)", () => {
   expect(matchIdentity("Varun Upadhyay", "Mr. VARUN").status).toBe("partial");
   expect(matchIdentity("Varun Upadhyay", "V. Upadhyay").status).toBe("partial");
-  expect(matchIdentity("Priya Sharma", "Priya Patel").status).toBe("partial");
 });
 
-test("a fuzzy transliteration variant is partial via Jaro-Winkler", () => {
-  expect(matchIdentity("Shreya Gupta", "Shreyaa Gupta").status).toBe("partial");
+test("same first name but a different surname is two different people: mismatch, never accepted", () => {
+  expect(matchIdentity("Priya Sharma", "Priya Patel").status).toBe("mismatch");
+  expect(matchIdentity("Priya Sharma", "Priya Verma").status).toBe("mismatch");
+});
+
+test("same surname but a different first name is not a match, and a shared first letter alone is not 'initials'", () => {
+  expect(matchIdentity("Sanjay Gupta", "Suresh Gupta").status).toBe("mismatch");
 });
 
 test("two unrelated names are mismatch", () => {
@@ -82,10 +98,9 @@ test("a missing report name or missing patient name is unknown, never mismatch",
   expect(matchIdentity("Varun Upadhyay", "   ").status).toBe("unknown");
 });
 
-test("two different common-first-name people are not matched by first name alone", () => {
-  const r = matchIdentity("Priya Sharma", "Priya Verma");
-  expect(r.status).not.toBe("matched");
-  expect(r.status).toBe("partial");
+test("a transliteration variant of every token is partial, per-token (a shared surname must not carry the score)", () => {
+  expect(matchIdentity("Shreya Gupta", "Shreyaa Gupta").status).toBe("partial");
+  expect(matchIdentity("Sanjay Gupta", "Suresh Gupta").status).toBe("mismatch");
 });
 ```
 
@@ -153,10 +168,17 @@ export function jaroWinkler(s1: string, s2: string): number {
   return jaroScore + prefix * 0.1 * (1 - jaroScore);
 }
 
+function isInitialOf(initial: string, full: string): boolean {
+  return initial.length === 1 && full.length > 1 && full[0] === initial;
+}
+
+// Equal-length names where every token is equal or one side is just the initial of the other ("V." / "Varun").
 function initialsMatch(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false;
-  return a.every((t, i) => t === b[i] || t[0] === b[i]![0]);
+  return a.every((t, i) => t === b[i] || isInitialOf(t, b[i]!) || isInitialOf(b[i]!, t));
 }
+
+const tokenSimilar = (x: string, y: string) => x === y || jaroWinkler(x, y) >= 0.9;
 
 export type IdentityMatchStatus = "matched" | "partial" | "mismatch" | "unknown";
 
@@ -166,12 +188,15 @@ export interface IdentityMatch {
 }
 
 // Rules, in priority order, from docs/superpowers/specs/2026-10-10-deterministic-extraction-design.md "Identity match".
+// Safety: a conflicting name (different surname) is evidence of a DIFFERENT person and is held; only the
+// absence of evidence (no name, or a first-name-only report) is "unknown"/"partial".
 export function matchIdentity(patientName: string | null, reportName: string | null): IdentityMatch {
   if (!patientName?.trim() || !reportName?.trim()) {
     return { status: "unknown", reason: "no name on the report or no patient name on file" };
   }
   const a = normalizeName(patientName);
   const b = normalizeName(reportName);
+  if (a.length === 0 || b.length === 0) return { status: "unknown", reason: "no usable name tokens" };
   const setA = new Set(a);
   const setB = new Set(b);
   if (setA.size === setB.size && [...setA].every((t) => setB.has(t))) {
@@ -183,16 +208,23 @@ export function matchIdentity(patientName: string | null, reportName: string | n
     return { status: "matched", reason: "all tokens of the shorter name appear in the longer name" };
   }
 
-  if (a[0] === b[0]) return { status: "partial", reason: "shares the first name token" };
-  if (shorter.length === 1 && longer.includes(shorter[0]!)) {
+  // Both names carry a surname and the surnames differ: a different person, even with the same first name.
+  if (a.length >= 2 && b.length >= 2) {
+    const lastA = a[a.length - 1]!;
+    const lastB = b[b.length - 1]!;
+    if (!tokenSimilar(lastA, lastB) && !isInitialOf(lastA, lastB) && !isInitialOf(lastB, lastA)) {
+      return { status: "mismatch", reason: "surnames differ" };
+    }
+  }
+
+  if (initialsMatch(a, b)) return { status: "partial", reason: "matches by initials" };
+  if (shorter.length === 1 && longer.some((t) => tokenSimilar(shorter[0]!, t))) {
     return { status: "partial", reason: "a single name token is present in the other name" };
   }
-  if (initialsMatch(a, b)) return { status: "partial", reason: "matches by initials" };
-
-  const whole = jaroWinkler(a.join(" "), b.join(" "));
-  if (whole >= 0.9) return { status: "partial", reason: `fuzzy name match (${whole.toFixed(2)})` };
-
-  return { status: "mismatch", reason: "no shared name tokens or fuzzy similarity" };
+  if (shorter.length >= 2 && shorter.every((t) => longer.some((u) => tokenSimilar(t, u)))) {
+    return { status: "partial", reason: "every name token has a close match (transliteration)" };
+  }
+  return { status: "mismatch", reason: "no shared name tokens or similarity" };
 }
 ```
 
@@ -510,7 +542,7 @@ export function validateDocument(rows: ParsedRow[]): NamedCheck[] {
 
 // Confidence comes from how completely the row parsed (structure), never from a model.
 export function rowConfidence(shape: RowShape): number {
-  return { full: 0.95, value_unit: 0.85, dash: 0.85, qualitative: 0.8, value_only: 0.7 }[shape];
+  return { full: 0.95, value_unit: 0.85, dash: 0.85, qualitative: 0.8, value_only: 0.7, merged: 0.65 }[shape];
 }
 
 export interface ValidatedRow {
@@ -593,6 +625,17 @@ test("DeterministicExtractionProvider reports parsed header fields on the result
 test("non-blood documents carry no header", async () => {
   const r = await new DeterministicExtractionProvider().extractFacts(ocr("IMPRESSION: normal"), "radiology");
   expect(r.header).toBeUndefined();
+});
+```
+
+Also add (phase 1 gained a `merged` row shape in its review fixes, for a label+number merged cell like `Interleukin 6`; without a confidence entry the map returns `undefined` and `Math.max(0, NaN)` yields NaN):
+
+```ts
+test("every row shape has a finite confidence, including 'merged'", () => {
+  for (const shape of ["full", "value_unit", "value_only", "dash", "qualitative", "merged"] as const) {
+    expect(Number.isFinite(rowConfidence(shape))).toBe(true);
+  }
+  expect(rowConfidence("merged")).toBeLessThan(rowConfidence("value_unit"));
 });
 ```
 
@@ -960,6 +1003,48 @@ export async function persistExtractedFacts(
   // ... unchanged down to the facts INSERT ...
 ```
 
+**Order matters (safety).** Write the identity metadata at the *start* of the transaction, and do not run conflict detection for a held document. As first planned, the status was written last, so each fact's `detectConflicts` ran while the document still looked "not held": a wrong-patient document's facts would open conflicts against the real patient's live facts (visible in the conflicts UI, resolvable by staff). Immediately inside `return sql.begin(async (tx) => {`, before the tracked-marker lookup, add:
+
+```ts
+    if (documentMetadata) {
+      await tx`
+        UPDATE documents SET lab_name = ${documentMetadata.header.labName}, collected_on = ${documentMetadata.header.collectedOn},
+          received_on = ${documentMetadata.header.receivedOn}, reported_on = ${documentMetadata.header.reportedOn},
+          patient_name_on_report = ${documentMetadata.header.patientName}, lab_patient_ref = ${documentMetadata.header.labPatientRef},
+          identity_status = ${documentMetadata.identityStatus}::identity_status
+        WHERE id = ${document.id}`;
+    }
+```
+
+and replace the existing `await detectConflicts(tx, fact);` in the loop with:
+
+```ts
+      // A document held for an identity mismatch must not open conflicts against the patient's real facts;
+      // setDocumentIdentityStatus runs detection when staff confirm it (Task 9).
+      if (documentMetadata?.identityStatus !== "mismatch") await detectConflicts(tx, fact);
+```
+
+(The `metadataSetClause` in the final status UPDATE and in the zero-candidates UPDATE can stay; re-writing the same values is harmless.) Add this test to `facts.test.ts` (uses the file's existing `newDocument()` helper; the `CEA` tracked marker is seeded by the file's first test):
+
+```ts
+test("a mismatch-held document's facts are persisted but never open a conflict", async () => {
+  const doc = await newDocument();
+  const header: HeaderMetadata = { labName: null, collectedOn: null, receivedOn: null, reportedOn: null, patientName: "Someone Else", labPatientRef: null };
+  const result = await persistExtractedFacts(
+    doc,
+    [candidate({ asOfDate: "2026-05-01", value: "4.2" }), candidate({ asOfDate: "2026-05-01", value: "9.0" })],
+    staff.id,
+    { status: "done", error: null },
+    { header, identityStatus: "mismatch" },
+  );
+  expect(result.createdFactIds).toHaveLength(2);
+  const conflicts = await sql`SELECT id FROM conflicts WHERE fact_id_a IN ${sql(result.createdFactIds)} OR fact_id_b IN ${sql(result.createdFactIds)}`;
+  expect(conflicts).toHaveLength(0);
+  const facts = await sql`SELECT coverage_status FROM facts WHERE id IN ${sql(result.createdFactIds)}`;
+  expect(facts.every((f: any) => f.coverage_status !== "conflicting_sources")).toBe(true);
+});
+```
+
 In the per-candidate `INSERT INTO facts` (inside the `for` loop), add the two columns:
 
 ```ts
@@ -1053,6 +1138,14 @@ In `providerFactory.ts`, add the import and a second cache slot, and change `get
 import { DeterministicExtractionProvider } from "./extraction/deterministic/provider";
 
 let cachedDeterministicProvider: ExtractionProvider | undefined;
+
+// The configured LLM provider regardless of EXTRACTION_MODE; the deterministic path falls back to it (Task 8).
+export function getLlmExtractionProvider(): ExtractionProvider {
+  if (!cachedExtractionProvider) {
+    cachedExtractionProvider = buildExtractionProvider();
+  }
+  return cachedExtractionProvider;
+}
 
 export function getExtractionProvider(): ExtractionProvider {
   if (process.env.EXTRACTION_MODE === "deterministic") {
@@ -1327,6 +1420,17 @@ async function newDocumentRow(
 
 Every existing no-argument call site (`await newDocumentRow();`) is unaffected — the new parameter is optional and defaults to today's values.
 
+Also add `getLlmExtractionProvider` to the existing `providerFactory` import in `documents.ts`, and this test (it injects nothing, so it exercises the real fallback branch; stub the two providers via `mock.module` as the file's other provider tests do):
+
+```ts
+test("EXTRACTION_MODE=deterministic: a rule-based pass with zero candidates falls back to the LLM provider instead of recording 'done, nothing found'", async () => {
+  // deterministic provider returns { candidates: [], failedFieldTypes: [], stats: { rows: 0, unplacedNumericLines: 0, lines: 5 } };
+  // the LLM stub returns one candidate. Expect the LLM stub to be called once and one fact persisted.
+});
+```
+
+(Write the body against the file's existing provider-stub pattern; the assertion is: LLM stub called exactly once, `facts` count for the document is 1, `extraction_status` is `done`. With `EXTRACTION_MODE` unset the LLM provider is the only one called and behaviour is unchanged.)
+
 - [ ] **Step 2: Run to verify failure**
 
 Run: `bun test apps/api/src/routes/documents.test.ts`
@@ -1439,10 +1543,15 @@ export async function runExtraction(
   provider?: ExtractionProvider,
 ): Promise<void> {
   try {
-    const { candidates, failedFieldTypes, failureMessages, header } = await (provider ?? getExtractionProvider()).extractFacts(
-      ocr,
-      documentType,
-    );
+    let extraction = await (provider ?? getExtractionProvider()).extractFacts(ocr, documentType);
+    // Safety: the rule-based parser needs column structure, and plain OCR text (every upload is OCR'd today) often has
+    // none. A deterministic pass that found nothing (or a document type it does not handle) must never be recorded as
+    // "done, nothing extractable" -- the silent empty result this design forbids. It falls back to the LLM provider
+    // (tier T4 of the spec). Skipped when a provider is injected (tests) and when EXTRACTION_MODE is not deterministic.
+    if (!provider && process.env.EXTRACTION_MODE === "deterministic" && extraction.candidates.length === 0) {
+      extraction = await getLlmExtractionProvider().extractFacts(ocr, documentType);
+    }
+    const { candidates, failedFieldTypes, failureMessages, header } = extraction;
     const status =
       failedFieldTypes.length === 0 ? "done" : candidates.length > 0 ? "partial" : "failed";
     const error =
@@ -1496,6 +1605,7 @@ git commit -m "extraction: file_sha256 + OCR reuse on upload; wire header/identi
 - Modify: `apps/api/src/routes/documents.test.ts`
 
 **Interfaces:**
+- Consumes: `detectConflicts` from `apps/api/src/services/rules.ts` (add `import { detectConflicts } from "../services/rules";` to `routes/documents.ts`).
 - Produces: `setDocumentIdentityStatus(req, user)` — `POST /documents/:id/identity` with body `{ action: "confirm" | "reject" }`; transitions `identity_status` from `mismatch` to `confirmed`/`rejected`; writes an `audit_log` row (`action`: `confirm_identity`/`reject_identity`, `entity_type`: `document`).
 
 - [ ] **Step 1: Write the failing tests**
@@ -1549,6 +1659,30 @@ test("reject moves a held document to 'rejected'", async () => {
 
 Add `setDocumentIdentityStatus` to this file's `import { uploadDocument, runExtraction, runOcrForTest } from "./documents";` line.
 
+Add this test (conflict detection on confirm); it builds the document and two disagreeing facts with raw SQL so it does not depend on other helpers:
+
+```ts
+test("confirming a held document detects conflicts for its now-live facts; the held persist created none", async () => {
+  const doc = await newDocumentRow({ identity_status: "mismatch" });
+  const [d] = await sql`SELECT patient_id, visit_id FROM documents WHERE id = ${doc.id}`;
+  const [marker] = await sql`INSERT INTO tracked_markers (patient_id, marker_name, is_custom, added_by) VALUES (${d.patient_id}, 'CEA', false, ${staff.id}) RETURNING id`;
+  const [liveDoc] = await sql`INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, ocr_status) VALUES (${d.patient_id}, ${d.visit_id}, 'local://t/live.pdf', 'blood', 'own_hospital', ${staff.id}, 'done') RETURNING id`;
+  const ins = (documentId: string, value: string) => sql`
+    INSERT INTO facts (patient_id, visit_id, document_id, tracked_marker_id, field_type, value, unit, as_of_date, coverage_status, verification_state)
+    VALUES (${d.patient_id}, ${d.visit_id}, ${documentId}, ${marker.id}, 'marker_value', ${value}, 'ng/mL', '2026-05-01', 'value_found', 'unverified') RETURNING id`;
+  const [live] = await ins(liveDoc.id, "4.2");
+  const [held] = await ins(doc.id, "9.0");
+  const before = await sql`SELECT id FROM conflicts WHERE fact_id_a IN (${live.id}, ${held.id}) OR fact_id_b IN (${live.id}, ${held.id})`;
+  expect(before).toHaveLength(0);
+
+  const req = new Request(`http://localhost/documents/${doc.id}/identity`, { method: "POST", body: JSON.stringify({ action: "confirm" }) }) as Request & { params: { id: string } };
+  req.params = { id: doc.id };
+  expect((await setDocumentIdentityStatus(req, asAuthedUser(staff))).status).toBe(200);
+  const after = await sql`SELECT id FROM conflicts WHERE fact_id_a IN (${live.id}, ${held.id}) OR fact_id_b IN (${live.id}, ${held.id})`;
+  expect(after.length).toBeGreaterThan(0);
+});
+```
+
 - [ ] **Step 2: Run to verify failure**
 
 Run: `bun test apps/api/src/routes/documents.test.ts`
@@ -1593,6 +1727,12 @@ export async function setDocumentIdentityStatus(req: Request & { params: { id: s
       INSERT INTO audit_log (actor_id, action, entity_type, entity_id, before_value, after_value)
       VALUES (${user.id}, ${action === "confirm" ? "confirm_identity" : "reject_identity"}, 'document', ${documentId}, ${JSON.stringify(before)}::jsonb, ${JSON.stringify(updated)}::jsonb)
     `;
+    // Conflict detection was skipped while the document was held (Task 6); a confirmed document's facts are now live,
+    // so detect conflicts for them now. A rejected document stays out of every read and never opens conflicts.
+    if (action === "confirm") {
+      const facts = await tx`SELECT * FROM facts WHERE document_id = ${documentId}`;
+      for (const fact of facts) await detectConflicts(tx, fact as any);
+    }
     return "ok" as const;
   });
 

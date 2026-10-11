@@ -53,8 +53,8 @@ All pure functions over a common `Line { text, cells: { text, x0?, x1? }[], page
 Normalise both names: lowercase, strip titles (Mr, Mrs, Ms, Dr, Shri, Smt, Master, Baby), `s/o`/`w/o`/`d/o` suffixes, punctuation, extra spaces; tokenise.
 
 - **matched:** token sets equal, or all tokens of the shorter name (≥2 tokens) appear in the longer.
-- **partial:** shares the first token, or one side is a single token present in the other, or matches by initials (`V. Upadhyay`); fuzzy token match (Jaro-Winkler ≥ 0.9) for transliteration variants. Accepted with a warning.
-- **mismatch:** none of the above. Facts from the document are **held**: persisted but excluded from the snapshot until staff confirm (`confirmed`) or reject.
+- **partial:** not enough evidence either way and nothing conflicts: a first-name-only report (`Mr. VARUN` vs `Varun Upadhyay`), an initial for the first name (`V. Upadhyay`), or close transliteration variants of every token (per-token Jaro-Winkler ≥ 0.9, so a shared surname cannot carry the score). Accepted with a warning.
+- **mismatch:** the names conflict: both carry a surname and the surnames differ (`Priya Sharma` vs `Priya Patel` are different people), or no token is shared or close. Facts from the document are **held**: persisted but excluded from the snapshot until staff confirm (`confirmed`) or reject, and no conflicts are opened for them until confirmed.
 - **unknown:** no name on the report or `patients.name` is null. No hold.
 
 `documents.identity_status` stores the result. Every reader of facts for snapshots (`services/facts.ts`, `services/rules.ts`, `routes/patients.ts`) must exclude facts whose document is `mismatch` (to enumerate in the plan; a test per reader).
