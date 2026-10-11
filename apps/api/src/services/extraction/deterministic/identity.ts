@@ -1,15 +1,14 @@
 const TITLES = new Set(["mr", "mrs", "ms", "dr", "shri", "smt", "master", "baby"]);
 
-// s/o, w/o, d/o introduce the father's/husband's name (common on Indian lab
-// reports), never the patient's own — everything from that marker onward is dropped.
+// Relational markers (s/o, d/o, w/o, c/o, b/o, "son of", "wife of", ... and OCR variants such as "s / o" or "d/0")
+// introduce a relative's name (common on Indian lab reports), never the patient's own: everything from the marker on is
+// dropped, so a relative's name can never make a different person look like the patient.
+const RELATIONAL = /(^|\s)(?:[sdwcb]\s*\/\s*[o0]|(?:son|daughter|wife|husband|baby|ward)\s+of)(?=\s|$).*$/i;
+
 export function normalizeName(name: string): string[] {
-  const stripped = name
-    .toLowerCase()
-    .replace(/\b(s\/o|w\/o|d\/o)\b.*$/i, "")
-    .replace(/[^a-z\s]/g, " ");
-  const tokens = stripped.split(/\s+/).filter(Boolean);
-  const withoutTitles = tokens.filter((t) => !TITLES.has(t));
-  return withoutTitles.length > 0 ? withoutTitles : tokens;
+  const stripped = name.toLowerCase().replace(RELATIONAL, "").replace(/[^a-z\s]/g, " ");
+  // A name made only of titles ("Mr.") has no tokens: it is no name at all.
+  return stripped.split(/\s+/).filter((t) => t && !TITLES.has(t));
 }
 
 function jaro(s1: string, s2: string): number {
@@ -64,7 +63,8 @@ function initialsMatch(a: string[], b: string[]): boolean {
   return a.every((t, i) => t === b[i] || isInitialOf(t, b[i]!) || isInitialOf(b[i]!, t));
 }
 
-const tokenSimilar = (x: string, y: string) => x === y || jaroWinkler(x, y) >= 0.9;
+// 0.95 separates real spelling variants (Shreya/Shreyaa 0.97) from different people (Ramesh/Rajesh 0.91, Arun/Varun 0.93).
+const tokenSimilar = (x: string, y: string) => x === y || jaroWinkler(x, y) >= 0.95;
 
 export type IdentityMatchStatus = "matched" | "partial" | "mismatch" | "unknown";
 
@@ -85,6 +85,9 @@ export function matchIdentity(patientName: string | null, reportName: string | n
   if (!hasWord(a) || !hasWord(b)) {
     return { status: "unknown", reason: "no name on the report or no patient name on file" };
   }
+  if (a.length === 0 || b.length === 0) return { status: "unknown", reason: "no usable name tokens" };
+  // A real name has a handful of tokens; more means OCR field bleed ("Suresh Kumar Age : 45 Yrs ..."): hold it.
+  if (a.length > 6 || b.length > 6) return { status: "mismatch", reason: "implausibly long name" };
   const setA = new Set(a);
   const setB = new Set(b);
   if (setA.size === setB.size && [...setA].every((t) => setB.has(t))) {
@@ -107,8 +110,12 @@ export function matchIdentity(patientName: string | null, reportName: string | n
   }
 
   if (initialsMatch(a, b)) return { status: "partial", reason: "matches by initials" };
-  if (shorter.length === 1 && longer.some((t) => tokenSimilar(shorter[0]!, t))) {
-    return { status: "partial", reason: "a single name token is present in the other name" };
+  // A single-token report is first-name-only evidence only when it matches the other name's FIRST token; a surname
+  // alone ("Kumar") or someone else's first name is not evidence for this patient.
+  if (shorter.length === 1) {
+    return tokenSimilar(shorter[0]!, longer[0]!)
+      ? { status: "partial", reason: "first name only" }
+      : { status: "mismatch", reason: "a single name token that is not the first name" };
   }
   if (shorter.length >= 2 && shorter.every((t) => longer.some((u) => tokenSimilar(t, u)))) {
     return { status: "partial", reason: "every name token has a close match (transliteration)" };

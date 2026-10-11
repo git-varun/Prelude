@@ -52,3 +52,41 @@ test("a transliteration variant of every token is partial, per token (a shared s
   expect(matchIdentity("Shreya Gupta", "Shreyaa Gupta").status).toBe("partial");
   expect(matchIdentity("Sanjay Gupta", "Suresh Gupta").status).toBe("mismatch");
 });
+
+// ---- review fixes (C1, I1) ----
+
+test("relational markers and their OCR variants drop the relative's name", () => {
+  for (const name of ["Shyam Kumar s / o Ram Kumar", "Shyam Kumar D/0 Ram", "Shyam Kumar C/O Ram Kumar", "Shyam Kumar son of Ram Kumar", "Shyam Kumar B/O Ram Kumar"]) {
+    expect(normalizeName(name)).toEqual(["shyam", "kumar"]);
+  }
+  expect(normalizeName("Anita wife of Ram Kumar")).toEqual(["anita"]);
+});
+
+test("a different person who is the patient's relative is not matched through the relational tail", () => {
+  expect(matchIdentity("Ram Kumar", "Shyam Kumar C/O Ram Kumar").status).toBe("mismatch");
+  expect(matchIdentity("Ram Kumar", "Shyam Kumar s / o Ram Kumar").status).toBe("mismatch");
+  expect(matchIdentity("Ramesh", "Suresh Kumar Ref By Dr Ramesh").status).not.toBe("matched");
+});
+
+test("an implausibly long 'name' (field bleed from OCR text) is held, never matched", () => {
+  const r = matchIdentity("Ramesh Kumar", "Suresh Kumar Age : 45 Yrs Sex : M Ref By : Dr Ramesh Kumar");
+  expect(r.status).toBe("mismatch");
+});
+
+test("a surname-only report is not 'first-name-only' evidence: it is held", () => {
+  expect(matchIdentity("Ramesh Kumar", "Kumar").status).toBe("mismatch");
+  expect(matchIdentity("Sunita Devi", "Devi").status).toBe("mismatch");
+  expect(matchIdentity("Varun Upadhyay", "Mr. VARUN").status).toBe("partial");
+});
+
+test("a name made only of titles is no name at all", () => {
+  expect(matchIdentity("Ramesh Kumar", "Mr.").status).toBe("unknown");
+  expect(matchIdentity("Mrs", "Mr").status).toBe("unknown");
+});
+
+test("close-but-different first names (Ramesh/Rajesh, Arun/Varun) are not accepted; a real variant (Shreya/Shreyaa) still is", () => {
+  expect(matchIdentity("Ramesh Kumar", "Rajesh Kumar").status).toBe("mismatch");
+  expect(matchIdentity("Arun", "Varun Kumar").status).toBe("mismatch");
+  expect(matchIdentity("Arun", "Arjun").status).toBe("mismatch");
+  expect(matchIdentity("Shreya Gupta", "Shreyaa Gupta").status).toBe("partial");
+});
