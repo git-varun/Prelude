@@ -90,4 +90,4 @@ bun run eval:fixtures && bun run eval:synthetic                      # rebuild f
 
 ### Process notes
 - Two Claude sessions edited one worktree concurrently during phase 2; keep one session per worktree.
-- The eval run on the server used Gemini (pilot, free tier: 15 requests/minute, hence `EVAL_DELAY_MS`). The server's Gemini use is scoped to the developer's own documents; real patient documents must not go to it (Decisions Log). That run sent all supplied reports through it, and some belong to another person: confirm it was within the rule.
+- The eval run on the server used Gemini (pilot, free tier: 15 requests/minute, hence `EVAL_DELAY_MS`). The server's Gemini use is scoped to the developer's own documents; real patient documents must not go to it (Decisions Log). That run sent the supplied reports through it, some belonging to another person; the developer reviewed this on 2026-10-12 and accepted it at this level.
