@@ -1,5 +1,5 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
-import { uploadDocument, runExtraction } from "./documents";
+import { uploadDocument, runExtraction, runOcrForTest, extractWithFallback } from "./documents";
 import type { ExtractedFactCandidate, ExtractionProvider, FieldType } from "@prelude/shared";
 import { createOrOpenVisit } from "./visits";
 import { sql } from "../db/client";
@@ -168,10 +168,15 @@ test("uploadDocument writes an audit_log row for the upload", async () => {
   expect(afterValue.patient_id).toBe(patientId);
 });
 
-async function newDocumentRow(): Promise<{ id: string; patient_id: string; visit_id: string }> {
+async function newDocumentRow(
+  overrides: Partial<{ file_sha256: string | null; ocr_status: string; identity_status: string }> = {},
+): Promise<{ id: string; patient_id: string; visit_id: string }> {
   const [doc] = await sql`
-    INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, ocr_status)
-    VALUES (${patientId}, ${visitId}, 'local://test/x.pdf', 'blood', 'own_hospital', ${staff.id}, 'done')
+    INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, ocr_status, file_sha256, identity_status)
+    VALUES (
+      ${patientId}, ${visitId}, 'local://test/x.pdf', 'blood', 'own_hospital', ${staff.id},
+      ${overrides.ocr_status ?? "done"}, ${overrides.file_sha256 ?? null}, ${overrides.identity_status ?? null}::identity_status
+    )
     RETURNING id, patient_id, visit_id
   `;
   return doc;
@@ -215,7 +220,7 @@ async function extractionStatusOf(documentId: string): Promise<string> {
 
 test("runExtraction marks the document 'done' and persists facts on success", async () => {
   const doc = await newDocumentRow();
-  await runExtraction(doc, "blood", ocrResult, staff.id, providerReturning([datedCandidate()]));
+  await runExtraction(doc, "blood", ocrResult, staff.id, null, providerReturning([datedCandidate()]));
   expect(await extractionStatusOf(doc.id)).toBe("done");
   const facts = await sql`SELECT id FROM facts WHERE document_id = ${doc.id}`;
   expect(facts).toHaveLength(1);
@@ -223,7 +228,7 @@ test("runExtraction marks the document 'done' and persists facts on success", as
 
 test("runExtraction marks the document 'done' when the pass legitimately finds nothing", async () => {
   const doc = await newDocumentRow();
-  await runExtraction(doc, "blood", ocrResult, staff.id, providerReturning([]));
+  await runExtraction(doc, "blood", ocrResult, staff.id, null, providerReturning([]));
   expect(await extractionStatusOf(doc.id)).toBe("done");
 });
 
@@ -234,6 +239,7 @@ test("runExtraction marks the document 'partial' (not 'done') when a field type 
     "blood",
     ocrResult,
     staff.id,
+    null,
     providerReturning([datedCandidate()], ["reference_range"], { reference_range: "LLM timeout" }),
   );
   expect(await extractionStatusOf(doc.id)).toBe("partial");
@@ -251,6 +257,7 @@ test("runExtraction marks the document 'failed' with an error when every field t
     "blood",
     ocrResult,
     staff.id,
+    null,
     providerReturning([], ["marker_value", "reference_range"], { marker_value: "LLM API down" }),
   );
   expect(await extractionStatusOf(doc.id)).toBe("failed");
@@ -262,7 +269,7 @@ test("runExtraction marks the document 'failed' with an error when every field t
 
 test("runExtraction leaves extraction_error null on a clean 'done'", async () => {
   const doc = await newDocumentRow();
-  await runExtraction(doc, "blood", ocrResult, staff.id, providerReturning([datedCandidate()]));
+  await runExtraction(doc, "blood", ocrResult, staff.id, null, providerReturning([datedCandidate()]));
   expect(await extractionErrorOf(doc.id)).toBeNull();
 });
 
@@ -274,7 +281,7 @@ test("runExtraction records the thrown error message when the provider throws", 
       throw new Error("provider exploded");
     },
   };
-  await runExtraction(doc, "blood", ocrResult, staff.id, failing);
+  await runExtraction(doc, "blood", ocrResult, staff.id, null, failing);
   expect(await extractionStatusOf(doc.id)).toBe("failed");
   expect(await extractionErrorOf(doc.id)).toContain("provider exploded");
 });
@@ -287,7 +294,7 @@ test("runExtraction marks the document 'failed' when the extraction provider thr
       throw new Error("LLM API down");
     },
   };
-  await runExtraction(doc, "blood", ocrResult, staff.id, failing);
+  await runExtraction(doc, "blood", ocrResult, staff.id, null, failing);
   expect(await extractionStatusOf(doc.id)).toBe("failed");
 });
 
@@ -298,6 +305,7 @@ test("runExtraction marks the document 'failed', with no partial facts, when per
     "blood",
     ocrResult,
     staff.id,
+    null,
     providerReturning([datedCandidate(), datedCandidate({ asOfDate: "2026-13-45" })]),
   );
   expect(await extractionStatusOf(doc.id)).toBe("failed");
@@ -310,7 +318,7 @@ test("runExtraction marks the document 'failed' when no extraction provider is c
   const saved = process.env.EXTRACTION_PROVIDER;
   delete process.env.EXTRACTION_PROVIDER;
   try {
-    await runExtraction(doc, "blood", ocrResult, staff.id);
+    await runExtraction(doc, "blood", ocrResult, staff.id, null);
   } finally {
     if (saved !== undefined) process.env.EXTRACTION_PROVIDER = saved;
   }
@@ -327,4 +335,126 @@ test("uploadDocument leaves extraction_status 'pending' when OCR fails, since ex
   const body = (await res.json()) as any;
   expect(body.ocr_status).toBe("failed");
   expect(body.extraction_status).toBe("pending");
+});
+
+test("uploadDocument stores a file_sha256 and two uploads of the same bytes for the same patient get the same hash", async () => {
+  const bytes = "identical-content";
+  const mk = (name: string) => {
+    const form = new FormData();
+    form.set("visit_id", visitId);
+    form.set("document_type", "blood");
+    form.set("source_origin", "own_hospital");
+    form.set("file", new File([bytes], name, { type: "application/pdf" }));
+    return form;
+  };
+  const docA = (await (await uploadDocument(uploadRequest(mk("a.pdf")), asAuthedUser(staff))).json()) as any;
+  expect(docA.file_sha256).toMatch(/^[0-9a-f]{64}$/);
+  const docB = (await (await uploadDocument(uploadRequest(mk("b.pdf")), asAuthedUser(staff))).json()) as any;
+  expect(docB.file_sha256).toBe(docA.file_sha256);
+});
+
+test("runOcr reuses a same-patient, same-hash document's OCR result instead of calling the OCR provider again", async () => {
+  const sha = "a".repeat(64);
+  const existing = await newDocumentRow({ file_sha256: sha, ocr_status: "done" });
+  const { saveOcrResult, readOcrResult } = await import("../services/storage");
+  const { file_ref } = await saveOcrResult(patientId, existing.id, { fullText: "reused text", pages: [{ pageNumber: 1, text: "reused text" }], providerName: "test", providerRaw: null });
+  await sql`UPDATE documents SET ocr_text_ref = ${file_ref} WHERE id = ${existing.id}`;
+
+  const freshRef = await newDocumentRow({ file_sha256: sha, ocr_status: "pending" });
+  const [fresh] = await sql`SELECT * FROM documents WHERE id = ${freshRef.id}`; // runOcr gets the full row in production
+  const savedProvider = process.env.OCR_PROVIDER;
+  delete process.env.OCR_PROVIDER; // if reuse works, the (unconfigured) OCR provider is never called
+  try {
+    const updated = await runOcrForTest(fresh, new File(["anything"], "x.pdf", { type: "application/pdf" }), "blood", staff.id, null);
+    expect(updated.ocr_status).toBe("done");
+    const [{ ocr_text_ref }] = await sql`SELECT ocr_text_ref FROM documents WHERE id = ${updated.id}`;
+    expect((await readOcrResult(ocr_text_ref)).fullText).toBe("reused text");
+  } finally {
+    if (savedProvider !== undefined) process.env.OCR_PROVIDER = savedProvider;
+  }
+});
+
+test("OCR reuse never crosses patients: the same hash on another patient's document is not reused", async () => {
+  const sha = "b".repeat(64);
+  const other = await createTestPatient(staff.id);
+  const [otherVisit] = await sql`INSERT INTO visits (patient_id) VALUES (${other.id}) RETURNING id`;
+  const [otherDoc] = await sql`
+    INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, ocr_status, ocr_text_ref, file_sha256)
+    VALUES (${other.id}, ${otherVisit.id}, 'local://t/o.pdf', 'blood', 'own_hospital', ${staff.id}, 'done', NULL, ${sha})
+    RETURNING id`;
+  // A REAL stored OCR result: if reuse wrongly crossed patients it would succeed ('done'); correct scoping fails (no OCR provider).
+  const { saveOcrResult } = await import("../services/storage");
+  const { file_ref: otherOcrRef } = await saveOcrResult(other.id, otherDoc.id, { fullText: "other patient's text", pages: [{ pageNumber: 1, text: "other patient's text" }], providerName: "test", providerRaw: null });
+  await sql`UPDATE documents SET ocr_text_ref = ${otherOcrRef} WHERE id = ${otherDoc.id}`;
+  const freshRef = await newDocumentRow({ file_sha256: sha, ocr_status: "pending" });
+  const [fresh] = await sql`SELECT * FROM documents WHERE id = ${freshRef.id}`;
+  const savedProvider = process.env.OCR_PROVIDER;
+  delete process.env.OCR_PROVIDER; // no reuse -> the unconfigured OCR provider is called -> OCR fails, recorded as 'failed'
+  try {
+    const updated = await runOcrForTest(fresh, new File(["x"], "x.pdf", { type: "application/pdf" }), "blood", staff.id, null);
+    expect(updated.ocr_status).toBe("failed");
+  } finally {
+    if (savedProvider !== undefined) process.env.OCR_PROVIDER = savedProvider;
+    await sql`DELETE FROM documents WHERE id = ${otherDoc.id}`;
+    await deleteTestPatients(other.id);
+  }
+});
+
+test("runExtraction computes identity_status against the patient's name and writes header fields onto the document", async () => {
+  const doc = await newDocumentRow();
+  const provider: ExtractionProvider = {
+    name: "fake-deterministic",
+    extractFacts: async () => ({
+      candidates: [datedCandidate()],
+      failedFieldTypes: [],
+      header: { labName: "Synthetic Labs", collectedOn: "2026-04-08", receivedOn: null, reportedOn: null, patientName: "Test Patient", labPatientRef: "L1" },
+    }),
+  };
+  await runExtraction(doc, "blood", ocrResult, staff.id, "Test Patient", provider);
+  const [row] = await sql`SELECT identity_status, lab_name FROM documents WHERE id = ${doc.id}`;
+  expect(row).toMatchObject({ identity_status: "matched", lab_name: "Synthetic Labs" });
+});
+
+test("runExtraction holds a document (identity_status = 'mismatch') when the report's printed name doesn't match the patient", async () => {
+  const doc = await newDocumentRow();
+  const provider: ExtractionProvider = {
+    name: "fake-deterministic",
+    extractFacts: async () => ({
+      candidates: [],
+      failedFieldTypes: [],
+      header: { labName: null, collectedOn: null, receivedOn: null, reportedOn: null, patientName: "Someone Else Entirely", labPatientRef: null },
+    }),
+  };
+  await runExtraction(doc, "blood", ocrResult, staff.id, "Test Patient", provider);
+  const [row] = await sql`SELECT identity_status FROM documents WHERE id = ${doc.id}`;
+  expect(row.identity_status).toBe("mismatch");
+});
+
+test("extractWithFallback: a deterministic pass with zero candidates falls back to the LLM, keeping the deterministic header", async () => {
+  let llmCalls = 0;
+  const header = { labName: "Synthetic Labs", collectedOn: null, receivedOn: null, reportedOn: null, patientName: "Test Patient", labPatientRef: null };
+  const deterministic: ExtractionProvider = { name: "deterministic", extractFacts: async () => ({ candidates: [], failedFieldTypes: [], stats: { rows: 0, unplacedNumericLines: 0, lines: 5 }, header }) };
+  const llm: ExtractionProvider = { name: "llm", extractFacts: async () => { llmCalls++; return { candidates: [datedCandidate()], failedFieldTypes: [] }; } };
+  const out = await extractWithFallback(ocrResult, "blood", deterministic, () => llm);
+  expect(llmCalls).toBe(1);
+  expect(out.candidates).toHaveLength(1);
+  expect(out.header).toEqual(header);
+});
+
+test("extractWithFallback: a deterministic pass that found facts is used as is, and a non-deterministic provider never falls back", async () => {
+  let llmCalls = 0;
+  const llm: ExtractionProvider = { name: "llm", extractFacts: async () => { llmCalls++; return { candidates: [datedCandidate()], failedFieldTypes: [] }; } };
+  const found: ExtractionProvider = { name: "deterministic", extractFacts: async () => ({ candidates: [datedCandidate(), datedCandidate({ value: "9" })], failedFieldTypes: [] }) };
+  expect((await extractWithFallback(ocrResult, "blood", found, () => llm)).candidates).toHaveLength(2);
+  const emptyLlm: ExtractionProvider = { name: "anthropic", extractFacts: async () => ({ candidates: [], failedFieldTypes: [] }) };
+  expect((await extractWithFallback(ocrResult, "blood", emptyLlm, () => llm)).candidates).toHaveLength(0);
+  expect(llmCalls).toBe(0);
+});
+
+test("extractWithFallback does not resolve the LLM provider unless a fallback is needed", async () => {
+  const found: ExtractionProvider = { name: "deterministic", extractFacts: async () => ({ candidates: [datedCandidate()], failedFieldTypes: [] }) };
+  const out = await extractWithFallback(ocrResult, "blood", found, () => {
+    throw new Error("LLM provider must not be resolved");
+  });
+  expect(out.candidates).toHaveLength(1);
 });
