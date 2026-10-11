@@ -1,7 +1,8 @@
 import { sql } from "../db/client";
 import { assignCoverageStatus, detectConflicts } from "./rules";
 import { matchMarker } from "@prelude/shared";
-import type { ExtractedFactCandidate } from "@prelude/shared";
+import type { ExtractedFactCandidate, ExtractionResult } from "@prelude/shared";
+import type { IdentityMatchStatus } from "./extraction/deterministic/identity";
 
 interface DocumentContext {
   id: string;
@@ -12,6 +13,19 @@ interface DocumentContext {
 export interface PersistExtractionResult {
   createdFactIds: string[];
   needsManualDate: boolean;
+}
+
+export interface DocumentMetadataUpdate {
+  header: NonNullable<ExtractionResult["header"]>;
+  identityStatus: IdentityMatchStatus;
+}
+
+function metadataSetClause(m: DocumentMetadataUpdate | null) {
+  if (!m) return sql``;
+  return sql`,
+    lab_name = ${m.header.labName}, collected_on = ${m.header.collectedOn}, received_on = ${m.header.receivedOn},
+    reported_on = ${m.header.reportedOn}, patient_name_on_report = ${m.header.patientName}, lab_patient_ref = ${m.header.labPatientRef},
+    identity_status = ${m.identityStatus}::identity_status`;
 }
 
 /**
@@ -58,10 +72,12 @@ export async function persistExtractedFacts(
   candidates: ExtractedFactCandidate[],
   actorId: string,
   extractionStatus: { status: "done" | "partial" | "failed"; error: string | null } = { status: "done", error: null },
+  documentMetadata: DocumentMetadataUpdate | null = null,
 ): Promise<PersistExtractionResult> {
   if (candidates.length === 0) {
     await sql`
       UPDATE documents SET extraction_status = ${extractionStatus.status}, extraction_error = ${extractionStatus.error}
+        ${metadataSetClause(documentMetadata)}
       WHERE id = ${document.id}
     `;
     return { createdFactIds: [], needsManualDate: false };
@@ -114,13 +130,14 @@ export async function persistExtractedFacts(
           patient_id, visit_id, document_id, tracked_marker_id, raw_marker_label,
           field_type, value, unit, reference_range, as_of_date, needs_manual_date,
           coverage_status, verification_state,
-          source_page, source_location, source_snippet
+          source_page, source_location, source_snippet, printed_flag, parse_checks
         )
         VALUES (
           ${document.patient_id}, ${document.visit_id}, ${document.id}, ${trackedMarkerId}, ${rawMarkerLabel},
           ${candidate.fieldType}, ${candidate.value}, ${candidate.unit}, ${candidate.referenceRange}, ${candidate.asOfDate}, ${undated},
           ${coverageStatus}, 'unverified',
-          ${candidate.sourcePage}, ${candidate.sourceLocation}, ${candidate.sourceSnippet}
+          ${candidate.sourcePage}, ${candidate.sourceLocation}, ${candidate.sourceSnippet},
+          ${candidate.printedFlag ?? null}, ${candidate.parseChecks ? JSON.stringify(candidate.parseChecks) : null}
         )
         RETURNING *
       `;
@@ -139,6 +156,7 @@ export async function persistExtractedFacts(
     }
     await tx`
       UPDATE documents SET extraction_status = ${extractionStatus.status}, extraction_error = ${extractionStatus.error}
+        ${metadataSetClause(documentMetadata)}
       WHERE id = ${document.id}
     `;
 
