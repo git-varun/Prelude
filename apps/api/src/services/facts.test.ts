@@ -350,3 +350,20 @@ test("documentMetadata is also applied when there are zero candidates", async ()
   const [doc] = await sql`SELECT identity_status, patient_name_on_report FROM documents WHERE id = ${documentId}`;
   expect(doc).toMatchObject({ identity_status: "mismatch", patient_name_on_report: "Unmatched Name" });
 });
+
+test("a mismatch-held document's facts are persisted but never open a conflict", async () => {
+  const doc = await newDocument();
+  const header: HeaderMetadata = { labName: null, collectedOn: null, receivedOn: null, reportedOn: null, patientName: "Someone Else", labPatientRef: null };
+  const result = await persistExtractedFacts(
+    doc,
+    [candidate({ asOfDate: "2026-05-01", value: "4.2" }), candidate({ asOfDate: "2026-05-01", value: "9.0" })],
+    staff.id,
+    { status: "done", error: null },
+    { header, identityStatus: "mismatch" },
+  );
+  expect(result.createdFactIds).toHaveLength(2);
+  const conflicts = await sql`SELECT id FROM conflicts WHERE fact_id_a IN ${sql(result.createdFactIds)} OR fact_id_b IN ${sql(result.createdFactIds)}`;
+  expect(conflicts).toHaveLength(0);
+  const facts = await sql`SELECT coverage_status FROM facts WHERE id IN ${sql(result.createdFactIds)}`;
+  expect(facts.every((f: any) => f.coverage_status !== "conflicting_sources")).toBe(true);
+});

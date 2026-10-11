@@ -84,6 +84,16 @@ export async function persistExtractedFacts(
   }
 
   return sql.begin(async (tx) => {
+    // Identity metadata is written FIRST: detectConflicts below must see a held document as held. Written last,
+    // a wrong-patient document's facts would open conflicts against the real patient's live facts.
+    if (documentMetadata) {
+      await tx`
+        UPDATE documents SET lab_name = ${documentMetadata.header.labName}, collected_on = ${documentMetadata.header.collectedOn},
+          received_on = ${documentMetadata.header.receivedOn}, reported_on = ${documentMetadata.header.reportedOn},
+          patient_name_on_report = ${documentMetadata.header.patientName}, lab_patient_ref = ${documentMetadata.header.labPatientRef},
+          identity_status = ${documentMetadata.identityStatus}::identity_status
+        WHERE id = ${document.id}`;
+    }
     const trackedMarkerRows = await tx`
       SELECT id, marker_name FROM tracked_markers WHERE patient_id = ${document.patient_id}
     `;
@@ -148,7 +158,9 @@ export async function persistExtractedFacts(
         VALUES (${actorId}, 'upload', 'fact', ${fact.id}, ${JSON.stringify(fact)}::jsonb)
       `;
 
-      await detectConflicts(tx, fact);
+      // A document held for an identity mismatch must not open conflicts against the patient's real facts;
+      // setDocumentIdentityStatus runs detection when staff confirm it.
+      if (documentMetadata?.identityStatus !== "mismatch") await detectConflicts(tx, fact);
     }
 
     if (needsManualDate) {
