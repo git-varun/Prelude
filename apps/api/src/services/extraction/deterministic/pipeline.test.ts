@@ -66,4 +66,5 @@ test("every row shape has a finite confidence, including 'merged'", () => {
     expect(Number.isFinite(rowConfidence(shape))).toBe(true);
   }
   expect(rowConfidence("merged")).toBeLessThan(rowConfidence("value_unit"));
+  expect(rowConfidence("merged")).toBe(0.65);
 });
