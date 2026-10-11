@@ -127,6 +127,22 @@ Related, not the same thing: `docs/m2-backlog.md` C8 notes
 an oncologist" — that's a content gap, still blocked on clinical input
 regardless of whether this admin UI exists.
 
+### 4. Held-documents review screen and identity warnings
+
+**Problem:** the deterministic extraction mode (`docs/extraction-pipeline-status.md`) holds a
+document whose printed patient name conflicts with the record
+(`documents.identity_status = 'mismatch'`): its facts are stored but excluded from every
+snapshot/timeline/trend read. Today the only way to find one is to open that document's own
+review page, and a legitimate name variant (`Mohd` / `Mohammed`, an OCR slip in the name)
+would silently drop out of the snapshot. `POST /documents/:id/identity` (confirm/reject)
+already exists; nothing in the UI calls it.
+
+**Status:** not yet brainstormed; backend is done. Needs: a list of held documents per patient
+with the printed vs recorded name and confirm/reject actions, plus surfacing the `partial`
+identity status (close first-name variants are accepted with a warning that nothing shows yet).
+**Blocks enabling `EXTRACTION_MODE=deterministic` in production.** Open policy question:
+should only an oncologist be able to confirm a hold (today any staff user can)?
+
 ---
 
 ## Deliberately out of scope for this roadmap
