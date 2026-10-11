@@ -75,10 +75,11 @@ afterAll(async () => {
   await deleteTestUsers(staff.id, oncologist.id);
 });
 
-async function newDocument(visitId: string): Promise<string> {
+async function newDocument(visitId: string, identityStatus: string | null = null): Promise<string> {
   const [doc] = await sql`
-    INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, ocr_status)
-    VALUES (${patientId}, ${visitId}, 'local://t/x.pdf', 'blood', 'own_hospital', ${staff.id}, 'done') RETURNING id`;
+    INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, ocr_status, identity_status)
+    VALUES (${patientId}, ${visitId}, 'local://t/x.pdf', 'blood', 'own_hospital', ${staff.id}, 'done', ${identityStatus}::identity_status)
+    RETURNING id`;
   return doc.id;
 }
 
@@ -150,4 +151,28 @@ test("loadDeltaBaselines never picks a fact that lost an authoritative-pick conf
   } finally {
     await sql`DELETE FROM conflicts WHERE id = ${conflictId}`;
   }
+});
+
+test("loadDeltaBaselines excludes a fact whose document is held for identity mismatch or was rejected, but keeps one that was confirmed", async () => {
+  const [{ id: mHeld }] = await sql`
+    INSERT INTO tracked_markers (patient_id, marker_name, is_custom, added_by) VALUES (${patientId}, 'Identity-Held', false, ${staff.id}) RETURNING id`;
+  const [{ id: mRejected }] = await sql`
+    INSERT INTO tracked_markers (patient_id, marker_name, is_custom, added_by) VALUES (${patientId}, 'Identity-Rejected', false, ${staff.id}) RETURNING id`;
+  const [{ id: mConfirmed }] = await sql`
+    INSERT INTO tracked_markers (patient_id, marker_name, is_custom, added_by) VALUES (${patientId}, 'Identity-Confirmed', false, ${staff.id}) RETURNING id`;
+
+  async function newFactOnDoc(documentId: string, markerId: string): Promise<void> {
+    await sql`
+      INSERT INTO facts (patient_id, visit_id, document_id, tracked_marker_id, field_type, value, unit, as_of_date, coverage_status, verification_state, signed_off_by)
+      VALUES (${patientId}, ${v1}, ${documentId}, ${markerId}, 'marker_value', '4.2', 'ng/mL', '2026-01-01', 'value_found', 'oncologist_signed_off', ${oncologist.id})`;
+  }
+
+  await newFactOnDoc(await newDocument(v1, "mismatch"), mHeld);
+  await newFactOnDoc(await newDocument(v1, "rejected"), mRejected);
+  await newFactOnDoc(await newDocument(v1, "confirmed"), mConfirmed);
+
+  const baselines = await loadDeltaBaselines(patientId, "2026-03-01");
+  expect(baselines.get(deltaKey("marker_value", mHeld))).toBeUndefined();
+  expect(baselines.get(deltaKey("marker_value", mRejected))).toBeUndefined();
+  expect(baselines.get(deltaKey("marker_value", mConfirmed))).toEqual({ value: "4.2", unit: "ng/mL" });
 });

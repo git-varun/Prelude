@@ -17,12 +17,19 @@ export function deltaKey(fieldType: string, trackedMarkerId: string | null): str
   return `${fieldType}::${trackedMarkerId ?? ""}`;
 }
 
-// Excludes a fact that lost an authoritative-pick conflict resolution (docs/03 §3); shared with the snapshot route, which aliases facts as `f` too.
+// Excludes a fact that lost an authoritative-pick conflict resolution (docs/03 §3),
+// and a fact whose document is held for a patient-identity mismatch (or was
+// rejected after review) -- docs/superpowers/specs/2026-10-10-deterministic-extraction-design.md
+// "Identity match". NULL/'matched'/'partial'/'unknown'/'confirmed' are never held.
+// Shared with every other fact-reading query, which aliases facts as `f` too.
 export const LIVE_FACT_FILTER = sql`
   NOT EXISTS (
     SELECT 1 FROM conflicts c
     WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id)
       AND c.status = 'resolved' AND c.authoritative_fact_id IS NOT NULL AND c.authoritative_fact_id != f.id
+  )
+  AND NOT EXISTS (
+    SELECT 1 FROM documents d WHERE d.id = f.document_id AND d.identity_status IN ('mismatch', 'rejected')
   )
 `;
 
