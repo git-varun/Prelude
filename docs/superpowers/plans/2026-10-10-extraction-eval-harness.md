@@ -526,7 +526,7 @@ if (import.meta.main) {
 import { slugFor, toOcrResult } from "./buildFixtures";
 
 test("slugFor and toOcrResult", () => {
-  expect(slugFor("AJAY UPADHYAY .pdf")).toBe("ajay-upadhyay");
+  expect(slugFor("TEST PERSON .pdf")).toBe("test-person");
   const r = toOcrResult("page one\fpage two\f");
   expect(r.pages.map((p) => p.pageNumber)).toEqual([1, 2]);
   expect(r.pages[1]!.text).toBe("page two");
@@ -540,7 +540,7 @@ Run: `bun test apps/api/eval/score.test.ts` — Expected: PASS (importing `build
 Add to root `package.json` scripts: `"eval:fixtures": "bun apps/api/eval/buildFixtures.ts"` and `"eval:extraction": "bun apps/api/eval/run.ts"`.
 
 Run: `bun run eval:fixtures`
-Expected: 6 lines, one per PDF, each with its page count (14242c5f… 11, 71e9031e… 12, AJAY UPADHYAY 1, AJAY-UPADHYAY_report 2, eb02f641… 8, NOI26051887 3).
+Expected: one line per PDF in `docs/reports/`, each with its page count.
 
 - [ ] **Step 4: Draft the answer keys**
 

@@ -77,7 +77,7 @@ test("a keyed patient name beats the bare-name fallback", () => {
 });
 
 test("lab name falls back to a company name found anywhere in the document", () => {
-  const h = header("Hb      10.1      g/dL\nHouse Of Synthetic Diagnostics Healthcare Pvt Ltd. 14, 15 Some Road Delhi - 110092");
+  const h = header("Hb      10.1      g/dL\nHouse Of Synthetic Diagnostics Healthcare Pvt Ltd. 14, 15 Some Road Delhi - 110000");
   expect(h.labName).toContain("House Of Synthetic Diagnostics Healthcare Pvt Ltd");
 });
 
