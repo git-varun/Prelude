@@ -367,3 +367,20 @@ test("a mismatch-held document's facts are persisted but never open a conflict",
   const facts = await sql`SELECT coverage_status FROM facts WHERE id IN ${sql(result.createdFactIds)}`;
   expect(facts.every((f: any) => f.coverage_status !== "conflicting_sources")).toBe(true);
 });
+
+test("detectConflicts ignores a fact whose own document is held, so dating it later cannot open a conflict against the real patient's fact", async () => {
+  const { detectConflicts } = await import("./rules");
+  const liveDoc = await newDocument();
+  const heldDoc = await newDocument();
+  await sql`UPDATE documents SET identity_status = 'mismatch' WHERE id = ${heldDoc.id}`;
+  const [marker] = await sql`SELECT id FROM tracked_markers WHERE patient_id = ${patientId} AND marker_name = 'CEA' LIMIT 1`;
+  const ins = (documentId: string, value: string) => sql`
+    INSERT INTO facts (patient_id, visit_id, document_id, tracked_marker_id, field_type, value, unit, as_of_date, coverage_status, verification_state)
+    VALUES (${patientId}, ${visitId}, ${documentId}, ${marker.id}, 'marker_value', ${value}, 'ng/mL', '2026-06-15', 'value_found', 'unverified') RETURNING *`;
+  await ins(liveDoc.id, "4.2");
+  const [heldFact] = await ins(heldDoc.id, "99");
+  expect(await detectConflicts(sql, heldFact, { dryRun: true })).toEqual([]);
+  // control: once confirmed, the same pair does conflict
+  await sql`UPDATE documents SET identity_status = 'confirmed' WHERE id = ${heldDoc.id}`;
+  expect((await detectConflicts(sql, heldFact, { dryRun: true })).length).toBe(1);
+});

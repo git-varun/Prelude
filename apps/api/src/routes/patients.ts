@@ -442,6 +442,8 @@ async function loadConflicts(factIds: string[]): Promise<Map<string, ConflictEnt
       FROM conflicts c WHERE c.fact_id_b IN ${sql(factIds)}
     ) pairs
     JOIN facts ofact ON ofact.id = pairs.other_fact_id
+    -- the other side of a conflict is shown to the reader: never a fact from a held/rejected document
+    WHERE NOT EXISTS (SELECT 1 FROM documents d WHERE d.id = ofact.document_id AND d.identity_status IN ('mismatch', 'rejected'))
   `;
 
   for (const row of rows) {

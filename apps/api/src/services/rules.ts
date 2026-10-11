@@ -93,6 +93,14 @@ export async function detectConflicts(
   if (MARKER_CARRYING_FIELD_TYPES.has(fact.field_type) && fact.tracked_marker_id === null) {
     return [];
   }
+  // A fact from a document held for an identity mismatch (or rejected) is not this patient's evidence: dating or
+  // editing it later must never open a conflict against the patient's real facts. Guarded here, not in each caller
+  // (persist, PATCH /facts, backfillConflicts). Confirming the document lifts the hold.
+  const [held] = await tx`
+    SELECT 1 FROM facts f JOIN documents d ON d.id = f.document_id
+    WHERE f.id = ${fact.id}::uuid AND d.identity_status IN ('mismatch', 'rejected')
+  `;
+  if (held) return [];
 
   // Compares against the fact's own just-written as_of_date via a subquery
   // (rather than re-serializing fact.as_of_date, which may already be a JS
