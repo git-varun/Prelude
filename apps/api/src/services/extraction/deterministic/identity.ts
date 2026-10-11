@@ -54,10 +54,17 @@ export function jaroWinkler(s1: string, s2: string): number {
   return jaroScore + prefix * 0.1 * (1 - jaroScore);
 }
 
+function isInitialOf(initial: string, full: string): boolean {
+  return initial.length === 1 && full.length > 1 && full[0] === initial;
+}
+
+// Equal-length names where every token is equal or one side is just the initial of the other ("V." / "Varun").
 function initialsMatch(a: string[], b: string[]): boolean {
   if (a.length !== b.length) return false;
-  return a.every((t, i) => t === b[i] || t[0] === b[i]![0]);
+  return a.every((t, i) => t === b[i] || isInitialOf(t, b[i]!) || isInitialOf(b[i]!, t));
 }
+
+const tokenSimilar = (x: string, y: string) => x === y || jaroWinkler(x, y) >= 0.9;
 
 export type IdentityMatchStatus = "matched" | "partial" | "mismatch" | "unknown";
 
@@ -89,14 +96,22 @@ export function matchIdentity(patientName: string | null, reportName: string | n
     return { status: "matched", reason: "all tokens of the shorter name appear in the longer name" };
   }
 
-  if (a[0] === b[0]) return { status: "partial", reason: "shares the first name token" };
-  if (shorter.length === 1 && longer.includes(shorter[0]!)) {
+  // Both names carry a surname and the surnames differ: a different person, even with the same first name.
+  // Safety: a conflicting name is evidence of someone else and is held; only the absence of evidence is partial/unknown.
+  if (a.length >= 2 && b.length >= 2) {
+    const lastA = a[a.length - 1]!;
+    const lastB = b[b.length - 1]!;
+    if (!tokenSimilar(lastA, lastB) && !isInitialOf(lastA, lastB) && !isInitialOf(lastB, lastA)) {
+      return { status: "mismatch", reason: "surnames differ" };
+    }
+  }
+
+  if (initialsMatch(a, b)) return { status: "partial", reason: "matches by initials" };
+  if (shorter.length === 1 && longer.some((t) => tokenSimilar(shorter[0]!, t))) {
     return { status: "partial", reason: "a single name token is present in the other name" };
   }
-  if (initialsMatch(a, b)) return { status: "partial", reason: "matches by initials" };
-
-  const whole = jaroWinkler(a.join(" "), b.join(" "));
-  if (whole >= 0.9) return { status: "partial", reason: `fuzzy name match (${whole.toFixed(2)})` };
-
-  return { status: "mismatch", reason: "no shared name tokens or fuzzy similarity" };
+  if (shorter.length >= 2 && shorter.every((t) => longer.some((u) => tokenSimilar(t, u)))) {
+    return { status: "partial", reason: "every name token has a close match (transliteration)" };
+  }
+  return { status: "mismatch", reason: "no shared name tokens or similarity" };
 }

@@ -17,14 +17,18 @@ test("identical and superset names are matched", () => {
   expect(matchIdentity("Varun Upadhyay", "Mr. Varun Kumar Upadhyay").status).toBe("matched");
 });
 
-test("a single shared token, a first-name-only report, or initials are partial, not matched or mismatch", () => {
+test("a first-name-only report, or an initial for the first name, is partial (not enough evidence either way)", () => {
   expect(matchIdentity("Varun Upadhyay", "Mr. VARUN").status).toBe("partial");
   expect(matchIdentity("Varun Upadhyay", "V. Upadhyay").status).toBe("partial");
-  expect(matchIdentity("Priya Sharma", "Priya Patel").status).toBe("partial");
 });
 
-test("a fuzzy transliteration variant is partial via Jaro-Winkler", () => {
-  expect(matchIdentity("Shreya Gupta", "Shreyaa Gupta").status).toBe("partial");
+test("same first name but a different surname is two different people: mismatch, never accepted", () => {
+  expect(matchIdentity("Priya Sharma", "Priya Patel").status).toBe("mismatch");
+  expect(matchIdentity("Priya Sharma", "Priya Verma").status).toBe("mismatch");
+});
+
+test("same surname but a different first name is not a match, and a shared first letter alone is not 'initials'", () => {
+  expect(matchIdentity("Sanjay Gupta", "Suresh Gupta").status).toBe("mismatch");
 });
 
 test("two unrelated names are mismatch", () => {
@@ -44,8 +48,7 @@ test("a report name or patient name that normalizes to nothing (punctuation/digi
   expect(matchIdentity("12345", "Varun Upadhyay").status).toBe("unknown");
 });
 
-test("two different common-first-name people are not matched by first name alone", () => {
-  const r = matchIdentity("Priya Sharma", "Priya Verma");
-  expect(r.status).not.toBe("matched");
-  expect(r.status).toBe("partial");
+test("a transliteration variant of every token is partial, per token (a shared surname must not carry the score)", () => {
+  expect(matchIdentity("Shreya Gupta", "Shreyaa Gupta").status).toBe("partial");
+  expect(matchIdentity("Sanjay Gupta", "Suresh Gupta").status).toBe("mismatch");
 });
