@@ -1,8 +1,9 @@
 import { test, expect } from "bun:test";
+import { EXTRACTION_CONFIDENCE_THRESHOLD } from "../../rules";
 import { linesFromText } from "./lines";
 import { parseRows } from "./rows";
 import {
-  valueParses, unitPlausible, printedFlagAgrees, validateDocument, applyChecks, rowConfidence,
+  valueParses, unitPlausible, printedFlagAgrees, validateDocument, applyChecks, rowConfidence, REVIEW_CONFIDENCE_CAP,
 } from "./validate";
 
 const parse = (text: string) => parseRows(linesFromText(text, 1)).rows;
@@ -85,6 +86,57 @@ test("applyChecks lowers confidence by 0.2 per failed check and leaves a clean r
   const validated = applyChecks(rows);
   const mchc = validated.find((v) => v.row.label === find(rows, "MCHC").label)!;
   const hb = validated.find((v) => v.row.label === find(rows, "HAEMOGLOBIN").label)!;
-  expect(mchc.confidence).toBeCloseTo(rowConfidence(mchc.row.shape) - 0.2, 5);
+  expect(mchc.confidence).toBeLessThan(rowConfidence(mchc.row.shape));
+  expect(mchc.confidence).toBeLessThan(EXTRACTION_CONFIDENCE_THRESHOLD);
   expect(hb.confidence).toBe(rowConfidence(hb.row.shape));
+});
+
+
+// ---- review fixes (I3, I4) ----
+
+const checksOf = (text: string) => Object.fromEntries(validateDocument(parse(text)).map((c) => [c.key, c.pass]));
+
+test("a failed check pushes confidence below the review threshold even for a fully-parsed row", () => {
+  expect(REVIEW_CONFIDENCE_CAP).toBeLessThan(EXTRACTION_CONFIDENCE_THRESHOLD);
+  const rows = parse(["HAEMOGLOBIN (Hb)      15.0      g/dL      13.0-17.0", "PACKED CELL VOLUME (PCV)      45.0      %      40.0-50.0", "MCHC      50.0      g/dL      31.5-34.5"].join("\n"));
+  const mchc = applyChecks(rows).find((v) => v.row.label.startsWith("MCHC"))!;
+  expect(mchc.checks.mchc).toBe(false);
+  expect(mchc.confidence).toBeLessThanOrEqual(REVIEW_CONFIDENCE_CAP);
+});
+
+test("absolute counts compare across unit spellings (10^3/uL vs /cumm)", () => {
+  const c = checksOf(["TOTAL LEUKOCYTE COUNT (TLC)      7.5      10^3/uL      4-10", "Neutrophils      60      %      40-80", "ABSOLUTE NEUTROPHIL COUNT      4500      /cumm      2000-7000"].join("\n"));
+  expect(c.absoluteNeutrophil).toBe(true);
+});
+
+test("a differential rounded to 0% against a small absolute count is not a failure", () => {
+  const c = checksOf(["TOTAL LEUKOCYTE COUNT (TLC)      7.5      10^3/uL      4-10", "Basophils      0      %      0-1", "ABSOLUTE BASOPHIL COUNT      0.02      10^3/uL      0-0.1"].join("\n"));
+  expect(c.absoluteBasophil).toBe(true);
+});
+
+test("absolute counts that reuse the differential labels do not hijack the percent differential sum", () => {
+  const c = checksOf(
+    [
+      "Neutrophils      4.5      10^3/uL      2-7", "Lymphocytes      2.0      10^3/uL      1-3", "Monocytes      0.5      10^3/uL      0.2-1", "Eosinophils      0.2      10^3/uL      0-0.5", "Basophils      0.0      10^3/uL      0-0.1",
+      "Neutrophils      60      %      40-80", "Lymphocytes      27      %      20-40", "Monocytes      8      %      2-10", "Eosinophils      4      %      1-6", "Basophils      1      %      0-1",
+    ].join("\n"),
+  );
+  expect(c.differentialSum).toBe(true);
+});
+
+test("a haemoglobin reported in g/L does not run the g/dL-based MCHC/MCH checks (no false failure)", () => {
+  const c = checksOf(["HAEMOGLOBIN (Hb)      135      g/L      130-170", "PACKED CELL VOLUME (PCV)      40      %      40-50", "MCHC      33.8      g/dL      31.5-34.5", "RED BLOOD CELLS- RBC COUNT      4.5      millions/mm3      4.5-5.5", "MCH      30      pg      27-32"].join("\n"));
+  expect(c.mchc).toBeUndefined();
+  expect(c.mch).toBeUndefined();
+});
+
+test("an empty value is not treated as zero by the arithmetic checks", () => {
+  const rows = parse(["HAEMOGLOBIN (Hb)      15.0      g/dL      13-17", "PACKED CELL VOLUME (PCV)      45.0      %      40-50", "MCHC      0      g/dL      31.5-34.5"].join("\n"));
+  rows.find((r) => r.label.startsWith("HAEMOGLOBIN"))!.value = "";
+  expect(validateDocument(rows).find((c) => c.key === "mchc")).toBeUndefined();
+});
+
+test("a printed H flag on a value exactly at the upper bound agrees (rounding)", () => {
+  const [row] = parse("Hb      17.0      g/dL      13.0-17.0      H");
+  expect(printedFlagAgrees(row!)).toBe(true);
 });

@@ -158,7 +158,8 @@ async function runOcr(
     let result: OcrResult;
     // Reuse OCR text only within the same patient: two patients uploading byte-identical form PDFs must never see
     // each other's OCR text.
-    const [reusable] = document.file_sha256
+    // Part of the deterministic mode only: the default (llm) mode must behave exactly as before.
+    const [reusable] = document.file_sha256 && process.env.EXTRACTION_MODE === "deterministic"
       ? await sql`
           SELECT ocr_text_ref FROM documents
           WHERE patient_id = ${document.patient_id} AND file_sha256 = ${document.file_sha256}
@@ -166,8 +167,17 @@ async function runOcr(
           ORDER BY uploaded_at ASC LIMIT 1
         `
       : [];
+    let reused: OcrResult | null = null;
     if (reusable) {
-      result = await readOcrResult(reusable.ocr_text_ref);
+      try {
+        reused = await readOcrResult(reusable.ocr_text_ref);
+      } catch (err) {
+        // An unreadable stored result must not fail the upload: fall through and run OCR normally.
+        console.error(`Stored OCR for reuse unreadable (${reusable.ocr_text_ref}); running OCR again:`, err);
+      }
+    }
+    if (reused) {
+      result = reused;
     } else {
       const provider = getOcrProvider();
       const buffer = Buffer.from(await file.arrayBuffer());
@@ -206,9 +216,21 @@ async function runOcr(
 export const runOcrForTest = runOcr;
 
 // Safety: the rule-based parser needs column structure, and plain OCR text (every upload is OCR'd today) often has
-// none. A deterministic pass that found nothing (or a document type it does not handle) must never be recorded as
-// "done, nothing extractable" -- the silent empty result the design forbids. It falls back to the LLM provider (tier T4
-// of the spec), keeping the deterministic pass's header so the identity check still runs.
+// none. A deterministic pass that found nothing -- or only part of the document -- must never be recorded as a
+// complete "done": that is the silent loss of a result (e.g. a tumour marker on a line the parser could not place).
+// It falls back to the LLM provider (tier T4 of the spec), keeping the deterministic pass's header so the identity
+// check still runs.
+const FALLBACK_MIN_UNPLACED = 3;
+const FALLBACK_UNPLACED_SHARE = 0.2;
+
+function needsFallback(r: ExtractionResult): boolean {
+  if (r.candidates.length === 0) return true;
+  const s = r.stats;
+  if (!s) return false;
+  const total = s.rows + s.unplacedNumericLines;
+  return s.unplacedNumericLines >= FALLBACK_MIN_UNPLACED && s.unplacedNumericLines > FALLBACK_UNPLACED_SHARE * total;
+}
+
 export async function extractWithFallback(
   ocr: OcrResult,
   documentType: DocumentType,
@@ -217,9 +239,18 @@ export async function extractWithFallback(
   llm: () => ExtractionProvider,
 ): Promise<ExtractionResult> {
   const first = await primary.extractFacts(ocr, documentType);
-  if (primary.name !== "deterministic" || first.candidates.length > 0) return first;
-  const second = await llm().extractFacts(ocr, documentType);
-  return { ...second, header: second.header ?? first.header };
+  if (primary.name !== "deterministic" || !needsFallback(first)) return first;
+  try {
+    const second = await llm().extractFacts(ocr, documentType);
+    // An LLM that finds nothing must not discard what the deterministic pass did find.
+    return { ...second, candidates: second.candidates.length > 0 ? second.candidates : first.candidates, header: second.header ?? first.header };
+  } catch (err) {
+    // The fallback failing must not lose the deterministic rows or header: record the gap as a failed field type so the
+    // document is 'partial' (or 'failed' when nothing was found) instead of an exception that drops the identity check.
+    const message = `LLM fallback failed: ${err instanceof Error ? err.message : String(err)}`.slice(0, 300);
+    const failed = first.failedFieldTypes.length > 0 ? first.failedFieldTypes : (["marker_value"] as ExtractionResult["failedFieldTypes"]);
+    return { ...first, failedFieldTypes: failed, failureMessages: { ...(first.failureMessages ?? {}), [failed[0]!]: message } };
+  }
 }
 
 // docs/02 M2: "wire the LLM extraction client ... run after OCR completes."

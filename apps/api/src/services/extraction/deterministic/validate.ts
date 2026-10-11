@@ -1,6 +1,6 @@
 import { MARKER_REGISTRY } from "@prelude/shared";
 import { aliasKeys, squash } from "./aliases";
-import { unitsEquivalent } from "./units";
+import { normUnit, unitsEquivalent } from "./units";
 import type { ParsedRow, RowShape } from "./rows";
 
 const NUMERIC = /^[<>]?\s?\d[\d,]*(\.\d+)?$/;
@@ -34,21 +34,42 @@ export function printedFlagAgrees(row: ParsedRow): boolean | null {
   const value = Number(row.value);
   if (!bounds || !Number.isFinite(value)) return null;
   const flag = row.flag.toUpperCase();
-  if (flag === "H" || flag === "HH" || flag === "HIGH") return value > bounds.hi;
-  if (flag === "L" || flag === "LL" || flag === "LOW") return value < bounds.lo;
+  // >= / <= : a printed bound is itself rounded, so a value exactly at the bound can legitimately carry the flag.
+  if (flag === "H" || flag === "HH" || flag === "HIGH") return value >= bounds.hi;
+  if (flag === "L" || flag === "LL" || flag === "LOW") return value <= bounds.lo;
   return null;
 }
 
-function num(rows: ParsedRow[], canonical: string): number | null {
-  const row = rows.find((r) => aliasKeys(r.label).has(squash(canonical)));
-  if (!row) return null;
-  const v = Number(row.value);
+// A blank value is not zero: Number("") === 0 would let a missing result pass an arithmetic check.
+function toNum(value: string): number | null {
+  if (value.trim() === "") return null;
+  const v = Number(value.replace(/,/g, ""));
   return Number.isFinite(v) ? v : null;
 }
 
-function rowFor(rows: ParsedRow[], canonical: string): ParsedRow | null {
-  return rows.find((r) => aliasKeys(r.label).has(squash(canonical))) ?? null;
+const isPercent = (r: ParsedRow) => r.unit === null || /^%$/.test(r.unit.trim());
+
+// First row naming `canonical` that also satisfies `pred` (labels are reused across sections of one report).
+function rowFor(rows: ParsedRow[], canonical: string, pred: (r: ParsedRow) => boolean = () => true): ParsedRow | null {
+  return rows.find((r) => aliasKeys(r.label).has(squash(canonical)) && pred(r)) ?? null;
 }
+
+function num(rows: ParsedRow[], canonical: string, pred?: (r: ParsedRow) => boolean): number | null {
+  const row = rowFor(rows, canonical, pred);
+  return row ? toNum(row.value) : null;
+}
+
+// Counts per microlitre, for comparing absolute counts reported as 10^3/uL, /cumm, /uL or 10^9/L. null = unknown unit.
+function perMicroLitre(value: number, unit: string | null): number | null {
+  if (unit === null) return value;
+  const u = normUnit(unit).replace(/^cells\//, "/");
+  if (u === "10^3/ul") return value * 1000;
+  if (u === "/cumm" || u === "/mm3" || u === "/ul") return value;
+  return null;
+}
+
+// Haemoglobin must be g/dL for the MCHC/MCH formulas; g/L (135) would produce false failures.
+const hbInGdl = (row: ParsedRow | null) => row !== null && (row.unit === null || unitsEquivalent(row.unit, "g/dL"));
 
 export interface NamedCheck {
   key: string;
@@ -71,7 +92,7 @@ const DIFF_TO_ABSOLUTE: [string, string, string][] = [
 export function validateDocument(rows: ParsedRow[]): NamedCheck[] {
   const out: NamedCheck[] = [];
 
-  const diffValues = DIFFERENTIAL.map((name) => ({ name, row: rowFor(rows, name), value: num(rows, name) }));
+  const diffValues = DIFFERENTIAL.map((name) => ({ name, row: rowFor(rows, name, isPercent), value: num(rows, name, isPercent) }));
   if (diffValues.every((d) => d.value !== null)) {
     const sum = diffValues.reduce((s, d) => s + d.value!, 0);
     out.push({
@@ -82,14 +103,15 @@ export function validateDocument(rows: ParsedRow[]): NamedCheck[] {
     });
   }
 
-  const hb = num(rows, "Haemoglobin");
+  const hbRow = rowFor(rows, "Haemoglobin");
+  const hb = hbInGdl(hbRow) ? num(rows, "Haemoglobin") : null;
   const pcv = num(rows, "PCV");
   const rbc = num(rows, "RBC");
 
   const mchcRow = rowFor(rows, "MCHC");
   if (hb !== null && pcv !== null && pcv !== 0 && mchcRow) {
-    const mchc = Number(mchcRow.value);
-    if (Number.isFinite(mchc)) {
+    const mchc = toNum(mchcRow.value);
+    if (mchc !== null) {
       const expected = (hb / pcv) * 100;
       out.push({ key: "mchc", rows: [mchcRow], pass: Math.abs(mchc - expected) <= 1.5, detail: `MCHC ${mchc} vs expected ${expected.toFixed(1)}` });
     }
@@ -97,8 +119,8 @@ export function validateDocument(rows: ParsedRow[]): NamedCheck[] {
 
   const mcvRow = rowFor(rows, "MCV");
   if (pcv !== null && rbc !== null && rbc !== 0 && mcvRow) {
-    const mcv = Number(mcvRow.value);
-    if (Number.isFinite(mcv)) {
+    const mcv = toNum(mcvRow.value);
+    if (mcv !== null) {
       const expected = (pcv / rbc) * 10;
       out.push({ key: "mcv", rows: [mcvRow], pass: Math.abs(mcv - expected) <= 3, detail: `MCV ${mcv} vs expected ${expected.toFixed(1)}` });
     }
@@ -106,31 +128,38 @@ export function validateDocument(rows: ParsedRow[]): NamedCheck[] {
 
   const mchRow = rowFor(rows, "MCH");
   if (hb !== null && rbc !== null && rbc !== 0 && mchRow) {
-    const mch = Number(mchRow.value);
-    if (Number.isFinite(mch)) {
+    const mch = toNum(mchRow.value);
+    if (mch !== null) {
       const expected = (hb / rbc) * 10;
       out.push({ key: "mch", rows: [mchRow], pass: Math.abs(mch - expected) <= 1, detail: `MCH ${mch} vs expected ${expected.toFixed(1)}` });
     }
   }
 
-  const tlc = num(rows, "WBC");
+  const tlcRow = rowFor(rows, "WBC");
+  const tlcRaw = tlcRow ? toNum(tlcRow.value) : null;
+  const tlc = tlcRow && tlcRaw !== null ? perMicroLitre(tlcRaw, tlcRow.unit) : null;
   if (tlc !== null) {
     for (const [pctName, absName, key] of DIFF_TO_ABSOLUTE) {
-      const pct = num(rows, pctName);
+      const pct = num(rows, pctName, isPercent);
       const absRow = rowFor(rows, absName);
       if (pct === null || !absRow) continue;
-      const abs = Number(absRow.value);
-      if (!Number.isFinite(abs)) continue;
+      const absRaw = toNum(absRow.value);
+      // Mixed or unknown units (one side null, or an unrecognised spelling): skip rather than invent a failure.
+      if (absRaw === null || (tlcRow!.unit === null) !== (absRow.unit === null)) continue;
+      const abs = perMicroLitre(absRaw, absRow.unit);
+      if (abs === null) continue;
       const expected = (tlc * pct) / 100;
-      out.push({ key, rows: [absRow], pass: Math.abs(abs - expected) <= expected * 0.05, detail: `${key} ${abs} vs expected ${expected.toFixed(2)}` });
+      // 5% of the expected count, or the rounding of the printed percentage (+-0.5% of the total count), whichever is larger.
+      const tolerance = Math.max(expected * 0.05, tlc * 0.005);
+      out.push({ key, rows: [absRow], pass: Math.abs(abs - expected) <= tolerance, detail: `${key} ${abs} vs expected ${expected.toFixed(0)} per uL` });
     }
   }
 
   const urea = num(rows, "UREA");
   const bunRow = rowFor(rows, "BLOOD UREA NITROGEN (BUN)");
   if (urea !== null && bunRow) {
-    const bun = Number(bunRow.value);
-    if (Number.isFinite(bun)) {
+    const bun = toNum(bunRow.value);
+    if (bun !== null) {
       const expected = urea * 0.467;
       out.push({ key: "bun", rows: [bunRow], pass: Math.abs(bun - expected) <= expected * 0.03, detail: `BUN ${bun} vs expected ${expected.toFixed(2)}` });
     }
@@ -140,8 +169,8 @@ export function validateDocument(rows: ParsedRow[]): NamedCheck[] {
   const globulin = num(rows, "GLOBULIN");
   const agRow = rowFor(rows, "A/G RATIO");
   if (albumin !== null && globulin !== null && globulin !== 0 && agRow) {
-    const ratio = Number(agRow.value);
-    if (Number.isFinite(ratio)) {
+    const ratio = toNum(agRow.value);
+    if (ratio !== null) {
       const expected = albumin / globulin;
       out.push({ key: "agRatio", rows: [agRow], pass: Math.abs(ratio - expected) <= 0.05, detail: `A/G ${ratio} vs expected ${expected.toFixed(2)}` });
     }
@@ -151,8 +180,8 @@ export function validateDocument(rows: ParsedRow[]): NamedCheck[] {
   const direct = num(rows, "BILIRUBIN (Direct)");
   const indirectRow = rowFor(rows, "BILIRUBIN (Indirect)");
   if (total !== null && direct !== null && indirectRow) {
-    const indirect = Number(indirectRow.value);
-    if (Number.isFinite(indirect)) {
+    const indirect = toNum(indirectRow.value);
+    if (indirect !== null) {
       const expected = total - direct;
       out.push({
         key: "indirectBilirubin",
@@ -170,6 +199,11 @@ export function validateDocument(rows: ParsedRow[]): NamedCheck[] {
 export function rowConfidence(shape: RowShape): number {
   return { full: 0.95, value_unit: 0.85, dash: 0.85, qualitative: 0.8, value_only: 0.7, merged: 0.65 }[shape];
 }
+
+// A failed check must put the row in front of a reviewer: confidence is capped below EXTRACTION_CONFIDENCE_THRESHOLD
+// (0.7, services/rules.ts) so assignCoverageStatus marks it extraction_uncertain. Lowering by 0.2 alone left a fully
+// parsed row (0.95) at 0.75, still 'value_found'.
+export const REVIEW_CONFIDENCE_CAP = 0.6;
 
 export interface ValidatedRow {
   row: ParsedRow;
@@ -195,6 +229,7 @@ export function applyChecks(rows: ParsedRow[]): ValidatedRow[] {
   return rows.map((row) => {
     const checks = checksByRow.get(row)!;
     const failed = Object.values(checks).filter((v) => v === false).length;
-    return { row, checks, confidence: Math.max(0, rowConfidence(row.shape) - 0.2 * failed) };
+    const base = Math.max(0, rowConfidence(row.shape) - 0.2 * failed);
+    return { row, checks, confidence: failed > 0 ? Math.min(base, REVIEW_CONFIDENCE_CAP) : base };
   });
 }

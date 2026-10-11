@@ -173,3 +173,14 @@ test("a wrapped label never swallows a section header or the next test name", ()
   const b = parse("Neutrophils (Absolute -   4.2   10^3/uL\nLymphocytes");
   expect(b.rows[0]!.label).toBe("Neutrophils (Absolute -");
 });
+
+test("single-spaced result lines (OCR text with no column structure) are counted as unplaced, not silently lost", () => {
+  const r = parse(["Platelet 182 10^3/uL 150-410", "TLC 7.40 10^3/uL 4-10", "SGPT 34 U/L 0-35", "Creatinine 0.92 mg/dL 0.6-1.3", "CEA 3.1 ng/mL", "Hemoglobin 11.8"].join("\n"));
+  expect(r.rows).toEqual([]);
+  expect(r.unplacedNumeric).toHaveLength(6);
+});
+
+test("header and address lines are not counted as single-spaced results", () => {
+  const r = parse(["Collected On 08/Apr/2026", "Page 1 of 2", "Mobile 9999900000", "Report Date 20-07-2026"].join("\n"));
+  expect(r.unplacedNumeric).toEqual([]);
+});

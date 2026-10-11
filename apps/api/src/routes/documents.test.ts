@@ -363,6 +363,8 @@ test("runOcr reuses a same-patient, same-hash document's OCR result instead of c
   const freshRef = await newDocumentRow({ file_sha256: sha, ocr_status: "pending" });
   const [fresh] = await sql`SELECT * FROM documents WHERE id = ${freshRef.id}`; // runOcr gets the full row in production
   const savedProvider = process.env.OCR_PROVIDER;
+  const savedMode = process.env.EXTRACTION_MODE;
+  process.env.EXTRACTION_MODE = "deterministic"; // OCR reuse is part of the deterministic mode only
   delete process.env.OCR_PROVIDER; // if reuse works, the (unconfigured) OCR provider is never called
   try {
     const updated = await runOcrForTest(fresh, new File(["anything"], "x.pdf", { type: "application/pdf" }), "blood", staff.id, null);
@@ -371,6 +373,7 @@ test("runOcr reuses a same-patient, same-hash document's OCR result instead of c
     expect((await readOcrResult(ocr_text_ref)).fullText).toBe("reused text");
   } finally {
     if (savedProvider !== undefined) process.env.OCR_PROVIDER = savedProvider;
+    if (savedMode === undefined) delete process.env.EXTRACTION_MODE; else process.env.EXTRACTION_MODE = savedMode;
   }
 });
 
@@ -389,12 +392,15 @@ test("OCR reuse never crosses patients: the same hash on another patient's docum
   const freshRef = await newDocumentRow({ file_sha256: sha, ocr_status: "pending" });
   const [fresh] = await sql`SELECT * FROM documents WHERE id = ${freshRef.id}`;
   const savedProvider = process.env.OCR_PROVIDER;
+  const savedMode = process.env.EXTRACTION_MODE;
+  process.env.EXTRACTION_MODE = "deterministic";
   delete process.env.OCR_PROVIDER; // no reuse -> the unconfigured OCR provider is called -> OCR fails, recorded as 'failed'
   try {
     const updated = await runOcrForTest(fresh, new File(["x"], "x.pdf", { type: "application/pdf" }), "blood", staff.id, null);
     expect(updated.ocr_status).toBe("failed");
   } finally {
     if (savedProvider !== undefined) process.env.OCR_PROVIDER = savedProvider;
+    if (savedMode === undefined) delete process.env.EXTRACTION_MODE; else process.env.EXTRACTION_MODE = savedMode;
     await sql`DELETE FROM documents WHERE id = ${otherDoc.id}`;
     await deleteTestPatients(other.id);
   }
@@ -522,4 +528,67 @@ test("confirming a held document detects conflicts for its now-live facts; the h
   expect((await setDocumentIdentityStatus(req, asAuthedUser(staff))).status).toBe(200);
   const after = await sql`SELECT id FROM conflicts WHERE fact_id_a IN (${live.id}, ${held.id}) OR fact_id_b IN (${live.id}, ${held.id})`;
   expect(after.length).toBeGreaterThan(0);
+});
+
+// ---- fallback and OCR-reuse safety (review C4, I6) ----
+
+const llmCandidate = () => datedCandidate({ trackedMarkerLabel: "CEA", value: "3.1" });
+const stats = (rows: number, unplaced: number) => ({ rows, unplacedNumericLines: unplaced, lines: rows + unplaced + 5 });
+const detProvider = (candidates: ExtractedFactCandidate[], st: { rows: number; unplacedNumericLines: number; lines: number }): ExtractionProvider => ({
+  name: "deterministic",
+  extractFacts: async () => ({ candidates, failedFieldTypes: [], stats: st, header: { labName: null, collectedOn: null, receivedOn: null, reportedOn: null, patientName: "Test Patient", labPatientRef: null } }),
+});
+
+test("extractWithFallback: a PARTIAL parse (many unplaced numeric lines) escalates to the LLM instead of recording a complete 'done'", async () => {
+  let llmCalls = 0;
+  const llm: ExtractionProvider = { name: "llm", extractFacts: async () => { llmCalls++; return { candidates: [llmCandidate(), datedCandidate()], failedFieldTypes: [] }; } };
+  const out = await extractWithFallback(ocrResult, "blood", detProvider([datedCandidate()], stats(1, 4)), () => llm);
+  expect(llmCalls).toBe(1);
+  expect(out.candidates).toHaveLength(2);
+  expect(out.header?.patientName).toBe("Test Patient");
+});
+
+test("extractWithFallback: a few benign unplaced lines on a well-parsed document do not trigger the LLM", async () => {
+  let llmCalls = 0;
+  const llm: ExtractionProvider = { name: "llm", extractFacts: async () => { llmCalls++; return { candidates: [], failedFieldTypes: [] }; } };
+  const rows = Array.from({ length: 80 }, () => datedCandidate());
+  const out = await extractWithFallback(ocrResult, "blood", detProvider(rows, stats(80, 10)), () => llm);
+  expect(llmCalls).toBe(0);
+  expect(out.candidates).toHaveLength(80);
+});
+
+test("extractWithFallback: if the LLM fallback throws, the deterministic result (and header) is kept and the gap is recorded as a failure, not lost", async () => {
+  const llm: ExtractionProvider = { name: "llm", extractFacts: async () => { throw new Error("LLM down"); } };
+  const out = await extractWithFallback(ocrResult, "blood", detProvider([datedCandidate()], stats(1, 4)), () => llm);
+  expect(out.candidates).toHaveLength(1);
+  expect(out.failedFieldTypes.length).toBeGreaterThan(0);
+  expect(JSON.stringify(out.failureMessages)).toContain("LLM down");
+  expect(out.header?.patientName).toBe("Test Patient");
+});
+
+test("extractWithFallback: an LLM that finds nothing does not discard what the deterministic pass found", async () => {
+  const llm: ExtractionProvider = { name: "llm", extractFacts: async () => ({ candidates: [], failedFieldTypes: [] }) };
+  const out = await extractWithFallback(ocrResult, "blood", detProvider([datedCandidate()], stats(1, 4)), () => llm);
+  expect(out.candidates).toHaveLength(1);
+});
+
+test("OCR reuse is off in the default (llm) mode: the same bytes re-uploaded run OCR again", async () => {
+  const sha = "c".repeat(64);
+  const existing = await newDocumentRow({ file_sha256: sha, ocr_status: "done" });
+  const { saveOcrResult } = await import("../services/storage");
+  const { file_ref } = await saveOcrResult(patientId, existing.id, { fullText: "t", pages: [{ pageNumber: 1, text: "t" }], providerName: "test", providerRaw: null });
+  await sql`UPDATE documents SET ocr_text_ref = ${file_ref} WHERE id = ${existing.id}`;
+  const freshRef = await newDocumentRow({ file_sha256: sha, ocr_status: "pending" });
+  const [fresh] = await sql`SELECT * FROM documents WHERE id = ${freshRef.id}`;
+  const savedProvider = process.env.OCR_PROVIDER;
+  const savedMode = process.env.EXTRACTION_MODE;
+  delete process.env.OCR_PROVIDER;
+  delete process.env.EXTRACTION_MODE;
+  try {
+    const updated = await runOcrForTest(fresh, new File(["x"], "x.pdf", { type: "application/pdf" }), "blood", staff.id, null);
+    expect(updated.ocr_status).toBe("failed"); // reuse would have made this 'done'
+  } finally {
+    if (savedProvider !== undefined) process.env.OCR_PROVIDER = savedProvider;
+    if (savedMode !== undefined) process.env.EXTRACTION_MODE = savedMode;
+  }
 });

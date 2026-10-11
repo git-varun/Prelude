@@ -40,6 +40,8 @@ const NOTES_START = /^(clinical notes?|notes?\b|comment|interpretation|remarks?|
 const TABLE_HEADER = /^(test name|test description|test|investigation|observation|parameter|analyte)$/i;
 const RESULT_COLUMN = /^(results?|values?(\(s\))?|observed value|observation)$/i;
 // A number followed by a unit inside one cell ("Hb 10.1 g/dL 13-17"): a result-shaped line even when no rule parsed it.
+// "Label 12.3 unit range" in one cell: result-shaped even without column structure (single-spaced OCR text).
+const LABEL_NUMBER = /^[A-Za-z][A-Za-z ()\/.%-]{1,40}\s[<>]?\d[\d.,]*(?:\s+\S+){0,2}$/;
 const NUMUNIT = /\s[<>]?\d[\d.,]*\s*(%|[A-Za-zµμ]+\/[A-Za-z0-9µμ^.\/]+)/;
 const SECTION_WORDS = /(profile|panel|count|haematology|hematology|biochemistry|immunology|pathology|endocrinology|serology|examination|function test)/i;
 const CONTINUATION = /^[A-Za-z][A-Za-z0-9() \-\/]{0,40}$/;
@@ -187,7 +189,7 @@ export function parseRows(lines: Line[]): ParseRowsResult {
       classes[i] = "section";
       continue;
     }
-    if (cells.length === 1 && !isExcluded(cells[0]!) && /^[A-Za-z]/.test(cells[0]!) && cells[0]!.length <= 100 && NUMUNIT.test(cells[0]!)) {
+    if (cells.length === 1 && !isExcluded(cells[0]!) && /^[A-Za-z]/.test(cells[0]!) && cells[0]!.length <= 100 && (NUMUNIT.test(cells[0]!) || LABEL_NUMBER.test(cells[0]!))) {
       classes[i] = "unplaced_numeric";
       unplacedNumeric.push(line);
       continue;

@@ -32,6 +32,13 @@
 - **Marker collision before production use:** `MARKER_REGISTRY` holds `Tg` (thyroglobulin) and `matchMarker` is case-insensitive, so a lipid row `TG 150 mg/dL` would canonicalise to Thyroglobulin once candidates are matched in `persistExtractedFacts`. The list comes from the partner oncologist (Decisions Log), so changing the alias needs clinical input. Until decided, keep `EXTRACTION_MODE=llm` in production.
 - **Sign-off of a held document's facts:** reads exclude held facts, but a clinician can still sign off a held document's fact from the review screen. Decide whether sign-off should be blocked while `identity_status = 'mismatch'`.
 
+## Deploy order and remaining gaps (from the phase 2 final review)
+
+- **Migration 009 must be applied BEFORE this code is deployed, in every mode.** `LIVE_FACT_FILTER` now references `documents.identity_status`, so every snapshot, timeline, visit and conflict read fails on a database without the column; migrations are applied by hand (`psql $DATABASE_URL -f ...`) and `infra/deploy.sh` does not run them.
+- **Do not enable `EXTRACTION_MODE=deterministic` in production until:** (1) a screen lists documents held for identity (`identity_status = 'mismatch'`), because today a held document is invisible except on its own review page and a legitimate document (name variants such as `Mohd` / `Mohammed`, OCR errors in the name) would silently drop out of the snapshot; (2) the `partial` identity status (close first-name variants such as `Amit` / `Amita`, a first-name-only report) is shown to staff, because nothing reads it yet; (3) the `Tg` / `TG` marker collision and sign-off-while-held decisions below are made.
+- **Default (`llm`) mode changes that remain:** every upload now stores `file_sha256`, and every fact read now joins `documents.identity_status` (NULL for all existing documents, never held). OCR reuse is gated to deterministic mode only.
+- **Read-side defence, not just write-side:** held documents are excluded by `LIVE_FACT_FILTER`, by the conflict join in `loadConflicts`, and by a guard inside `detectConflicts`; `routes/conflicts.ts` `factWithProvenance` was left unfiltered because no conflict can reference a held fact any more.
+
 ## Review Focus
 
 - A document whose report has no printed patient name at all, or whose patient record has no name, must be `unknown`, never `mismatch` — a missing name is not evidence of a wrong patient. (Task 1)
