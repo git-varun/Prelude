@@ -1,5 +1,5 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
-import { uploadDocument, runExtraction, runOcrForTest, extractWithFallback } from "./documents";
+import { uploadDocument, runExtraction, runOcrForTest, extractWithFallback, setDocumentIdentityStatus } from "./documents";
 import type { ExtractedFactCandidate, ExtractionProvider, FieldType } from "@prelude/shared";
 import { createOrOpenVisit } from "./visits";
 import { sql } from "../db/client";
@@ -457,4 +457,69 @@ test("extractWithFallback does not resolve the LLM provider unless a fallback is
     throw new Error("LLM provider must not be resolved");
   });
   expect(out.candidates).toHaveLength(1);
+});
+
+test("setDocumentIdentityStatus 404s for an unknown document", async () => {
+  const req = new Request("http://localhost/documents/x/identity", { method: "POST", body: JSON.stringify({ action: "confirm" }) }) as Request & { params: { id: string } };
+  req.params = { id: "00000000-0000-0000-0000-000000000000" };
+  const res = await setDocumentIdentityStatus(req, asAuthedUser(staff));
+  expect(res.status).toBe(404);
+});
+
+test("setDocumentIdentityStatus rejects an action other than confirm/reject", async () => {
+  const doc = await newDocumentRow({ identity_status: "mismatch" });
+  const req = new Request(`http://localhost/documents/${doc.id}/identity`, { method: "POST", body: JSON.stringify({ action: "ignore" }) }) as Request & { params: { id: string } };
+  req.params = { id: doc.id };
+  const res = await setDocumentIdentityStatus(req, asAuthedUser(staff));
+  expect(res.status).toBe(400);
+});
+
+test("setDocumentIdentityStatus 409s when the document isn't currently held (identity_status != 'mismatch')", async () => {
+  const doc = await newDocumentRow({ identity_status: "matched" });
+  const req = new Request(`http://localhost/documents/${doc.id}/identity`, { method: "POST", body: JSON.stringify({ action: "confirm" }) }) as Request & { params: { id: string } };
+  req.params = { id: doc.id };
+  const res = await setDocumentIdentityStatus(req, asAuthedUser(staff));
+  expect(res.status).toBe(409);
+});
+
+test("confirm moves a held document to 'confirmed' and logs an audit_log row", async () => {
+  const doc = await newDocumentRow({ identity_status: "mismatch" });
+  const req = new Request(`http://localhost/documents/${doc.id}/identity`, { method: "POST", body: JSON.stringify({ action: "confirm" }) }) as Request & { params: { id: string } };
+  req.params = { id: doc.id };
+  const res = await setDocumentIdentityStatus(req, asAuthedUser(staff));
+  expect(res.status).toBe(200);
+  const [row] = await sql`SELECT identity_status FROM documents WHERE id = ${doc.id}`;
+  expect(row.identity_status).toBe("confirmed");
+  const [audit] = await sql`SELECT action FROM audit_log WHERE entity_type = 'document' AND entity_id = ${doc.id} AND action = 'confirm_identity'`;
+  expect(audit).toBeTruthy();
+});
+
+test("reject moves a held document to 'rejected'", async () => {
+  const doc = await newDocumentRow({ identity_status: "mismatch" });
+  const req = new Request(`http://localhost/documents/${doc.id}/identity`, { method: "POST", body: JSON.stringify({ action: "reject" }) }) as Request & { params: { id: string } };
+  req.params = { id: doc.id };
+  const res = await setDocumentIdentityStatus(req, asAuthedUser(staff));
+  expect(res.status).toBe(200);
+  const [row] = await sql`SELECT identity_status FROM documents WHERE id = ${doc.id}`;
+  expect(row.identity_status).toBe("rejected");
+});
+
+test("confirming a held document detects conflicts for its now-live facts; the held persist created none", async () => {
+  const doc = await newDocumentRow({ identity_status: "mismatch" });
+  const [d] = await sql`SELECT patient_id, visit_id FROM documents WHERE id = ${doc.id}`;
+  const [marker] = await sql`INSERT INTO tracked_markers (patient_id, marker_name, is_custom, added_by) VALUES (${d.patient_id}, 'CEA', false, ${staff.id}) RETURNING id`;
+  const [liveDoc] = await sql`INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, ocr_status) VALUES (${d.patient_id}, ${d.visit_id}, 'local://t/live.pdf', 'blood', 'own_hospital', ${staff.id}, 'done') RETURNING id`;
+  const ins = (documentId: string, value: string) => sql`
+    INSERT INTO facts (patient_id, visit_id, document_id, tracked_marker_id, field_type, value, unit, as_of_date, coverage_status, verification_state)
+    VALUES (${d.patient_id}, ${d.visit_id}, ${documentId}, ${marker.id}, 'marker_value', ${value}, 'ng/mL', '2026-05-01', 'value_found', 'unverified') RETURNING id`;
+  const [live] = await ins(liveDoc.id, "4.2");
+  const [held] = await ins(doc.id, "9.0");
+  const before = await sql`SELECT id FROM conflicts WHERE fact_id_a IN (${live.id}, ${held.id}) OR fact_id_b IN (${live.id}, ${held.id})`;
+  expect(before).toHaveLength(0);
+
+  const req = new Request(`http://localhost/documents/${doc.id}/identity`, { method: "POST", body: JSON.stringify({ action: "confirm" }) }) as Request & { params: { id: string } };
+  req.params = { id: doc.id };
+  expect((await setDocumentIdentityStatus(req, asAuthedUser(staff))).status).toBe(200);
+  const after = await sql`SELECT id FROM conflicts WHERE fact_id_a IN (${live.id}, ${held.id}) OR fact_id_b IN (${live.id}, ${held.id})`;
+  expect(after.length).toBeGreaterThan(0);
 });

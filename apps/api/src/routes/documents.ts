@@ -4,6 +4,7 @@ import type { AuthedUser } from "../middleware/auth";
 import { deleteDocumentFile, documentFile, readOcrResult, saveDocumentFile, saveOcrResult } from "../services/storage";
 import { getExtractionProvider, getLlmExtractionProvider, getOcrProvider } from "../services/providerFactory";
 import { persistExtractedFacts } from "../services/facts";
+import { detectConflicts } from "../services/rules";
 import { matchIdentity } from "../services/extraction/deterministic/identity";
 import { IMAGING_MODALITY_OPTIONS } from "@prelude/shared";
 import type { DocumentType, ExtractionProvider, ExtractionResult, OcrResult } from "@prelude/shared";
@@ -308,4 +309,54 @@ export async function getDocumentFile(req: Request & { params: { id: string } })
   if (!(await file.exists())) return jsonError(404, "not_found", "Document file is not available in storage.");
 
   return new Response(file, { headers: { "Content-Type": contentTypeForFileRef(document.file_ref) } });
+}
+
+const IDENTITY_ACTIONS = ["confirm", "reject"] as const;
+
+// Resolves a document held for a patient-identity mismatch (identity.ts). Only a
+// document currently 'mismatch' can be acted on -- matches conflicts.ts's
+// "must be open" precedent. 'confirmed' lifts the LIVE_FACT_FILTER hold;
+// 'rejected' keeps it held permanently (staff confirmed it's the wrong patient).
+export async function setDocumentIdentityStatus(req: Request & { params: { id: string } }, user: AuthedUser): Promise<Response> {
+  const documentId = req.params.id;
+  if (!isUuid(documentId)) return jsonError(404, "not_found", "Document not found.");
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await req.json()) as Record<string, unknown>;
+  } catch {
+    return jsonError(400, "bad_request", "Malformed JSON body.");
+  }
+  const { action } = body;
+  if (!(IDENTITY_ACTIONS as readonly string[]).includes(action as string)) {
+    return jsonError(400, "bad_request", `action must be one of: ${IDENTITY_ACTIONS.join(", ")}.`);
+  }
+  const nextStatus = action === "confirm" ? "confirmed" : "rejected";
+
+  const outcome = await sql.begin(async (tx) => {
+    const [before] = await tx`SELECT * FROM documents WHERE id = ${documentId} FOR UPDATE`;
+    if (!before) return "not_found" as const;
+    if (before.identity_status !== "mismatch") return "not_held" as const;
+
+    const [updated] = await tx`
+      UPDATE documents SET identity_status = ${nextStatus}::identity_status WHERE id = ${documentId} RETURNING *
+    `;
+    await tx`
+      INSERT INTO audit_log (actor_id, action, entity_type, entity_id, before_value, after_value)
+      VALUES (${user.id}, ${action === "confirm" ? "confirm_identity" : "reject_identity"}, 'document', ${documentId}, ${JSON.stringify(before)}::jsonb, ${JSON.stringify(updated)}::jsonb)
+    `;
+    // Conflict detection was skipped while the document was held (Task 6); a confirmed document's facts are now live,
+    // so detect conflicts for them now. A rejected document stays out of every read and never opens conflicts.
+    if (action === "confirm") {
+      const facts = await tx`SELECT * FROM facts WHERE document_id = ${documentId}`;
+      for (const fact of facts) await detectConflicts(tx, fact as any);
+    }
+    return "ok" as const;
+  });
+
+  if (outcome === "not_found") return jsonError(404, "not_found", "Document not found.");
+  if (outcome === "not_held") return jsonError(409, "conflict", "Only a document held for identity mismatch can be confirmed or rejected.");
+
+  const [document] = await sql`SELECT * FROM documents WHERE id = ${documentId}`;
+  return Response.json(document);
 }
