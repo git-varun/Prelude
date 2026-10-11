@@ -18,6 +18,7 @@ export class DeterministicExtractionProvider implements ExtractionProvider {
       candidates: toCandidates(parsed),
       failedFieldTypes: [],
       stats: { rows: parsed.rows.length, unplacedNumericLines: parsed.unplacedNumeric.length, lines: parsed.lineCount },
+      header: parsed.header,
     };
   }
 }

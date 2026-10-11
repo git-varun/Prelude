@@ -1,8 +1,11 @@
 import type { ExtractedFactCandidate, OcrResult } from "@prelude/shared";
 import { parseHeader, type HeaderFields } from "./header";
 import { linesFromText } from "./lines";
-import { parseRows, type ParsedRow, type RowShape } from "./rows";
+import { parseRows, type ParsedRow } from "./rows";
 import type { Line } from "./types";
+import { applyChecks, rowConfidence } from "./validate";
+
+export { rowConfidence };
 
 export interface ParsedDocument {
   header: HeaderFields;
@@ -18,14 +21,9 @@ export function parseDocument(ocr: OcrResult): ParsedDocument {
   return { header, rows, unplacedNumeric, lineCount: lines.length };
 }
 
-// Confidence comes from how completely the row parsed (structure), never from a model.
-export function rowConfidence(shape: RowShape): number {
-  return { full: 0.95, value_unit: 0.85, dash: 0.85, qualitative: 0.8, value_only: 0.7, merged: 0.65 }[shape];
-}
-
 export function toCandidates(parsed: ParsedDocument): ExtractedFactCandidate[] {
   const asOfDate = parsed.header.collectedOn ?? parsed.header.reportedOn ?? null;
-  return parsed.rows.map((row) => ({
+  return applyChecks(parsed.rows).map(({ row, checks, confidence }) => ({
     fieldType: "marker_value",
     trackedMarkerLabel: row.label,
     value: row.value,
@@ -36,6 +34,8 @@ export function toCandidates(parsed: ParsedDocument): ExtractedFactCandidate[] {
     sourcePage: row.page,
     sourceLocation: null,
     sourceSnippet: row.snippet,
-    confidence: rowConfidence(row.shape),
+    confidence,
+    printedFlag: row.flag,
+    parseChecks: checks,
   }));
 }

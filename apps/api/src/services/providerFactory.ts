@@ -3,6 +3,7 @@ import { AzureDocIntelligenceProvider } from "./ocr/azureDocIntelligence";
 import { GoogleDocumentAiProvider } from "./ocr/googleDocumentAi";
 import { AnthropicExtractionProvider } from "./extraction/anthropicExtraction";
 import { GeminiExtractionProvider } from "./extraction/geminiExtraction";
+import { DeterministicExtractionProvider } from "./extraction/deterministic/provider";
 
 let cachedProvider: OcrProvider | undefined;
 
@@ -87,9 +88,23 @@ function buildExtractionProvider(): ExtractionProvider {
   throw new Error(`Unrecognized EXTRACTION_PROVIDER: ${providerName}. Expected 'anthropic' or 'gemini'.`);
 }
 
-export function getExtractionProvider(): ExtractionProvider {
+let cachedDeterministicProvider: ExtractionProvider | undefined;
+
+// The configured LLM provider regardless of EXTRACTION_MODE; the deterministic path falls back to it.
+export function getLlmExtractionProvider(): ExtractionProvider {
   if (!cachedExtractionProvider) {
     cachedExtractionProvider = buildExtractionProvider();
   }
   return cachedExtractionProvider;
+}
+
+// EXTRACTION_MODE=deterministic enables the rule-based parser; anything else (unset, a typo) keeps today's LLM path.
+export function getExtractionProvider(): ExtractionProvider {
+  if (process.env.EXTRACTION_MODE === "deterministic") {
+    if (!cachedDeterministicProvider) {
+      cachedDeterministicProvider = new DeterministicExtractionProvider();
+    }
+    return cachedDeterministicProvider;
+  }
+  return getLlmExtractionProvider();
 }

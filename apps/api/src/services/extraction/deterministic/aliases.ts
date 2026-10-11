@@ -48,6 +48,15 @@ const GROUPS: string[][] = [
   ["Free T4", "FT4", "Free Thyroxine (FT4)", "FREE THYROXINE (FT4)"],
   ["TSH", "Thyroid Stimulating Hormone", "THYROID STIMULATING HORMONE (TSH)", "TSH (Ultra Sensitive)", "TSH - Ultrasensitive", "Thyroid Stimulating Hormone - Ultrasensitive", "TSH Ultrasensitive"],
   ["TACROLIMUS", "Tacrolimus Level", "TACROLIMUS - DRUG", "FK506"],
+  ["ALBUMIN", "Serum Albumin", "S. Albumin", "ALBUMIN-SERUM"],
+  ["GLOBULIN", "Serum Globulin", "S. Globulin", "GLOBULIN-SERUM"],
+  ["A/G RATIO", "A/G", "AG RATIO", "Albumin/Globulin Ratio", "A/G Ratio"],
+  ["BILIRUBIN (Indirect)", "Indirect Bilirubin", "Bilirubin, Indirect", "I. Bilirubin"],
+  ["ABSOLUTE NEUTROPHIL COUNT", "ANC", "Absolute Neutrophil Count"],
+  ["ABSOLUTE LYMPHOCYTE COUNT", "ALC", "Absolute Lymphocyte Count"],
+  ["ABSOLUTE MONOCYTE COUNT", "AMC", "Absolute Monocyte Count"],
+  ["ABSOLUTE EOSINOPHIL COUNT", "AEC", "Absolute Eosinophil Count"],
+  ["ABSOLUTE BASOPHIL COUNT", "ABC", "Absolute Basophil Count"],
 ];
 
 const SQUASHED = [...GROUPS, ...MARKER_REGISTRY.map((m) => [m.canonical, ...m.aliases])].map((g) => new Set(g.map(squash)));

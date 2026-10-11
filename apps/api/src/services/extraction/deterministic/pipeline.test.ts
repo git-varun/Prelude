@@ -38,3 +38,33 @@ test("non-blood documents are reported as not handled, not as empty", async () =
   expect(r.candidates).toEqual([]);
   expect(r.failedFieldTypes).toEqual(["radiology_impression", "disease_status_trend"]);
 });
+
+test("a candidate carries the printed flag and per-row parse checks, with confidence reduced for a failed check", () => {
+  const text = [
+    "SYNTHETIC DIAGNOSTIC LABS",
+    "Patient Name : Mr. TEST PERSON      Collected On : 08/Apr/2026 10:00 AM",
+    "Test Name   Result   Unit   Bio. Ref. Interval",
+    "Neutrophils      92      %      40-80      H",
+  ].join("\n");
+  const c = toCandidates(parseDocument(ocr(text)));
+  expect(c[0]).toMatchObject({ printedFlag: "H" });
+  expect(c[0]!.parseChecks).toMatchObject({ valueParses: true, printedFlagAgrees: true });
+});
+
+test("DeterministicExtractionProvider reports parsed header fields on the result for blood documents", async () => {
+  const r = await new DeterministicExtractionProvider().extractFacts(ocr(TEXT), "blood");
+  expect(r.header).toMatchObject({ labName: "SYNTHETIC DIAGNOSTIC LABS", collectedOn: "2026-04-08" });
+});
+
+test("non-blood documents carry no header", async () => {
+  const r = await new DeterministicExtractionProvider().extractFacts(ocr("IMPRESSION: normal"), "radiology");
+  expect(r.header).toBeUndefined();
+});
+
+test("every row shape has a finite confidence, including 'merged'", () => {
+  for (const shape of ["full", "value_unit", "value_only", "dash", "qualitative", "merged"] as const) {
+    expect(Number.isFinite(rowConfidence(shape))).toBe(true);
+  }
+  expect(rowConfidence("merged")).toBeLessThan(rowConfidence("value_unit"));
+  expect(rowConfidence("merged")).toBe(0.65);
+});

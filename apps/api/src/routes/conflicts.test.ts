@@ -213,3 +213,23 @@ test("integration: an authoritative-pick loser disappears from the next GET /pat
   expect(treatmentFactIds).toContain(a);
   expect(treatmentFactIds).not.toContain(b);
 });
+
+// ---- held documents must not leak into the real patient's view (review C2/C3) ----
+
+test("a conflict that references a fact from a held (mismatch) document never exposes the held value in the snapshot", async () => {
+  const [heldDoc] = await sql`
+    INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, ocr_status, identity_status)
+    VALUES (${patientId}, ${visitId}, 'local://t/held.pdf', 'blood', 'own_hospital', ${staff.id}, 'done', 'mismatch') RETURNING id`;
+  const [liveFact] = await sql`
+    INSERT INTO facts (patient_id, visit_id, document_id, field_type, value, as_of_date, coverage_status, verification_state)
+    VALUES (${patientId}, ${visitId}, ${documentId}, 'radiology_impression', 'LIVE-IMPRESSION', '2026-02-01', 'conflicting_sources', 'unverified') RETURNING id`;
+  const [heldFact] = await sql`
+    INSERT INTO facts (patient_id, visit_id, document_id, field_type, value, as_of_date, coverage_status, verification_state)
+    VALUES (${patientId}, ${visitId}, ${heldDoc.id}, 'radiology_impression', 'WRONG-PATIENT-VALUE', '2026-02-01', 'conflicting_sources', 'unverified') RETURNING id`;
+  await sql`INSERT INTO conflicts (fact_id_a, fact_id_b, status) VALUES (${liveFact.id}, ${heldFact.id}, 'open')`;
+
+  const r = new Request(`http://localhost/patients/${patientId}/snapshot`) as Request & { params: { id: string } };
+  r.params = { id: patientId };
+  const body = JSON.stringify(await (await getPatientSnapshot(r)).json());
+  expect(body).not.toContain("WRONG-PATIENT-VALUE");
+});

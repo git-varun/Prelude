@@ -2,7 +2,9 @@ import { test, expect, beforeAll, afterAll } from "bun:test";
 import { sql } from "../db/client";
 import { persistExtractedFacts } from "./facts";
 import { createTestUser, deleteTestUsers, createTestPatient, deleteTestPatients, type TestUser } from "../test-helpers";
-import type { ExtractedFactCandidate } from "@prelude/shared";
+import type { ExtractedFactCandidate, ExtractionResult } from "@prelude/shared";
+
+type HeaderMetadata = NonNullable<ExtractionResult["header"]>;
 
 let staff: TestUser;
 let patientId: string;
@@ -308,4 +310,77 @@ test("never matches Free PSA to a tracked Total PSA marker (hard negative)", asy
   expect(fact.tracked_marker_id).toBeNull();
   expect(fact.raw_marker_label).toBe("Free PSA");
   expect(fact.coverage_status).toBe("extraction_uncertain");
+});
+
+test("persists printed_flag and parse_checks from the candidate", async () => {
+  const result = await persistExtractedFacts(docContext(), [
+    candidate({ printedFlag: "H", parseChecks: { valueParses: true, printedFlagAgrees: false } }),
+  ], staff.id);
+  const [fact] = await sql`SELECT printed_flag, parse_checks FROM facts WHERE id = ${result.createdFactIds[0]}`;
+  expect(fact.printed_flag).toBe("H");
+  expect(JSON.parse(fact.parse_checks)).toEqual({ valueParses: true, printedFlagAgrees: false });
+});
+
+test("a candidate with no printedFlag/parseChecks persists both as null", async () => {
+  const result = await persistExtractedFacts(docContext(), [candidate()], staff.id);
+  const [fact] = await sql`SELECT printed_flag, parse_checks FROM facts WHERE id = ${result.createdFactIds[0]}`;
+  expect(fact.printed_flag).toBeNull();
+  expect(fact.parse_checks).toBeNull();
+});
+
+test("documentMetadata writes header fields and identity_status onto the document, atomically with the facts", async () => {
+  const header: HeaderMetadata = {
+    labName: "Synthetic Labs", collectedOn: "2026-04-08", receivedOn: null, reportedOn: "2026-04-09",
+    patientName: "Mr. TEST PERSON", labPatientRef: "LAB/1",
+  };
+  await persistExtractedFacts(docContext(), [candidate()], staff.id, { status: "done", error: null }, { header, identityStatus: "matched" });
+  const [doc] = await sql`SELECT lab_name, to_char(collected_on, 'YYYY-MM-DD') AS collected_on, patient_name_on_report, lab_patient_ref, identity_status FROM documents WHERE id = ${documentId}`;
+  expect(doc).toMatchObject({
+    lab_name: "Synthetic Labs", collected_on: "2026-04-08", patient_name_on_report: "Mr. TEST PERSON",
+    lab_patient_ref: "LAB/1", identity_status: "matched",
+  });
+});
+
+test("documentMetadata is also applied when there are zero candidates", async () => {
+  const header: HeaderMetadata = {
+    labName: null, collectedOn: null, receivedOn: null, reportedOn: null,
+    patientName: "Unmatched Name", labPatientRef: null,
+  };
+  await persistExtractedFacts(docContext(), [], staff.id, { status: "done", error: null }, { header, identityStatus: "mismatch" });
+  const [doc] = await sql`SELECT identity_status, patient_name_on_report FROM documents WHERE id = ${documentId}`;
+  expect(doc).toMatchObject({ identity_status: "mismatch", patient_name_on_report: "Unmatched Name" });
+});
+
+test("a mismatch-held document's facts are persisted but never open a conflict", async () => {
+  const doc = await newDocument();
+  const header: HeaderMetadata = { labName: null, collectedOn: null, receivedOn: null, reportedOn: null, patientName: "Someone Else", labPatientRef: null };
+  const result = await persistExtractedFacts(
+    doc,
+    [candidate({ asOfDate: "2026-05-01", value: "4.2" }), candidate({ asOfDate: "2026-05-01", value: "9.0" })],
+    staff.id,
+    { status: "done", error: null },
+    { header, identityStatus: "mismatch" },
+  );
+  expect(result.createdFactIds).toHaveLength(2);
+  const conflicts = await sql`SELECT id FROM conflicts WHERE fact_id_a IN ${sql(result.createdFactIds)} OR fact_id_b IN ${sql(result.createdFactIds)}`;
+  expect(conflicts).toHaveLength(0);
+  const facts = await sql`SELECT coverage_status FROM facts WHERE id IN ${sql(result.createdFactIds)}`;
+  expect(facts.every((f: any) => f.coverage_status !== "conflicting_sources")).toBe(true);
+});
+
+test("detectConflicts ignores a fact whose own document is held, so dating it later cannot open a conflict against the real patient's fact", async () => {
+  const { detectConflicts } = await import("./rules");
+  const liveDoc = await newDocument();
+  const heldDoc = await newDocument();
+  await sql`UPDATE documents SET identity_status = 'mismatch' WHERE id = ${heldDoc.id}`;
+  const [marker] = await sql`SELECT id FROM tracked_markers WHERE patient_id = ${patientId} AND marker_name = 'CEA' LIMIT 1`;
+  const ins = (documentId: string, value: string) => sql`
+    INSERT INTO facts (patient_id, visit_id, document_id, tracked_marker_id, field_type, value, unit, as_of_date, coverage_status, verification_state)
+    VALUES (${patientId}, ${visitId}, ${documentId}, ${marker.id}, 'marker_value', ${value}, 'ng/mL', '2026-06-15', 'value_found', 'unverified') RETURNING *`;
+  await ins(liveDoc.id, "4.2");
+  const [heldFact] = await ins(heldDoc.id, "99");
+  expect(await detectConflicts(sql, heldFact, { dryRun: true })).toEqual([]);
+  // control: once confirmed, the same pair does conflict
+  await sql`UPDATE documents SET identity_status = 'confirmed' WHERE id = ${heldDoc.id}`;
+  expect((await detectConflicts(sql, heldFact, { dryRun: true })).length).toBe(1);
 });

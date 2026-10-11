@@ -94,3 +94,20 @@ test("calendar-impossible dates are rejected", () => {
   expect(parseDate("30/Feb/2026")).toBeNull();
   expect(parseDate("29/02/2024")).toBe("2024-02-29");
 });
+
+// ---- review fixes (C1, I2) ----
+
+test("a patient name stops at the next label on single-spaced OCR text", () => {
+  const h = header("Patient Name : Suresh Kumar Age : 45 Yrs Sex : M Ref By : Dr Ramesh");
+  expect(h.patientName).toBe("Suresh Kumar");
+});
+
+test("a letterhead or doctor line is not taken as the patient name", () => {
+  expect(header("Dr Lal PathLabs\nTest Name   Result   Unit").patientName).toBeNull();
+  expect(header("Dr. Mehta's Clinic\nTest Name   Result   Unit").patientName).toBeNull();
+  expect(header("Dr. Rao      Consultant Pathologist").patientName).toBeNull();
+});
+
+test("a bare 'Mr. NAME' line is still used when no keyed name exists", () => {
+  expect(header("NATIONALITY: Indian\nMr. TEST PERSON      R egistered O N:      12/D ec/2024 10:01PM").patientName).toBe("Mr. TEST PERSON");
+});

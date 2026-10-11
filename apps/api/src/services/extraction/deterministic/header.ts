@@ -64,7 +64,11 @@ const LAB_PAIR_KEYS = ["testingdoneby", "testperformedat"];
 
 // A cell that starts a new `Label :` pair, so a blank `Address :` cell must not take it as its value.
 const LOOKS_LIKE_PAIR = /^[A-Za-z][A-Za-z .\/()_-]{1,35}\s*:/;
-const BARE_NAME = /^(mr|mrs|ms|miss|master|baby|dr|shri|smt)\.?\s+[A-Za-z]/i;
+// "Dr" is deliberately absent: a "Dr ..." line is a doctor or a letterhead, never the patient.
+const BARE_NAME = /^(mr|mrs|ms|miss|master|baby|shri|smt)\.?\s+[A-Za-z]/i;
+// Single-spaced OCR text runs the name into the next field ("Suresh Kumar Age : 45 ..."); cut at the next label.
+const NEXT_LABEL = /\s+(?=(?:Age|Sex|Gender|Ref(?:erred)?\.?(?:\s*By)?|Date|Lab(?:\s*No)?|Sample|Collected|Patient\s*ID|UHID|Reg(?:\.|istration)?|Visit|Mobile|Phone|Barcode|DOB|Doctor)\b[^:]{0,15}:)/i;
+const cutAtNextLabel = (v: string | null): string | null => (v === null ? null : (v.split(NEXT_LABEL)[0] ?? v).trim() || null);
 const COMPANY = /([A-Z][A-Za-z0-9&.' -]{2,60}?\b(?:Pvt\.?\s*Ltd\.?|Private Limited|LLP|Limited))/;
 
 interface Pair {
@@ -121,7 +125,7 @@ function findLabName(lines: Line[], pairs: Pair[]): string | null {
 function findBareName(lines: Line[]): string | null {
   for (const line of lines.slice(0, 15)) {
     const first = line.cells[0]?.text ?? "";
-    if (BARE_NAME.test(first) && !first.includes(":") && first.split(/\s+/).length <= 5) return first;
+    if (BARE_NAME.test(first) && !LAB_WORDS.test(first) && !first.includes(":") && first.split(/\s+/).length <= 5) return first;
   }
   return null;
 }
@@ -145,7 +149,7 @@ export function parseHeader(lines: Line[]): HeaderFields {
     collectedOn: dateOf(COLLECTED_KEYS) ?? dateOf(["date"]),
     receivedOn: dateOf(RECEIVED_KEYS),
     reportedOn: dateOf(REPORTED_KEYS),
-    patientName: first(NAME_KEYS) ?? findBareName(lines),
+    patientName: cutAtNextLabel(first(NAME_KEYS)) ?? findBareName(lines),
     labPatientRef: first(REF_KEYS),
     age,
     sex,
