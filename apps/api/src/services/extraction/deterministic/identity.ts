@@ -73,6 +73,11 @@ export function matchIdentity(patientName: string | null, reportName: string | n
   }
   const a = normalizeName(patientName);
   const b = normalizeName(reportName);
+  // A name with no real word (punctuation, digits, "N/A" → single letters) is absent, not a different person.
+  const hasWord = (tokens: string[]) => tokens.some((t) => t.length >= 2);
+  if (!hasWord(a) || !hasWord(b)) {
+    return { status: "unknown", reason: "no name on the report or no patient name on file" };
+  }
   const setA = new Set(a);
   const setB = new Set(b);
   if (setA.size === setB.size && [...setA].every((t) => setB.has(t))) {

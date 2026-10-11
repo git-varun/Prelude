@@ -38,6 +38,12 @@ test("a missing report name or missing patient name is unknown, never mismatch",
   expect(matchIdentity("Varun Upadhyay", "   ").status).toBe("unknown");
 });
 
+test("a report name or patient name that normalizes to nothing (punctuation/digits only) is unknown, not mismatch", () => {
+  expect(matchIdentity("...", "Varun Upadhyay").status).toBe("unknown");
+  expect(matchIdentity("Varun Upadhyay", "N/A").status).toBe("unknown");
+  expect(matchIdentity("12345", "Varun Upadhyay").status).toBe("unknown");
+});
+
 test("two different common-first-name people are not matched by first name alone", () => {
   const r = matchIdentity("Priya Sharma", "Priya Verma");
   expect(r.status).not.toBe("matched");
