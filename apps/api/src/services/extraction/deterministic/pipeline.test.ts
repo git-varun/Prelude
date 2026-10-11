@@ -60,3 +60,10 @@ test("non-blood documents carry no header", async () => {
   const r = await new DeterministicExtractionProvider().extractFacts(ocr("IMPRESSION: normal"), "radiology");
   expect(r.header).toBeUndefined();
 });
+
+test("every row shape has a finite confidence, including 'merged'", () => {
+  for (const shape of ["full", "value_unit", "value_only", "dash", "qualitative", "merged"] as const) {
+    expect(Number.isFinite(rowConfidence(shape))).toBe(true);
+  }
+  expect(rowConfidence("merged")).toBeLessThan(rowConfidence("value_unit"));
+});

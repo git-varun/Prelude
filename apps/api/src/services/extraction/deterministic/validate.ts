@@ -168,7 +168,7 @@ export function validateDocument(rows: ParsedRow[]): NamedCheck[] {
 
 // Confidence comes from how completely the row parsed (structure), never from a model.
 export function rowConfidence(shape: RowShape): number {
-  return { full: 0.95, value_unit: 0.85, dash: 0.85, qualitative: 0.8, value_only: 0.7, merged: 0.7 }[shape];
+  return { full: 0.95, value_unit: 0.85, dash: 0.85, qualitative: 0.8, value_only: 0.7, merged: 0.65 }[shape];
 }
 
 export interface ValidatedRow {
