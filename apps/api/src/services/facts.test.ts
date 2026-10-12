@@ -384,3 +384,29 @@ test("detectConflicts ignores a fact whose own document is held, so dating it la
   await sql`UPDATE documents SET identity_status = 'confirmed' WHERE id = ${heldDoc.id}`;
   expect((await detectConflicts(sql, heldFact, { dryRun: true })).length).toBe(1);
 });
+
+test("a lipid-panel TG row is not mapped to a tracked Thyroglobulin marker, but a Tg row in ng/mL is", async () => {
+  await sql`
+    INSERT INTO tracked_markers (patient_id, marker_name, is_custom, added_by)
+    VALUES (${patientId}, 'Thyroglobulin (Tg)', false, ${staff.id})
+  `;
+
+  const lipid = await persistExtractedFacts(
+    docContext(),
+    [candidate({ trackedMarkerLabel: "TG", value: "150", unit: "mg/dL", asOfDate: "2026-06-01" })],
+    staff.id,
+  );
+  const [lipidFact] = await sql`SELECT * FROM facts WHERE id = ${lipid.createdFactIds[0]}`;
+  expect(lipidFact.tracked_marker_id).toBeNull();
+  expect(lipidFact.raw_marker_label).toBe("TG");
+  expect(lipidFact.coverage_status).toBe("extraction_uncertain");
+
+  const thyroid = await persistExtractedFacts(
+    docContext(),
+    [candidate({ trackedMarkerLabel: "Tg", value: "0.4", unit: "ng/mL", asOfDate: "2026-06-02" })],
+    staff.id,
+  );
+  const [thyroidFact] = await sql`SELECT * FROM facts WHERE id = ${thyroid.createdFactIds[0]}`;
+  expect(thyroidFact.tracked_marker_id).not.toBeNull();
+  expect(thyroidFact.raw_marker_label).toBeNull();
+});

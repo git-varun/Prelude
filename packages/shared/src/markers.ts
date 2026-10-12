@@ -9,6 +9,9 @@ export interface MarkerDefinition {
   // comparison — see matchMarker's hard-negative tests.
   aliases: readonly string[];
   units: readonly string[];
+  // Labels that are ambiguous across lab panels (bare "Tg" vs a lipid-panel "TG"). They match only when the
+  // row's unit is one of `units`; with no unit or any other unit they stay unmapped (staff map them by hand).
+  unitGatedAliases?: readonly string[];
 }
 
 export const MARKER_REGISTRY: readonly MarkerDefinition[] = [
@@ -32,7 +35,12 @@ export const MARKER_REGISTRY: readonly MarkerDefinition[] = [
   { canonical: "LDH", aliases: ["LDH", "Lactate Dehydrogenase"], units: ["U/L"] },
   { canonical: "HE4", aliases: ["HE4", "Human Epididymis Protein 4"], units: ["pmol/L"] },
   { canonical: "CA 72-4", aliases: ["CA 72-4", "CA72-4"], units: ["U/mL", "kU/L"] },
-  { canonical: "Thyroglobulin (Tg)", aliases: ["Thyroglobulin (Tg)", "Thyroglobulin", "Tg"], units: ["ng/mL"] },
+  {
+    canonical: "Thyroglobulin (Tg)",
+    aliases: ["Thyroglobulin (Tg)", "Thyroglobulin"],
+    unitGatedAliases: ["Tg"],
+    units: ["ng/mL", "µg/L"],
+  },
   {
     canonical: "Anti-Tg (TgAb)",
     aliases: ["Anti-Tg (TgAb)", "Anti-Tg", "TgAb", "Anti-Thyroglobulin", "Anti-Thyroglobulin Antibody"],
@@ -56,10 +64,18 @@ function normalize(label: string): string {
 // "CEA", "CA 27-29" never absorbs into "CA 15-3", and a qualitative/urine hCG
 // label never matches Beta-hCG. No match -> null (the existing
 // unmapped-marker / extraction_uncertain path).
-export function matchMarker(rawLabel: string): string | null {
+export function matchMarker(rawLabel: string, unit?: string | null): string | null {
   const normalized = normalize(rawLabel);
+  const normalizedUnit = unit ? normalize(unit) : null;
   for (const marker of MARKER_REGISTRY) {
     if (marker.aliases.some((alias) => normalize(alias) === normalized)) {
+      return marker.canonical;
+    }
+    if (
+      normalizedUnit !== null &&
+      marker.unitGatedAliases?.some((alias) => normalize(alias) === normalized) &&
+      marker.units.some((u) => normalize(u) === normalizedUnit)
+    ) {
       return marker.canonical;
     }
   }
