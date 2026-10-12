@@ -137,7 +137,7 @@ review page, and a legitimate name variant (`Mohd` / `Mohammed`, an OCR slip in 
 would silently drop out of the snapshot. `POST /documents/:id/identity` (confirm/reject)
 already exists; nothing in the UI calls it.
 
-**Status:** not yet brainstormed; backend is done. Needs: a list of held documents per patient
+**Status:** implemented 2026-10-12 (not yet deployed): `GET /patients/:id/documents/identity`, `held_document_count` on the patients list, `#/patients/:id/held`, badge, snapshot banner, review-page banners. Reject is permanent and has no UI undo. Confirm/reject is still open to any staff user. Original need: a list of held documents per patient
 with the printed vs recorded name and confirm/reject actions, plus surfacing the `partial`
 identity status (close first-name variants are accepted with a warning that nothing shows yet).
 **Blocks enabling `EXTRACTION_MODE=deterministic` in production.** Open policy question:

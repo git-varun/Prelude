@@ -16,6 +16,7 @@ import {
   matchPatientTimeline,
   matchDocumentSource,
   matchConflict,
+  matchPatientHeld,
 } from "./router";
 import { ExtractionReview } from "./screens/ExtractionReview";
 import { Snapshot } from "./screens/Snapshot";
@@ -25,6 +26,7 @@ import { PatientEdit } from "./screens/PatientEdit";
 import { VisitHistory } from "./screens/VisitHistory";
 import { SourceView } from "./screens/SourceView";
 import { ConflictResolution } from "./screens/ConflictResolution";
+import { HeldDocuments } from "./screens/HeldDocuments";
 
 function Routed() {
   const { user, loading, connectivityError } = useAuth();
@@ -42,10 +44,13 @@ function Routed() {
   const timelinePatientId = matchPatientTimeline(route);
   const source = matchDocumentSource(route);
   const conflictId = matchConflict(route);
+  const heldPatientId = matchPatientHeld(route);
 
   let screen: ReactNode;
   if (uploadPatientId) {
     screen = <Upload patientId={uploadPatientId} />;
+  } else if (heldPatientId) {
+    screen = <HeldDocuments patientId={heldPatientId} />;
   } else if (conflictId) {
     screen = <ConflictResolution conflictId={conflictId} />;
   } else if (source) {

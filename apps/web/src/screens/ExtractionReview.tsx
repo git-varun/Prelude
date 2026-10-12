@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { api, ApiError, type DocumentFileCheck, type DocumentReview } from "../api/client";
 import { FactCard } from "../components/FactCard";
 import { MarkerDisclaimerFooter } from "../components/MarkerDisclaimerFooter";
+import { IdentityDecision, IdentityNames, type IdentityOutcome } from "../components/IdentityDecision";
 import { navigate } from "../router";
 import { OriginalDocument } from "./SourceView";
 
@@ -12,6 +13,9 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
   const [loading, setLoading] = useState(true);
   const [bulkDate, setBulkDate] = useState("");
   const [bulkBusy, setBulkBusy] = useState(false);
+  const [recordedName, setRecordedName] = useState<string | null | undefined>(undefined);
+  const [recordedError, setRecordedError] = useState<string | null>(null);
+  const [identityResult, setIdentityResult] = useState<string | null>(null);
 
   // latestLoad: only the newest load() may set state. generation: bumped on
   // documentId change/unmount so in-flight work for a stale screen is ignored.
@@ -19,6 +23,18 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
   const generation = useRef(0);
   const currentDocumentId = useRef<string | null>(null);
   const [bulkError, setBulkError] = useState<string | null>(null);
+
+  const loadRecordedName = useCallback(async (patientId: string, token: number) => {
+    setRecordedError(null);
+    try {
+      const r = await api.getPatientIdentityDocuments(patientId);
+      if (token === latestLoad.current) setRecordedName(r.patient_name);
+    } catch (err) {
+      if (token === latestLoad.current) {
+        setRecordedError(err instanceof ApiError ? err.message : "request failed");
+      }
+    }
+  }, []);
 
   const load = useCallback(async () => {
     if (currentDocumentId.current !== documentId) return;
@@ -28,6 +44,11 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
       if (token !== latestLoad.current) return;
       setData(result);
       setError(null);
+      if (result.document.identity_status === "mismatch") {
+        // Needed for the held banner. Loading and failure are shown distinctly, and Confirm
+        // stays disabled until the name is known.
+        void loadRecordedName(result.document.patient_id, token);
+      }
       // Only probe for the raw file when there's nothing else to show --
       // the normal fact-review path never needed this endpoint before, and
       // probing it unconditionally fires a 404 (logged as a console error
@@ -47,7 +68,7 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
     } finally {
       if (token === latestLoad.current) setLoading(false);
     }
-  }, [documentId]);
+  }, [documentId, loadRecordedName]);
 
   useEffect(() => {
     currentDocumentId.current = documentId;
@@ -55,6 +76,9 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
     setData(null);
     setBulkError(null);
     setBulkBusy(false);
+    setIdentityResult(null);
+    setRecordedName(undefined);
+    setRecordedError(null);
     void load();
     return () => {
       currentDocumentId.current = null;
@@ -90,6 +114,17 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
     await load();
   }
 
+  function identityDecided(outcome: IdentityOutcome) {
+    setIdentityResult(
+      outcome === "confirm"
+        ? "Confirmed. This document's facts are now live in the patient's views."
+        : outcome === "reject"
+          ? "Rejected. This document is permanently excluded."
+          : "This document's status had already changed, so the page was refreshed.",
+    );
+    void load();
+  }
+
   if (loading) return <p className="muted">Loading...</p>;
   if (!data) return <div className="error-banner">{error ?? "Document not found."}</div>;
 
@@ -114,6 +149,35 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {identityResult && <div className="card" role="status">{identityResult}</div>}
+      {document.identity_status === "mismatch" && (
+        <div className="card" data-testid="identity-mismatch-banner">
+          <strong>Held for patient identity.</strong>{" "}
+          <span className="muted">The name on this report does not match the patient record, so its facts are excluded from every view until you decide.</span>
+          <IdentityNames printedName={document.patient_name_on_report} recordedName={recordedName} recordedError={recordedError} />
+          {recordedError && (
+            <p>
+              <button
+                className="btn btn--secondary"
+                type="button"
+                onClick={() => void loadRecordedName(document.patient_id, latestLoad.current)}
+              >
+                Retry loading the record name
+              </button>
+            </p>
+          )}
+          <IdentityDecision
+            documentId={document.id}
+            onDone={identityDecided}
+            confirmDisabled={recordedName === undefined || recordedError !== null}
+          />
+        </div>
+      )}
+      {document.identity_status === "partial" && (
+        <div className="error-banner" data-testid="identity-partial-banner">
+          Name on the report differs slightly from the record; verify this is the right patient.
+        </div>
+      )}
       {bulkError && <div className="error-banner">{bulkError}</div>}
 
       {document.extraction_status === "partial" && (
