@@ -122,7 +122,7 @@ export async function persistExtractedFacts(
         // canonical controlled name ("CEA") before looking up the patient's tracked
         // markers, so a tracked marker named "CEA" still matches. No canonical match
         // falls back to the raw label unchanged (custom markers, genuinely unmapped names).
-        const lookupLabel = matchMarker(candidate.trackedMarkerLabel) ?? candidate.trackedMarkerLabel;
+        const lookupLabel = matchMarker(candidate.trackedMarkerLabel, candidate.unit) ?? candidate.trackedMarkerLabel;
         const matchId = trackedMarkerIdByName.get(lookupLabel.trim().toLowerCase());
         if (matchId) {
           trackedMarkerId = matchId;

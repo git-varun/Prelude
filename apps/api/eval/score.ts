@@ -179,7 +179,7 @@ export function summarize(docs: DocScore[]): Summary {
 
   const eligible = results.filter((r) => r.expected.canonicalMarker !== null);
   const falseCanonical = results
-    .filter((r) => r.expected.canonicalMarker === null && matchMarker(r.extracted.trackedMarkerLabel ?? "") !== null)
+    .filter((r) => r.expected.canonicalMarker === null && matchMarker(r.extracted.trackedMarkerLabel ?? "", r.extracted.unit) !== null)
     .map((r) => r.extracted.trackedMarkerLabel ?? "");
 
   const scored = [
@@ -204,7 +204,7 @@ export function summarize(docs: DocScore[]): Summary {
     precisionByFieldType,
     markerMatch: {
       eligible: eligible.length,
-      correct: eligible.filter((r) => matchMarker(r.extracted.trackedMarkerLabel ?? "") === r.expected.canonicalMarker).length,
+      correct: eligible.filter((r) => matchMarker(r.extracted.trackedMarkerLabel ?? "", r.extracted.unit) === r.expected.canonicalMarker).length,
       falseCanonical,
     },
     snippetRate: ratio(extractedAll.filter((c) => c.sourceSnippet !== null).length, extractedAll.length),

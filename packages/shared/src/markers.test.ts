@@ -53,3 +53,22 @@ test("DISEASE_SITE_PANELS has the seven site panels from the Decisions Log", () 
 test("FALLBACK_MARKER_SET is the 6-marker fallback", () => {
   expect(FALLBACK_MARKER_SET).toEqual(["CEA", "CA 19-9", "CA-125", "CA 15-3", "AFP", "Total PSA"]);
 });
+
+test("matchMarker maps the bare Tg label to Thyroglobulin only with a thyroglobulin unit", () => {
+  expect(matchMarker("Tg", "ng/mL")).toBe("Thyroglobulin (Tg)");
+  expect(matchMarker("TG", " NG/ML ")).toBe("Thyroglobulin (Tg)");
+  expect(matchMarker("Tg", "µg/L")).toBe("Thyroglobulin (Tg)");
+});
+
+test("matchMarker never maps a lipid-panel TG (mg/dL) or a unit-less Tg to Thyroglobulin", () => {
+  expect(matchMarker("TG", "mg/dL")).toBeNull();
+  expect(matchMarker("Tg", "mg/dL")).toBeNull();
+  expect(matchMarker("Tg")).toBeNull();
+  expect(matchMarker("Tg", null)).toBeNull();
+});
+
+test("matchMarker still maps the full Thyroglobulin names without a unit", () => {
+  expect(matchMarker("Thyroglobulin")).toBe("Thyroglobulin (Tg)");
+  expect(matchMarker("Thyroglobulin (Tg)")).toBe("Thyroglobulin (Tg)");
+  expect(matchMarker("Thyroglobulin", "mg/dL")).toBe("Thyroglobulin (Tg)");
+});

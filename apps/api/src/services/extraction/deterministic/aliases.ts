@@ -59,7 +59,8 @@ const GROUPS: string[][] = [
   ["ABSOLUTE BASOPHIL COUNT", "ABC", "Absolute Basophil Count"],
 ];
 
-const SQUASHED = [...GROUPS, ...MARKER_REGISTRY.map((m) => [m.canonical, ...m.aliases])].map((g) => new Set(g.map(squash)));
+// Unit-gated labels (bare "Tg") still name the same test here; the unit check lives in matchMarker.
+const SQUASHED = [...GROUPS, ...MARKER_REGISTRY.map((m) => [m.canonical, ...m.aliases, ...(m.unitGatedAliases ?? [])])].map((g) => new Set(g.map(squash)));
 
 // Every squashed label that names the same test as `label` (empty if unknown).
 export function aliasKeys(label: string | null | undefined, extra: readonly string[] = []): Set<string> {

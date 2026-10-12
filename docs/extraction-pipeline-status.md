@@ -60,12 +60,12 @@ bun run eval:fixtures && bun run eval:synthetic                      # rebuild f
 ## 4. Remaining work
 
 ### Blockers before `EXTRACTION_MODE=deterministic` in production
-_B1 and B2 are built (held-documents screen); B3 and more real reports remain. A rejected document has no undo in the UI._
+_B1, B2 and B3 are done; more real reports remain. A rejected document has no undo in the UI._
 | # | Task | Why |
 | --- | --- | --- |
 | B1 ✅ done | A screen that lists documents held for identity (`identity_status = 'mismatch'`) and lets staff confirm/reject (`#/patients/:id/held`, badge on the patient list, banner on the snapshot and review page) | Today a held document is invisible except on its own review page; a legitimate name variant (`Mohd` / `Mohammed`, OCR errors in the name) would silently drop out of the snapshot. |
 | B2 ✅ done | Show staff the `partial` identity status (second section on the held screen, banner on the review page) | Close first-name variants (`Amit` / `Amita`, `Kumar` / `Kumari`) are accepted as `partial`; nothing reads that status yet. |
-| B3 | **Decision (oncologist partner):** the `Tg` (thyroglobulin) alias vs a lipid-panel `TG`; and whether sign-off of a held document's facts should be blocked | `matchMarker` is case-insensitive, so a `TG 150 mg/dL` row would canonicalise to Thyroglobulin when candidates are matched; sign-off of held facts is still allowed. |
+| B3 ✅ decided | `Tg` alias vs lipid-panel `TG`, and held-fact sign-off | **Decided 2026-10-12:** bare `Tg` is unit-gated (`matchMarker(label, unit)` maps it to Thyroglobulin only for ng/mL or µg/L; otherwise unmapped, staff map it by hand). Sign-off of a held document's facts stays allowed. Flag the narrowed `Tg` alias to the oncologist partner. |
 
 ### Phase 3: LLM tiers and scans
 - Narrative tier: radiology impression, prescription regimen and smear remarks via one small batched LLM call (the parser reports these document types as "not handled" today).
