@@ -89,6 +89,8 @@ export interface PatientSummary {
   stage: Stage | null;
   last_visit_date: string | null;
   needs_attention_count: number;
+  /** Documents held for a patient-identity mismatch (their facts are excluded from every view). */
+  held_document_count: number;
 }
 
 export interface TrackedMarker {
@@ -120,6 +122,8 @@ export interface VisitHistoryEntry {
   signed_off_count: number;
 }
 
+export type IdentityStatus = "matched" | "partial" | "mismatch" | "confirmed" | "rejected" | "unknown";
+
 export interface DocumentRecord {
   id: string;
   patient_id: string;
@@ -135,6 +139,9 @@ export interface DocumentRecord {
   needs_manual_date: boolean;
   extraction_status: "pending" | "done" | "partial" | "failed";
   extraction_error: string | null;
+  identity_status: IdentityStatus | null;
+  patient_name_on_report: string | null;
+  lab_name: string | null;
 }
 
 export interface ReviewFact {
@@ -160,6 +167,22 @@ export interface ReviewFact {
   source_snippet: string | null;
   fallback_level: "exact" | "page" | "document";
 }
+
+export interface IdentityDocument {
+  id: string;
+  document_type: string;
+  lab_name: string | null;
+  patient_name_on_report: string | null;
+  identity_status: "mismatch" | "partial";
+  uploaded_at: string;
+}
+
+export interface PatientIdentityDocuments {
+  patient_name: string | null;
+  documents: IdentityDocument[];
+}
+
+export type IdentityAction = "confirm" | "reject";
 
 export interface DocumentReview {
   document: DocumentRecord;
@@ -418,6 +441,12 @@ export const api = {
     form.set("file", input.file);
     return request<DocumentRecord>(`/patients/${patientId}/documents`, { method: "POST", body: form });
   },
+
+  getPatientIdentityDocuments: (patientId: string) =>
+    request<PatientIdentityDocuments>(`/patients/${patientId}/documents/identity`),
+
+  setDocumentIdentity: (documentId: string, action: IdentityAction) =>
+    request<DocumentRecord>(`/documents/${documentId}/identity`, { method: "POST", body: JSON.stringify({ action }) }),
 
   getDocumentFacts: (documentId: string) => request<DocumentReview>(`/documents/${documentId}/facts`),
 

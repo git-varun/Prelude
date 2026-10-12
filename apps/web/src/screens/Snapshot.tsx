@@ -207,8 +207,26 @@ export function Snapshot({ patientId }: { patientId: string }) {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
+  const [heldCount, setHeldCount] = useState(0);
+
   const latestLoad = useRef(0);
   const currentPatientId = useRef<string | null>(null);
+
+  // Best-effort banner data: a failure here must never break or delay the snapshot, so it is
+  // fetched independently and any error just means "no banner".
+  useEffect(() => {
+    let current = true;
+    setHeldCount(0);
+    api
+      .getPatientIdentityDocuments(patientId)
+      .then((r) => {
+        if (current) setHeldCount(r.documents.filter((d) => d.identity_status === "mismatch").length);
+      })
+      .catch(() => {});
+    return () => {
+      current = false;
+    };
+  }, [patientId]);
 
   const load = useCallback(async () => {
     if (currentPatientId.current !== patientId) return;
@@ -277,6 +295,21 @@ export function Snapshot({ patientId }: { patientId: string }) {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+
+      {heldCount > 0 && (
+        <div className="card" role="status" data-testid="held-banner">
+          {heldCount} document{heldCount === 1 ? "" : "s"} held for patient identity, excluded from this view.{" "}
+          <a
+            href={`#/patients/${patient.id}/held`}
+            onClick={(e) => {
+              e.preventDefault();
+              navigate(`/patients/${patient.id}/held`);
+            }}
+          >
+            Review held documents
+          </a>
+        </div>
+      )}
 
       {data.previous_visit.id !== null && (
         <section aria-labelledby="section-since-last-visit" style={{ marginBottom: 32 }}>

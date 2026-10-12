@@ -163,6 +163,12 @@ export async function listPatients(req: Request): Promise<Response> {
     ) AS needs_attention_count
   `;
 
+  // Documents held for an identity mismatch (not 'partial': that is a softer signal and its facts stay live).
+  // Independent of needs_attention_count, which already excludes held facts via LIVE_FACT_FILTER.
+  const heldDocumentSubquery = sql`
+    (SELECT count(*)::int FROM documents d WHERE d.patient_id = p.id AND d.identity_status = 'mismatch') AS held_document_count
+  `;
+
   // Most recently seen first is more clinically useful than most recently
   // registered -- a patient with no visits yet sorts last (NULLS LAST).
   const rows = search
@@ -170,7 +176,8 @@ export async function listPatients(req: Request): Promise<Response> {
         SELECT p.id, p.name, p.cancer_type, p.created_at, p.created_by, p.mrn, p.patient_origin,
                to_char(p.date_of_birth, 'YYYY-MM-DD') AS date_of_birth, p.stage,
                (SELECT to_char(MAX(v.visit_date), 'YYYY-MM-DD') FROM visits v WHERE v.patient_id = p.id) AS last_visit_date,
-               ${needsAttentionSubquery}
+               ${needsAttentionSubquery},
+               ${heldDocumentSubquery}
         FROM patients p
         WHERE p.name ILIKE ${"%" + search + "%"}
         ORDER BY last_visit_date DESC NULLS LAST
@@ -180,13 +187,33 @@ export async function listPatients(req: Request): Promise<Response> {
         SELECT p.id, p.name, p.cancer_type, p.created_at, p.created_by, p.mrn, p.patient_origin,
                to_char(p.date_of_birth, 'YYYY-MM-DD') AS date_of_birth, p.stage,
                (SELECT to_char(MAX(v.visit_date), 'YYYY-MM-DD') FROM visits v WHERE v.patient_id = p.id) AS last_visit_date,
-               ${needsAttentionSubquery}
+               ${needsAttentionSubquery},
+               ${heldDocumentSubquery}
         FROM patients p
         ORDER BY last_visit_date DESC NULLS LAST
         LIMIT ${limit} OFFSET ${offset}
       `;
 
   return Response.json(rows);
+}
+
+// Documents needing an identity decision for one patient: held (mismatch) and partial. Explicit columns only --
+// file_ref is a storage path and must never leave the API through this listing. Confirming/rejecting flips the
+// status (POST /documents/:id/identity), which drops the row from this list.
+export async function getPatientDocumentIdentity(req: Request & { params: { id: string } }): Promise<Response> {
+  const patientId = req.params.id;
+  if (!isUuid(patientId)) return jsonError(404, "not_found", "Patient not found.");
+
+  const [patient] = await sql`SELECT name FROM patients WHERE id = ${patientId}`;
+  if (!patient) return jsonError(404, "not_found", "Patient not found.");
+
+  const documents = await sql`
+    SELECT id, document_type, lab_name, patient_name_on_report, identity_status, uploaded_at
+    FROM documents
+    WHERE patient_id = ${patientId} AND identity_status IN ('mismatch', 'partial')
+    ORDER BY uploaded_at DESC, id
+  `;
+  return Response.json({ patient_name: patient.name, documents });
 }
 
 export async function getPatient(req: Request & { params: { id: string } }): Promise<Response> {

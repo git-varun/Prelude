@@ -63,6 +63,21 @@ export function PatientList() {
                   {p.needs_attention_count} need{p.needs_attention_count === 1 ? "s" : ""} review
                 </span>
               )}
+              {p.held_document_count > 0 && (
+                <button
+                  type="button"
+                  className="tag tag--range-flag"
+                  aria-label={`${p.held_document_count} held document${p.held_document_count === 1 ? "" : "s"}, review`}
+                  style={{ cursor: "pointer", font: "inherit", fontSize: 12 }}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    e.preventDefault();
+                    navigate(`/patients/${p.id}/held`);
+                  }}
+                >
+                  {p.held_document_count} held
+                </button>
+              )}
             </span>
             <span style={{ display: "flex", alignItems: "center", gap: 12 }}>
               <span className="patient-row__meta">
