@@ -273,6 +273,7 @@ export interface SnapshotField {
   as_of_date: string | null;
   coverage_status: string;
   verification_state: string | null;
+  check_state: CheckState | null;
   delta_status: DeltaStatus | null;
   conflicts: ConflictEntry[];
   provenance: Provenance | null;

@@ -76,9 +76,7 @@ function toReviewFact(field: SnapshotField, patientId: string, visitId: string):
     source_location: provenance?.source_location ?? null,
     source_snippet: provenance?.source_snippet ?? null,
     fallback_level: provenance?.fallback_level ?? "document",
-    // The snapshot contract carries no check data. "correct" keeps the sign-off button's check gate from
-    // blocking here; the server enforces the real gate and its 409 is shown by FactCard when it applies.
-    check_state: "correct",
+    check_state: field.check_state ?? "unchecked",
     checked_by: null,
     checked_at: null,
     error_type: null,

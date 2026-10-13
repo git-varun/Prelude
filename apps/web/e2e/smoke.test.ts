@@ -485,7 +485,7 @@ function snapshotField(overrides: Record<string, unknown> = {}) {
   return {
     fact_id: "f1", field_type: "marker_value", tracked_marker_id: "m1", marker_name: "CEA",
     value: "4.2", unit: "ng/mL", reference_range: "0-5", as_of_date: "2026-02-01",
-    coverage_status: "value_found", verification_state: "unverified", delta_status: null,
+    coverage_status: "value_found", verification_state: "unverified", check_state: "correct", delta_status: null,
     conflicts: [], provenance: provenance(), ...overrides,
   };
 }
@@ -830,7 +830,7 @@ async function openConflictScenario(
     return {
       fact_id: fact.id, field_type: fact.field_type, tracked_marker_id: null, marker_name: null,
       value: fact.value, unit: fact.unit, reference_range: fact.reference_range, as_of_date: fact.as_of_date,
-      coverage_status: fact.coverage_status, verification_state: fact.verification_state, delta_status: null,
+      coverage_status: fact.coverage_status, verification_state: fact.verification_state, check_state: "correct", delta_status: null,
       conflicts: [{
         conflict_id: "c1", status: state.status, other_fact_id: fact.id === "f1" ? "f9" : "f1",
         other_value: fact.id === "f1" ? "FOLFIRI" : "FOLFOX", other_source: provenance(),
@@ -1833,6 +1833,33 @@ test("spot-check: the patient list shows 'N to check' only when something is unc
   await page.getByText("2 to check").waitFor();
   expect(await page.getByText("0 to check").count()).toBe(0);
   expect(await page.getByText(/to check/).count()).toBe(1);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Snapshot: an unchecked fact reaches FactCard as a disabled Sign off with the check reason", async () => {
+  const body = snapshotBody({ tumor_markers: [snapshotField({ fact_id: "f1", marker_name: "CEA", check_state: "unchecked" })] });
+  const { page, errors } = await openSnapshot("oncologist", body);
+  const card = page.locator(".card", { has: page.getByRole("heading", { name: "CEA" }) });
+  const signOff = card.getByRole("button", { name: "Sign off", exact: true });
+  await signOff.waitFor();
+  expect(await signOff.isDisabled()).toBe(true);
+  await card.getByText("Check this fact against the source first").waitFor();
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("spot-check: an excluded undated fact does not trigger the undated notice, and c on an excluded fact POSTs nothing", async () => {
+  const { page, errors, checkBodies } = await openReviewAs("staff", {
+    verification_state: "unverified", check_state: "incorrect", error_type: "not_in_document", needs_manual_date: true, f2_check: "correct",
+  });
+  await page.locator(".card[data-fact-id]").first().waitFor();
+  expect(await page.getByText("fact(s) have no as-of date").count()).toBe(0);
+  const excluded = page.locator('.card[data-fact-id="f1"]');
+  await excluded.click();
+  await page.keyboard.press("c");
+  await page.waitForTimeout(300);
+  expect(checkBodies).toEqual([]);
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);

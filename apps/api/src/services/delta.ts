@@ -29,6 +29,7 @@ export const LIVE_FACT_FILTER = sql`
     SELECT 1 FROM conflicts c
     WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id)
       AND c.status = 'resolved' AND c.authoritative_fact_id IS NOT NULL AND c.authoritative_fact_id != f.id
+      AND NOT EXISTS (SELECT 1 FROM facts af WHERE af.id = c.authoritative_fact_id AND af.excluded_at IS NOT NULL)
   )
   AND NOT EXISTS (
     SELECT 1 FROM documents d WHERE d.id = f.document_id AND d.identity_status IN ('mismatch', 'rejected')

@@ -209,7 +209,7 @@ test("current_treatment returns only the latest treatment_regimen fact by as_of_
 test("field object shape matches the contract exactly, for both a real and a synthesized entry", async () => {
   const expectedKeys = [
     "fact_id", "field_type", "tracked_marker_id", "marker_name", "value", "unit", "reference_range",
-    "as_of_date", "coverage_status", "verification_state", "delta_status", "conflicts", "provenance",
+    "as_of_date", "coverage_status", "verification_state", "check_state", "delta_status", "conflicts", "provenance",
     "imaging_modality",
   ].sort();
 

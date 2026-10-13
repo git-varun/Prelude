@@ -130,7 +130,7 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
         setActiveId(next.id);
       } else if (e.key === "c") {
         const fact = facts[index];
-        if (!fact || fact.verification_state === "oncologist_signed_off") return;
+        if (!fact || fact.excluded_at || fact.verification_state === "oncologist_signed_off") return;
         e.preventDefault();
         if (checkPending.current) return;
         checkPending.current = true;
@@ -164,7 +164,7 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
     e.preventDefault();
     if (!data) return;
     const gen = generation.current;
-    const targets = data.facts.filter((f) => f.needs_manual_date);
+    const targets = data.facts.filter((f) => f.needs_manual_date && !f.excluded_at);
     setBulkBusy(true);
     setError(null);
     setBulkError(null);
@@ -203,8 +203,9 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
 
   const { document, facts, tracked_markers, check_summary } = data;
   const checkedCount = check_summary.correct + check_summary.incorrect;
-  const undated = facts.filter((f) => f.needs_manual_date);
-  const wholeDocumentUndated = facts.length > 0 && undated.length === facts.length;
+  const liveFacts = facts.filter((f) => !f.excluded_at);
+  const undated = liveFacts.filter((f) => f.needs_manual_date);
+  const wholeDocumentUndated = liveFacts.length > 0 && undated.length === liveFacts.length;
 
   return (
     <div>
@@ -297,7 +298,7 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
         <div className="card">
           <h2>No date found in this document</h2>
           <p className="muted">
-            None of the {facts.length} extracted fact(s) has an as-of date. Enter the date to continue the review.
+            None of the {liveFacts.length} extracted fact(s) has an as-of date. Enter the date to continue the review.
           </p>
           <form onSubmit={applyDateToAll} className="field">
             <label htmlFor="bulk-date">As-of date for all facts</label>

@@ -328,6 +328,7 @@ interface SnapshotFactRow {
   as_of_date: string | null;
   coverage_status: string | null;
   verification_state: string | null;
+  check_state?: string | null;
   document_id: string | null;
   source_page: number | null;
   source_location: string | null;
@@ -359,17 +360,17 @@ async function loadTumorMarkers(patientId: string, visitId: string): Promise<Sna
       WHERE f.id NOT IN (SELECT id FROM blocked)
     ), winners AS (
       SELECT id, tracked_marker_id, value, unit, reference_range, as_of_date, coverage_status,
-             verification_state, document_id, source_page, source_location, source_snippet
+             verification_state, check_state, document_id, source_page, source_location, source_snippet
       FROM ranked WHERE rnk = 1
       UNION ALL
       SELECT id, tracked_marker_id, value, unit, reference_range, as_of_date, coverage_status,
-             verification_state, document_id, source_page, source_location, source_snippet
+             verification_state, check_state, document_id, source_page, source_location, source_snippet
       FROM live WHERE id IN (SELECT id FROM blocked)
     )
     SELECT tm.id AS tracked_marker_id, tm.marker_name,
            w.id AS fact_id, w.value, w.unit, w.reference_range,
            to_char(w.as_of_date, 'YYYY-MM-DD') AS as_of_date,
-           w.coverage_status, w.verification_state,
+           w.coverage_status, w.verification_state, w.check_state,
            w.document_id, w.source_page, w.source_location, w.source_snippet
     FROM tracked_markers tm
     LEFT JOIN winners w ON w.tracked_marker_id = tm.id
@@ -398,13 +399,13 @@ async function loadCurrentTreatment(visitId: string): Promise<SnapshotFactRow[]>
     )
     SELECT id AS fact_id, value, unit, reference_range,
            to_char(as_of_date, 'YYYY-MM-DD') AS as_of_date,
-           coverage_status, verification_state,
+           coverage_status, verification_state, check_state,
            document_id, source_page, source_location, source_snippet
     FROM ranked WHERE rnk = 1
     UNION ALL
     SELECT id AS fact_id, value, unit, reference_range,
            to_char(as_of_date, 'YYYY-MM-DD') AS as_of_date,
-           coverage_status, verification_state,
+           coverage_status, verification_state, check_state,
            document_id, source_page, source_location, source_snippet
     FROM live WHERE id IN (SELECT id FROM blocked)
     ORDER BY as_of_date DESC NULLS LAST, fact_id
@@ -434,7 +435,7 @@ async function loadRadiology(visitId: string): Promise<SnapshotFactRow[]> {
     )
     SELECT r.id AS fact_id, r.value, r.unit, r.reference_range,
            to_char(r.as_of_date, 'YYYY-MM-DD') AS as_of_date,
-           r.coverage_status, r.verification_state,
+           r.coverage_status, r.verification_state, r.check_state,
            r.document_id, r.source_page, r.source_location, r.source_snippet,
            d.imaging_modality
     FROM ranked r LEFT JOIN documents d ON d.id = r.document_id
@@ -442,7 +443,7 @@ async function loadRadiology(visitId: string): Promise<SnapshotFactRow[]> {
     UNION ALL
     SELECT l.id AS fact_id, l.value, l.unit, l.reference_range,
            to_char(l.as_of_date, 'YYYY-MM-DD') AS as_of_date,
-           l.coverage_status, l.verification_state,
+           l.coverage_status, l.verification_state, l.check_state,
            l.document_id, l.source_page, l.source_location, l.source_snippet,
            d.imaging_modality
     FROM live l LEFT JOIN documents d ON d.id = l.document_id
@@ -519,6 +520,7 @@ function fieldObject(
     as_of_date: factId ? row.as_of_date : null,
     coverage_status: factId ? row.coverage_status : "not_found_in_document_set",
     verification_state: factId ? row.verification_state : null,
+    check_state: factId ? (row.check_state ?? "unchecked") : null,
     delta_status: deltaStatus,
     conflicts: factId ? (conflictsByFactId.get(factId) ?? []) : [],
     provenance: factId ? provenanceFor(row.document_id!, row.source_page, row.source_location, row.source_snippet) : null,

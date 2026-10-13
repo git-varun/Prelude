@@ -101,11 +101,15 @@ Spec: `docs/superpowers/specs/2026-10-13-fact-spot-check-design.md`. Migration 0
 
 Follow-ups parked during implementation:
 
-- Snapshot (oncologist view) hard-codes `check_state` `'correct'` in its adapter, so Sign off looks enabled on unchecked facts and relies on the server 409. Fix by returning check fields from the snapshot API.
 - Eval: the `real_spot_check` per-source recall line prints 100% and aggregate recall includes spot-check docs, which can flatter a recall gate. Exclude or annotate.
-- Eval export aborts the whole run on one ZodError, and overwrites on a duplicate `file_sha256` slug.
+- Eval export aborts the whole run on one ZodError, and overwrites on a duplicate `file_sha256` slug. `exportChecks` also uses a `toISOString` date pattern that needs review.
 - UI: an open Incorrect form can strand keyboard shortcuts (no Escape or document-change reset).
-- Lock-order deadlock between fact check and identity confirm: `setDocumentIdentityStatus` locks the document then writes facts, while check and PATCH lock fact then document. Postgres aborts one transaction (500, no corruption); rare.
+- Resolve/annotate on a conflict with an excluded side should return 409 (`ConflictResolution.tsx` ignores `excluded`).
+- Stale conflict row after un-exclude with a value-matching correction.
+- Lock-order deadlock between identity confirm and fact check (`setDocumentIdentityStatus` locks the document then writes facts; check and PATCH lock fact then document), plus concurrent exclusion of both sides of a conflict. Postgres aborts one transaction (rare 500, no corruption).
+- Facts with a null value (`no_usable_value` / `source_states_not_performed`) cannot be marked correct, so cannot be signed off; the spec's "non-marker fact type with content" carve-out is not implemented.
+- The patient-list badge and the review-screen progress disagree for facts that lost a resolved conflict.
+- Add a DB-level CHECK backing the sign-off gate (deliberately not in migration 010).
 
 ## Open
 

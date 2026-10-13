@@ -134,3 +134,20 @@ test("an excluded fact never opens conflicts itself (e.g. on identity confirm re
   const [row] = await sql`SELECT * FROM facts WHERE id = ${c}`;
   expect(await detectConflicts(sql, row as any)).toEqual([]);
 });
+
+test("resolved A over B, then A excluded: B (the loser) is visible in the snapshot again", async () => {
+  await sql`UPDATE conflicts SET status = 'resolved', authoritative_fact_id = ${a} WHERE id = ${conflictId}`;
+  const ids = async () =>
+    (((await (await getPatientSnapshot(withId(`/patients/${patientId}/snapshot`, { id: patientId }))).json()) as any).tumor_markers as any[]).map((m) => m.fact_id);
+  expect(await ids()).toEqual([a]); // loser hidden while the winner is live
+  await exclude(a);
+  expect(await ids()).toEqual([b]);
+});
+
+test("snapshot rows carry the real check_state", async () => {
+  await sql`UPDATE facts SET check_state = 'unchecked' WHERE id = ${a}`;
+  await exclude(b);
+  const body = (await (await getPatientSnapshot(withId(`/patients/${patientId}/snapshot`, { id: patientId }))).json()) as any;
+  const cea = body.tumor_markers.find((m: any) => m.fact_id === a);
+  expect(cea.check_state).toBe("unchecked");
+});
