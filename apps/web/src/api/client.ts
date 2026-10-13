@@ -330,9 +330,9 @@ export interface SummaryItem {
 export interface SummaryPrescription {
   document_id: string;
   date: string | null;
-  regimen: SummaryItem | null;
+  regimens: SummaryItem[];
   tests_advised: SummaryItem[];
-  next_review: SummaryItem | null;
+  next_reviews: SummaryItem[];
 }
 
 export interface PatientSummary {

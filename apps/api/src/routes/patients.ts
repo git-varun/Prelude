@@ -817,9 +817,10 @@ export async function getPatientSummary(req: Request & { params: { id: string } 
   const [patient] = await sql`SELECT id, name FROM patients WHERE id = ${patientId}`;
   if (!patient) return jsonError(404, "not_found", "Patient not found.");
 
+  // Documents that contribute at least one live fact (matches the "compiled from N documents" heading).
   const [{ n }] = await sql`
-    SELECT count(*)::int AS n FROM documents
-    WHERE patient_id = ${patientId} AND (identity_status IS NULL OR identity_status NOT IN ('mismatch', 'rejected'))
+    SELECT count(DISTINCT f.document_id)::int AS n FROM facts f
+    WHERE f.patient_id = ${patientId} AND f.value IS NOT NULL AND ${LIVE_FACT_FILTER}
   `;
 
   const rows: SummaryRow[] = await sql`
@@ -846,14 +847,18 @@ export async function getPatientSummary(req: Request & { params: { id: string } 
   }
   const prescriptions = [...byDocument.entries()]
     .map(([document_id, facts]) => {
-      const dates = facts.map((f) => f.as_of_date).filter((d): d is string => d !== null);
       const pick = (t: string): SummaryItem[] => facts.filter((f) => f.field_type === t).map(summaryItem);
+      // next_review_date is excluded: it may be a future review date, not when the prescription was written.
+      const dates = facts
+        .filter((f) => f.field_type === "treatment_regimen" || f.field_type === "tests_advised")
+        .map((f) => f.as_of_date)
+        .filter((d): d is string => d !== null);
       return {
         document_id,
         date: dates.length > 0 ? dates.reduce((a, b) => (a > b ? a : b)) : null,
-        regimen: pick("treatment_regimen")[0] ?? null,
+        regimens: pick("treatment_regimen"),
         tests_advised: pick("tests_advised"),
-        next_review: pick("next_review_date")[0] ?? null,
+        next_reviews: pick("next_review_date"),
       };
     })
     .sort((a, b) => (a.date === b.date ? 0 : a.date === null ? 1 : b.date === null ? -1 : a.date < b.date ? 1 : -1));

@@ -1,5 +1,6 @@
 import { useEffect, useState } from "react";
 import { api, type PatientSummary, type SummaryItem } from "../api/client";
+import { latestItem } from "../lib/latestItem";
 import { navigate } from "../router";
 import { NOT_EXTRACTED_TEXT, NOT_FOUND_TEXT, SourceLink, sourceLine } from "./SummaryBits";
 
@@ -41,7 +42,6 @@ export function SummaryStrip({ patientId }: { patientId: string }) {
   }, [patientId]);
 
   if (!data) return null;
-  const last = (items: SummaryItem[]) => items[items.length - 1] ?? null;
   const prescription = data.prescriptions[0];
 
   return (
@@ -60,9 +60,9 @@ export function SummaryStrip({ patientId }: { patientId: string }) {
         </a>
       </div>
       <div className="summary-strip__cells">
-        <Cell label="Diagnosis" item={last(data.disease_history.diagnosis)} />
-        <Cell label="Surgery" item={last(data.procedures)} />
-        <Cell label="Last prescription" item={prescription?.regimen ?? null} date={prescription?.date} />
+        <Cell label="Diagnosis" item={latestItem(data.disease_history.diagnosis)} />
+        <Cell label="Surgery" item={latestItem(data.procedures)} />
+        <Cell label="Last prescription" item={latestItem(prescription?.regimens ?? [])} date={prescription?.date} />
         <div>
           <h6 className="muted">Other history</h6>
           <div className="muted">{NOT_EXTRACTED_TEXT}</div>

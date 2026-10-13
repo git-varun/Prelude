@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { api, ApiError, type PatientSummary, type SummaryItem } from "../api/client";
+import { api, type PatientSummary, type SummaryItem } from "../api/client";
 import { NOT_EXTRACTED_TEXT, NOT_FOUND_TEXT, SourceLink, sourceLine } from "../components/SummaryBits";
 import { navigate } from "../router";
 
@@ -40,9 +40,27 @@ function KeyedRows({ rows }: { rows: { key: string; items: SummaryItem[] | "not_
   );
 }
 
+function PrescriptionLines({ label, items }: { label: string; items: SummaryItem[] }) {
+  return (
+    <div>
+      <h6 className="muted">{label}</h6>
+      {items.length === 0 ? (
+        <span className="muted">{NOT_FOUND_TEXT}</span>
+      ) : (
+        items.map((item) => (
+          <div key={item.fact_id}>
+            {item.text}
+            <span className="summary-row__source">{sourceLine(item)}</span> <SourceLink item={item} />
+          </div>
+        ))
+      )}
+    </div>
+  );
+}
+
 export function Summary({ patientId }: { patientId: string }) {
   const [data, setData] = useState<PatientSummary | null>(null);
-  const [error, setError] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
   const [loading, setLoading] = useState(true);
   const latest = useRef(0);
 
@@ -50,14 +68,14 @@ export function Summary({ patientId }: { patientId: string }) {
     const token = ++latest.current;
     setLoading(true);
     setData(null);
-    setError(null);
+    setFailed(false);
     try {
       const result = await api.getPatientSummary(patientId);
       if (token !== latest.current) return;
       setData(result);
-    } catch (err) {
+    } catch {
       if (token !== latest.current) return;
-      setError(err instanceof ApiError ? err.message : "Failed to load summary.");
+      setFailed(true);
     } finally {
       if (token === latest.current) setLoading(false);
     }
@@ -74,9 +92,14 @@ export function Summary({ patientId }: { patientId: string }) {
   if (!data) {
     return (
       <div>
-        <div className="error-banner">{error ?? "Patient not found."}</div>
+        <div className="error-banner">
+          {failed ? "We couldn't load this summary right now. Please try again." : "Patient not found."}
+        </div>
         <button className="btn btn--secondary" type="button" onClick={() => void load()}>
           Retry
+        </button>{" "}
+        <button className="btn btn--ghost" type="button" onClick={() => navigate("/patients")}>
+          Back to patient list
         </button>
       </div>
     );
@@ -172,54 +195,18 @@ export function Summary({ patientId }: { patientId: string }) {
           <p className="muted">{NOT_FOUND_TEXT}</p>
         ) : (
           <div className="card" style={{ padding: 0 }}>
-            {data.prescriptions.map((p) => {
-              const sourceItem = p.regimen ?? p.next_review ?? p.tests_advised[0] ?? null;
-              return (
-                <div className="summary-prescription" key={p.document_id}>
-                  <div className="summary-prescription__head">
-                    <strong>{p.date ?? "No date"}</strong>
-                    {sourceItem && <SourceLink item={sourceItem} />}
-                  </div>
-                  <div className="summary-prescription__grid">
-                    <div>
-                      <h6 className="muted">Treatment</h6>
-                      {p.regimen ? (
-                        <>
-                          {p.regimen.text}
-                          <span className="summary-row__source">{sourceLine(p.regimen)}</span>
-                        </>
-                      ) : (
-                        <span className="muted">{NOT_FOUND_TEXT}</span>
-                      )}
-                    </div>
-                    <div>
-                      <h6 className="muted">Tests advised</h6>
-                      {p.tests_advised.length === 0 ? (
-                        <span className="muted">{NOT_FOUND_TEXT}</span>
-                      ) : (
-                        p.tests_advised.map((t) => (
-                          <div key={t.fact_id}>
-                            {t.text}
-                            <span className="summary-row__source">{sourceLine(t)}</span>
-                          </div>
-                        ))
-                      )}
-                    </div>
-                    <div>
-                      <h6 className="muted">Next review</h6>
-                      {p.next_review ? (
-                        <>
-                          {p.next_review.text}
-                          <span className="summary-row__source">{sourceLine(p.next_review)}</span>
-                        </>
-                      ) : (
-                        <span className="muted">{NOT_FOUND_TEXT}</span>
-                      )}
-                    </div>
-                  </div>
+            {data.prescriptions.map((p) => (
+              <div className="summary-prescription" key={p.document_id}>
+                <div className="summary-prescription__head">
+                  <strong>{p.date ?? "No date"}</strong>
                 </div>
-              );
-            })}
+                <div className="summary-prescription__grid">
+                  <PrescriptionLines label="Treatment" items={p.regimens} />
+                  <PrescriptionLines label="Tests advised" items={p.tests_advised} />
+                  <PrescriptionLines label="Next review" items={p.next_reviews} />
+                </div>
+              </div>
+            ))}
           </div>
         )}
       </Section>

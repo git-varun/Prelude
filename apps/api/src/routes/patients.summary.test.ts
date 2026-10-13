@@ -26,11 +26,14 @@ async function newDocument(documentType: string, identity: string | null = null,
   return doc.id as string;
 }
 
-async function newFact(documentId: string, fieldType: string, value: string | null, asOf: string | null, extra: { facility?: string } = {}) {
+async function newFact(
+  documentId: string, fieldType: string, value: string | null, asOf: string | null,
+  extra: { facility?: string; pid?: string; vid?: string } = {},
+) {
   const [row] = await sql`
     INSERT INTO facts (patient_id, visit_id, document_id, field_type, value, as_of_date, coverage_status,
       verification_state, source_page, source_snippet, facility)
-    VALUES (${patientId}, ${visitId}, ${documentId}, ${fieldType}::field_type, ${value}, ${asOf}, 'value_found',
+    VALUES (${extra.pid ?? patientId}, ${extra.vid ?? visitId}, ${documentId}, ${fieldType}::field_type, ${value}, ${asOf}, 'value_found',
       'unverified', 1, ${value}, ${extra.facility ?? null})
     RETURNING id`;
   return row.id as string;
@@ -99,23 +102,95 @@ test("facts from a held (mismatch) or rejected document never appear", async () 
   expect(after.documents_count).toBe(before.documents_count);
 });
 
-test("prescriptions group by prescription document, newest first, with max fact date", async () => {
+test("prescriptions group by prescription document, newest first, dated by regimen/tests facts", async () => {
   const older = await newDocument("prescription");
   const newer = await newDocument("prescription");
   const regOld = await newFact(older, "treatment_regimen", "Tab X 10mg", "2026-01-05");
   const regNew = await newFact(newer, "treatment_regimen", "Tab Y 20mg", "2026-02-20");
   const tests = await newFact(newer, "tests_advised", "CBC, LFT", "2026-02-22");
   const review = await newFact(newer, "next_review_date", "after 3 weeks", "2026-02-20");
+  const review2 = await newFact(newer, "next_review_date", "or sooner if pain", null);
+  const regNew2 = await newFact(newer, "treatment_regimen", "Tab Z 5mg", "2026-02-21");
   const body = await summary();
   const [first, second] = body.prescriptions;
   expect(body.prescriptions.length).toBe(2);
   expect(first.document_id).toBe(newer);
   expect(first.date).toBe("2026-02-22");
-  expect(first.regimen.fact_id).toBe(regNew);
+  expect(first.regimens.map((i: any) => i.fact_id)).toEqual([regNew, regNew2]);
   expect(first.tests_advised.map((i: any) => i.fact_id)).toEqual([tests]);
-  expect(first.next_review.fact_id).toBe(review);
+  expect(first.next_reviews.map((i: any) => i.fact_id).sort()).toEqual([review, review2].sort());
   expect(second.document_id).toBe(older);
-  expect(second.regimen.fact_id).toBe(regOld);
-  expect(second.next_review).toBeNull();
+  expect(second.regimens.map((i: any) => i.fact_id)).toEqual([regOld]);
+  expect(second.next_reviews).toEqual([]);
   expect(second.tests_advised).toEqual([]);
+});
+
+async function freshPatient() {
+  const p = await createTestPatient(staff.id);
+  const [{ id: vid }] = await sql`INSERT INTO visits (patient_id, visit_date) VALUES (${p.id}, '2026-03-01') RETURNING id`;
+  const doc = await newDocument("pathology", null, p.id, vid);
+  return { pid: p.id as string, vid: vid as string, doc };
+}
+
+test("prescription date ignores a future next_review_date; undated prescriptions sort last", async () => {
+  const { pid, vid } = await freshPatient();
+  try {
+    const dated = await newDocument("prescription", null, pid, vid);
+    const undated = await newDocument("prescription", null, pid, vid);
+    await newFact(dated, "treatment_regimen", "Tab A", "2026-02-01", { pid, vid });
+    await newFact(dated, "next_review_date", "review", "2027-01-01", { pid, vid });
+    await newFact(undated, "next_review_date", "review", "2027-06-01", { pid, vid });
+    const body = await summary(pid);
+    expect(body.prescriptions.map((p: any) => p.document_id)).toEqual([dated, undated]);
+    expect(body.prescriptions[0].date).toBe("2026-02-01");
+    expect(body.prescriptions[1].date).toBeNull();
+  } finally {
+    await deleteTestPatients(pid);
+  }
+});
+
+test("a resolved-conflict loser is excluded; an open-conflict pair shows both sides", async () => {
+  const { pid, vid, doc } = await freshPatient();
+  try {
+    const winner = await newFact(doc, "diagnosis", "IDC", "2026-01-01", { pid, vid });
+    const loser = await newFact(doc, "diagnosis", "ILC", "2026-01-02", { pid, vid });
+    const [{ id: resolved }] = await sql`
+      INSERT INTO conflicts (fact_id_a, fact_id_b, status, authoritative_fact_id) VALUES (${winner}, ${loser}, 'resolved', ${winner}) RETURNING id`;
+    expect((await summary(pid)).disease_history.diagnosis.map((i: any) => i.fact_id)).toEqual([winner]);
+    await sql`DELETE FROM conflicts WHERE id = ${resolved}`;
+    await sql`INSERT INTO conflicts (fact_id_a, fact_id_b, status) VALUES (${winner}, ${loser}, 'open')`;
+    const body = await summary(pid);
+    expect(body.disease_history.diagnosis.map((i: any) => i.fact_id)).toEqual([winner, loser]);
+    expect(body.what_happened.map((i: any) => i.fact_id)).toEqual([winner, loser]);
+  } finally {
+    await deleteTestPatients(pid);
+  }
+});
+
+test("an undated fact does not displace a dated one in what_happened or order", async () => {
+  const { pid, vid, doc } = await freshPatient();
+  try {
+    const dated = await newFact(doc, "diagnosis", "dated", "2026-01-01", { pid, vid });
+    const undated = await newFact(doc, "diagnosis", "undated", null, { pid, vid });
+    const body = await summary(pid);
+    expect(body.what_happened.map((i: any) => i.fact_id)).toEqual([dated]);
+    expect(body.disease_history.diagnosis.map((i: any) => i.fact_id)).toEqual([dated, undated]);
+  } finally {
+    await deleteTestPatients(pid);
+  }
+});
+
+test("documents_count counts only documents with at least one live fact", async () => {
+  const { pid, vid, doc } = await freshPatient();
+  try {
+    await newDocument("pathology", null, pid, vid); // no facts
+    const nullOnly = await newDocument("pathology", null, pid, vid);
+    await newFact(nullOnly, "diagnosis", null, null, { pid, vid }); // null value is not a live line
+    const held = await newDocument("pathology", "mismatch", pid, vid);
+    await newFact(held, "diagnosis", "held", "2026-01-01", { pid, vid });
+    await newFact(doc, "diagnosis", "IDC", "2026-01-01", { pid, vid });
+    expect((await summary(pid)).documents_count).toBe(1);
+  } finally {
+    await deleteTestPatients(pid);
+  }
 });

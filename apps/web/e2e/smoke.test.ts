@@ -470,6 +470,7 @@ async function openSnapshot(
   body: unknown,
   trends: Record<string, unknown> = {},
   extraRoute?: (path: string, method: string) => unknown | undefined,
+  summaryBody: unknown = EMPTY_SUMMARY,
 ) {
   const page = await browser.newPage();
   page.setDefaultTimeout(5000);
@@ -485,7 +486,7 @@ async function openSnapshot(
     const json = (b: unknown) => route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify(b) });
     if (path === "/auth/me") return json({ id: "u1", name: "Test", email: "t@opd.local", role });
     if (path === "/patients/p1/snapshot") return json(body);
-    if (path === "/patients/p1/summary") return json(EMPTY_SUMMARY);
+    if (path === "/patients/p1/summary") return json(summaryBody);
     const trendMatch = path.match(/^\/patients\/p1\/markers\/([^/]+)\/trend$/);
     if (trendMatch) return json(trends[trendMatch[1]!] ?? { marker_name: "", points: [] });
     if (extraRoute) {
@@ -1587,8 +1588,10 @@ test("summary screen: quoted facts with Source links, placeholders, and load err
   const errors: string[] = [];
   page.on("pageerror", (err) => errors.push(`pageerror: ${err.message}`));
   page.on("console", (msg) => {
-    // The deliberately failed first summary request is logged by the browser as a resource error.
-    if (msg.type() === "error" && !msg.text().includes("500")) errors.push(`console: ${msg.text()}`);
+    if (msg.type() !== "error") return;
+    // Only the deliberately failed first summary request (500) is expected.
+    if (msg.location().url === `${API}/patients/p1/summary` && msg.text().includes("status of 500")) return;
+    errors.push(`console: ${msg.text()}`);
   });
   const cors = { "Access-Control-Allow-Origin": BASE, "Access-Control-Allow-Credentials": "true" };
   const item = {
@@ -1621,6 +1624,32 @@ test("summary screen: quoted facts with Source links, placeholders, and load err
   expect(await page.getByText("Not found in documents").count()).toBeGreaterThan(0);
   expect(await page.getByText("staff corrected").count()).toBeGreaterThan(0);
   expect(await page.locator('a[href="#/documents/d1/source?fact=f1"]').count()).toBe(2);
+  expect(errors).toEqual([]);
+  // A Source link navigates to the document source route for that fact.
+  await page.locator('a[href="#/documents/d1/source?fact=f1"]').first().click();
+  await page.waitForFunction(() => window.location.hash === "#/documents/d1/source?fact=f1");
+  await page.close();
+}, 30_000);
+
+test("Snapshot: summary strip shows data and 'Full summary' opens the Summary route", async () => {
+  const item = (fact_id: string, text: string, as_of_date: string | null) => ({
+    fact_id, document_id: "d1", text, as_of_date, facility: null, verification_state: "unverified",
+    provenance: { document_id: "d1", source_page: 1, source_location: null, source_snippet: "x", fallback_level: "exact" },
+  });
+  const summaryBody = {
+    ...EMPTY_SUMMARY,
+    documents_count: 1,
+    // undated fact arrives last (API order) but must not displace the dated one
+    disease_history: { diagnosis: [item("f1", "IDC dated", "2026-01-01"), item("f2", "IDC undated", null)], histology_ihc: [], stage: [] },
+    prescriptions: [{ document_id: "d1", date: "2026-02-01", regimens: [item("f3", "Tab X 10mg", "2026-02-01")], tests_advised: [], next_reviews: [] }],
+  };
+  const { page, errors } = await openSnapshot("staff", snapshotBody(), {}, undefined, summaryBody);
+  const strip = page.getByTestId("summary-strip");
+  await strip.getByText("IDC dated").waitFor();
+  expect(await strip.getByText("IDC undated").count()).toBe(0);
+  await strip.getByText("Tab X 10mg").waitFor();
+  await strip.getByRole("link", { name: "Full summary" }).click();
+  await page.waitForFunction(() => window.location.hash === "#/patients/p1/summary");
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);
