@@ -3,6 +3,7 @@ import { jsonError } from "../middleware/auth";
 import type { AuthedUser } from "../middleware/auth";
 import { applyCorrection, isUuid, parseCorrection } from "../services/corrections";
 import { provenanceFor } from "../services/provenance";
+import { CONFLICT_SIDES_LIVE } from "../services/delta";
 
 
 type Exec = typeof sql;
@@ -16,11 +17,11 @@ async function queryFacts(exec: Exec, filter: { documentId?: string; factId?: st
            f.coverage_status, f.verification_state, f.source_page, f.source_location, f.source_snippet,
            EXISTS (
              SELECT 1 FROM conflicts c
-             WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated')
+             WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated') AND ${CONFLICT_SIDES_LIVE}
            ) AS has_blocking_conflict,
            (
              SELECT c.id FROM conflicts c
-             WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated')
+             WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated') AND ${CONFLICT_SIDES_LIVE}
              LIMIT 1
            ) AS blocking_conflict_id
     FROM facts f
@@ -85,8 +86,9 @@ export async function signOffFact(req: Request & { params: { id: string } }, use
     if (before.as_of_date === null) return "undated" as const;
     if (before.field_type === "marker_value" && before.tracked_marker_id === null) return "unmapped" as const;
     const [conflict] = await tx`
-      SELECT id FROM conflicts
-      WHERE (fact_id_a = ${factId} OR fact_id_b = ${factId}) AND status IN ('open', 'annotated')
+      SELECT c.id FROM conflicts c
+      WHERE (c.fact_id_a = ${factId} OR c.fact_id_b = ${factId}) AND c.status IN ('open', 'annotated')
+        AND ${CONFLICT_SIDES_LIVE}
       LIMIT 1
     `;
     if (conflict) return "conflict" as const;

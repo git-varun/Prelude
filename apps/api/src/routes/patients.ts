@@ -3,7 +3,7 @@ import { jsonError } from "../middleware/auth";
 import type { AuthedUser } from "../middleware/auth";
 import { isControlledMarker } from "@prelude/shared";
 import {
-  deltaKey, deltaForCurrentFact, deltaForAbsentField, loadDeltaBaselines, LIVE_FACT_FILTER,
+  deltaKey, deltaForCurrentFact, deltaForAbsentField, loadDeltaBaselines, LIVE_FACT_FILTER, CONFLICT_SIDES_LIVE,
   type DeltaBaseline, type DeltaStatus,
 } from "../services/delta";
 import { provenanceFor, type Provenance } from "../services/provenance";
@@ -157,7 +157,7 @@ export async function listPatients(req: Request): Promise<Response> {
          OR f.coverage_status = 'extraction_uncertain'
          OR EXISTS (
            SELECT 1 FROM conflicts c
-           WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated')
+           WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated') AND ${CONFLICT_SIDES_LIVE}
          )
        )
     ) AS needs_attention_count
@@ -340,7 +340,7 @@ async function loadTumorMarkers(patientId: string, visitId: string): Promise<Sna
       SELECT f.id FROM live f
       WHERE EXISTS (
         SELECT 1 FROM conflicts c
-        WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated')
+        WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated') AND ${CONFLICT_SIDES_LIVE}
       )
     ), ranked AS (
       SELECT f.*, RANK() OVER (PARTITION BY f.tracked_marker_id ORDER BY f.as_of_date DESC NULLS LAST) AS rnk
@@ -378,7 +378,7 @@ async function loadCurrentTreatment(visitId: string): Promise<SnapshotFactRow[]>
       SELECT f.id FROM live f
       WHERE EXISTS (
         SELECT 1 FROM conflicts c
-        WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated')
+        WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated') AND ${CONFLICT_SIDES_LIVE}
       )
     ), ranked AS (
       SELECT f.*, RANK() OVER (ORDER BY f.as_of_date DESC NULLS LAST) AS rnk
@@ -414,7 +414,7 @@ async function loadRadiology(visitId: string): Promise<SnapshotFactRow[]> {
       SELECT f.id FROM live f
       WHERE EXISTS (
         SELECT 1 FROM conflicts c
-        WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated')
+        WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated') AND ${CONFLICT_SIDES_LIVE}
       )
     ), ranked AS (
       SELECT f.*, RANK() OVER (ORDER BY f.as_of_date DESC NULLS LAST) AS rnk
@@ -463,10 +463,10 @@ async function loadConflicts(factIds: string[]): Promise<Map<string, ConflictEnt
            ofact.source_snippet AS other_source_snippet
     FROM (
       SELECT c.id AS conflict_id, c.status, c.authoritative_fact_id, c.fact_id_a AS this_fact_id, c.fact_id_b AS other_fact_id
-      FROM conflicts c WHERE c.fact_id_a IN ${sql(factIds)}
+      FROM conflicts c WHERE c.fact_id_a IN ${sql(factIds)} AND ${CONFLICT_SIDES_LIVE}
       UNION ALL
       SELECT c.id, c.status, c.authoritative_fact_id, c.fact_id_b, c.fact_id_a
-      FROM conflicts c WHERE c.fact_id_b IN ${sql(factIds)}
+      FROM conflicts c WHERE c.fact_id_b IN ${sql(factIds)} AND ${CONFLICT_SIDES_LIVE}
     ) pairs
     JOIN facts ofact ON ofact.id = pairs.other_fact_id
     -- the other side of a conflict is shown to the reader: never a fact from a held/rejected document
