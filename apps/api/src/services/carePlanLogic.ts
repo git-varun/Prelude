@@ -15,6 +15,8 @@ function isoFromUtc(d: Date): string {
 // date (YYYY-MM-DD) relative to advisedAt. Anything else -- no interval, two intervals, other phrasing -- is
 // null, so no date is shown rather than a guessed one.
 export function approximateDate(text: string, advisedAt: string): string | null {
+  // Ranges ("2-3 weeks") and recurrences ("every 3 months", "monthly") have no single date.
+  if (/\d\s*(-|–|to)\s*\d/i.test(text) || /\b(every|each|monthly|weekly|daily|q\d)/i.test(text)) return null;
   const matches = [...text.matchAll(/\b(\d{1,3})\s*(day|week|month)s?\b/gi)];
   if (matches.length !== 1) return null;
   const n = Number(matches[0]![1]);
@@ -31,25 +33,47 @@ export function approximateDate(text: string, advisedAt: string): string | null 
   return isoFromUtc(new Date(start.getTime() + n * UNIT_DAYS[unit] * 86_400_000));
 }
 
+function isoIfRealDate(y: number, m: number, d: number): string | null {
+  const iso = `${String(y).padStart(4, "0")}-${String(m).padStart(2, "0")}-${String(d).padStart(2, "0")}`;
+  const dt = new Date(`${iso}T00:00:00Z`);
+  return y >= 1900 && !Number.isNaN(dt.getTime()) && isoFromUtc(dt) === iso ? iso : null;
+}
+
+// A calendar date written in the text: dd/mm/yyyy, dd-mm-yyyy or yyyy-mm-dd only. Impossible dates are
+// ignored, and so is text with more than one date (ambiguous).
+export function statedDate(text: string): string | null {
+  const found: string[] = [];
+  for (const m of text.matchAll(/(?<!\d)(\d{4})-(\d{1,2})-(\d{1,2})(?!\d)|(?<![\d/-])(\d{1,2})[/-](\d{1,2})[/-](\d{4})(?!\d)/g)) {
+    const iso = m[1]
+      ? isoIfRealDate(Number(m[1]), Number(m[2]), Number(m[3]))
+      : isoIfRealDate(Number(m[6]), Number(m[5]), Number(m[4]));
+    if (iso) found.push(iso);
+  }
+  return found.length === 1 ? found[0]! : null;
+}
+
 export interface CandidateDocument {
   id: string;
   label: string;
   imaging_modality: string | null;
-  // Canonical or raw marker labels of the document's live marker_value facts.
+  // Canonical or tracked marker names of the document's live marker_value facts (never raw unmapped labels).
   markers: string[];
   // reported_on, else collected_on, else the latest as_of_date of its live facts.
   date: string | null;
 }
 
-const MODALITY_PATTERNS: Record<string, RegExp> = {
-  ct: /\b(ct|cect|hrct)\b/i,
-  ct_contrast: /\b(ct|cect|hrct)\b/i,
-  mri: /\b(mri|mr)\b/i,
-  mri_contrast: /\b(mri|mr)\b/i,
-  pet_ct: /\bpet(\s*-?\s*ct)?\b/i,
-  ultrasound: /\b(ultrasound|usg|sonography)\b/i,
-  xray: /\bx-?\s?ray\b/i,
-  mammography: /\bmammo(gram|graphy)?\b/i,
+// Every pattern in the list must match the item text. PET-CT is never plain CT; contrast variants need the word.
+const CT = /(?<!\bpet[\s-]*)\b(ct|cect|hrct)\b/i;
+const CONTRAST = /\bcontrast\b/i;
+const MODALITY_PATTERNS: Record<string, RegExp[]> = {
+  ct: [CT],
+  ct_contrast: [CT, CONTRAST],
+  mri: [/\bmri\b/i],
+  mri_contrast: [/\bmri\b/i, CONTRAST],
+  pet_ct: [/\bpet\s*-?\s*ct\b/i],
+  ultrasound: [/\b(ultrasound|usg|sonography)\b/i],
+  xray: [/\bx-?\s?ray\b/i],
+  mammography: [/\bmammo(gram|graphy)?\b/i],
 };
 
 function escapeRegExp(s: string): string {
@@ -76,22 +100,21 @@ export function suggestMatches(
     .filter((c) => {
       if (c.date === null || c.date <= item.advised_at) return false;
       const modality = c.imaging_modality ? MODALITY_PATTERNS[c.imaging_modality] : undefined;
-      if (modality?.test(item.text)) return true;
+      if (modality?.every((re) => re.test(item.text))) return true;
       return c.markers.some((m) => textMentionsMarker(item.text, m));
     })
     .sort((a, b) => (a.date! < b.date! ? -1 : a.date! > b.date! ? 1 : 0));
 }
 
-// Status is derived, never stored. A confirmed match wins; else a suggestion; else the (approximate) advised
-// date decides between planned and past_advised.
+// Status is derived, never stored. A confirmed match wins; else a suggestion; else the stated or approximate
+// date decides between planned and past_advised. An item with no date is simply planned.
 export function derivePlanStatus(args: {
-  advised_at: string;
-  approx_date: string | null;
+  due_date: string | null;
   hasConfirmedMatch: boolean;
   hasSuggestion: boolean;
   today: string;
 }): PlanStatus {
   if (args.hasConfirmedMatch) return "report_seen";
   if (args.hasSuggestion) return "report_suggested";
-  return (args.approx_date ?? args.advised_at) < args.today ? "past_advised" : "planned";
+  return args.due_date !== null && args.due_date < args.today ? "past_advised" : "planned";
 }

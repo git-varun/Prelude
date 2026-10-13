@@ -353,6 +353,7 @@ export interface PlanItem {
   text: string;
   advised_at: string;
   approx_date: string | null;
+  stated_date: string | null;
   status: PlanStatus;
   past_advised: boolean;
   matched_document: { id: string; label: string } | null;

@@ -94,16 +94,16 @@ test("hand-added item: staff and oncologist, validated", async () => {
 
 test("status: planned, past_advised, report_suggested, report_seen; unmatch returns to suggested", async () => {
   await add({ type: "test", text: "Bone scan in 2 weeks", advised_at: "2030-05-01" });
-  await add({ type: "procedure", text: "Biopsy", advised_at: "2020-01-01" });
-  await add({ type: "test", text: "CT abdomen", advised_at: "2020-01-01" });
+  await add({ type: "procedure", text: "Biopsy in 2 weeks", advised_at: "2020-01-01" });
+  await add({ type: "test", text: "CT abdomen in 2 weeks", advised_at: "2020-01-01" });
   let p = await plan();
   expect(itemByText(p, "Bone scan in 2 weeks")).toMatchObject({ status: "planned", approx_date: "2030-05-15", past_advised: false });
-  expect(itemByText(p, "Biopsy")).toMatchObject({ status: "past_advised", past_advised: true });
-  expect(itemByText(p, "CT abdomen").status).toBe("past_advised");
+  expect(itemByText(p, "Biopsy in 2 weeks")).toMatchObject({ status: "past_advised", past_advised: true });
+  expect(itemByText(p, "CT abdomen in 2 weeks").status).toBe("past_advised");
 
   const ct = await newDocument({ modality: "ct", reportedOn: "2020-02-01" });
   p = await plan();
-  const ctItem = itemByText(p, "CT abdomen");
+  const ctItem = itemByText(p, "CT abdomen in 2 weeks");
   expect(ctItem).toMatchObject({ status: "report_suggested", past_advised: false, suggested_document: { id: ct }, matched_document: null });
   expect(ctItem.suggested_document.label).toContain("CT");
   // A suggestion is never a match: nothing was stored.
@@ -112,12 +112,12 @@ test("status: planned, past_advised, report_suggested, report_seen; unmatch retu
 
   expect((await match(ctItem.id, ct)).status).toBe(200);
   p = await plan();
-  expect(itemByText(p, "CT abdomen")).toMatchObject({ status: "report_seen", matched_document: { id: ct }, suggested_document: null });
+  expect(itemByText(p, "CT abdomen in 2 weeks")).toMatchObject({ status: "report_seen", matched_document: { id: ct }, suggested_document: null });
   const [confirmed] = await sql`SELECT match_confirmed_by FROM care_plan_items WHERE id = ${ctItem.id}`;
   expect(confirmed.match_confirmed_by).toBe(staff.id);
 
   expect((await match(ctItem.id, null)).status).toBe(200);
-  expect(itemByText(await plan(), "CT abdomen").status).toBe("report_suggested");
+  expect(itemByText(await plan(), "CT abdomen in 2 weeks").status).toBe("report_suggested");
 });
 
 test("a report dated on or before the advice is not suggested; the document date falls back to its facts", async () => {
@@ -156,7 +156,7 @@ test("held or rejected documents are never suggested, cannot be matched, and an 
 
 test("match validation: unknown item, malformed id, other patient's document", async () => {
   expect((await match("00000000-0000-0000-0000-000000000000", null)).status).toBe(404);
-  const item = itemByText(await plan(), "Biopsy");
+  const item = itemByText(await plan(), "Biopsy in 2 weeks");
   expect((await setPlanItemMatch(req("http://localhost/m", item.id, { document_id: "nope" }), asAuthedUser(staff))).status).toBe(400);
   const other = await createTestPatient(staff.id);
   const [v] = await sql`INSERT INTO visits (patient_id, visit_date) VALUES (${other.id}, '2026-01-01') RETURNING id`;
@@ -164,4 +164,70 @@ test("match validation: unknown item, malformed id, other patient's document", a
     VALUES (${other.id}, ${v.id}, 'x', 'blood', 'own_hospital', ${staff.id}, 'done') RETURNING id`;
   expect((await match(item.id, d.id)).status).toBe(400);
   await deleteTestPatients(other.id);
+});
+
+test("fact-sourced items show only while the source fact is live and signed off; hand-added items stay", async () => {
+  const d = await newDocument({ type: "prescription" });
+  const reopened = await newFact(d, "tests_advised", "Reopen me in 2 weeks", "2034-01-01");
+  const d2 = await newDocument({ type: "prescription" });
+  const heldLater = await newFact(d2, "tests_advised", "Held later in 2 weeks", "2034-01-01");
+  for (const id of [reopened, heldLater]) expect((await signOff(id)).status).toBe(200);
+  await add({ type: "test", text: "Hand added in 2 weeks", advised_at: "2034-01-01" });
+  let p = await plan();
+  expect(itemByText(p, "Reopen me in 2 weeks")).toBeDefined();
+  expect(itemByText(p, "Held later in 2 weeks")).toBeDefined();
+
+  await sql`UPDATE facts SET verification_state = 'unverified' WHERE id = ${reopened}`;
+  await sql`UPDATE documents SET identity_status = 'mismatch' WHERE id = ${d2}`;
+  p = await plan();
+  expect(itemByText(p, "Reopen me in 2 weeks")).toBeUndefined();
+  expect(itemByText(p, "Held later in 2 weeks")).toBeUndefined();
+  expect(itemByText(p, "Hand added in 2 weeks")).toBeDefined();
+});
+
+test("no stated or parseable time is planned, never past_advised; a stated date decides", async () => {
+  await add({ type: "test", text: "CBC", advised_at: "2020-01-01" });
+  await add({ type: "review", text: "Review on 15/11/2026", advised_at: "2026-01-01" });
+  await add({ type: "review", text: "Review on 01/01/2020", advised_at: "2019-01-01" });
+  const p = await plan();
+  expect(itemByText(p, "CBC")).toMatchObject({ status: "planned", approx_date: null, stated_date: null });
+  const stated = itemByText(p, "Review on 15/11/2026");
+  expect(stated).toMatchObject({ stated_date: "2026-11-15", approx_date: null });
+  // Today is fixed by the system clock; the stated date decides.
+  const today = new Date().toISOString().slice(0, 10);
+  expect(stated.status).toBe("2026-11-15" < today ? "past_advised" : "planned");
+  expect(itemByText(p, "Review on 01/01/2020")).toMatchObject({ status: "past_advised", stated_date: "2020-01-01" });
+});
+
+test("suggestions: raw unmapped lab labels are ignored, aliases of canonical markers and tracked names match", async () => {
+  await add({ type: "test", text: "Zzq panel", advised_at: "2035-01-01" });
+  await add({ type: "test", text: "CA 125 repeat", advised_at: "2035-01-01" });
+  const lab = await newDocument({ type: "blood", reportedOn: "2035-01-20" });
+  const insert = (label: string) => sql`
+    INSERT INTO facts (patient_id, visit_id, document_id, raw_marker_label, field_type, value, as_of_date, coverage_status, verification_state)
+    VALUES (${patientId}, ${visitId}, ${lab}, ${label}, 'marker_value', '4.2', '2035-01-20', 'value_found', 'unverified')`;
+  await insert("Zzq");
+  let p = await plan();
+  expect(itemByText(p, "Zzq panel").status).toBe("planned");
+  expect(itemByText(p, "CA 125 repeat").status).toBe("planned");
+  await insert("CA-125");
+  p = await plan();
+  expect(itemByText(p, "Zzq panel").status).toBe("planned");
+  expect(itemByText(p, "CA 125 repeat")).toMatchObject({ status: "report_suggested", suggested_document: { id: lab } });
+});
+
+test("re-sign with changed text clears the confirmed match; unchanged text keeps it", async () => {
+  const d = await newDocument({ type: "prescription" });
+  const ct = await newDocument({ modality: "ct", reportedOn: "2036-02-01" });
+  const f = await newFact(d, "tests_advised", "CT neck in 2 weeks", "2036-01-01");
+  expect((await signOff(f)).status).toBe(200);
+  const item = itemByText(await plan(), "CT neck in 2 weeks");
+  expect((await match(item.id, ct)).status).toBe(200);
+  await createPlanItemFromFact(sql, f, oncologist.id);
+  expect(itemByText(await plan(), "CT neck in 2 weeks").status).toBe("report_seen");
+
+  await sql`UPDATE facts SET value = 'MRI neck in 2 weeks' WHERE id = ${f}`;
+  await createPlanItemFromFact(sql, f, oncologist.id);
+  const [row] = await sql`SELECT text, matched_document_id, match_confirmed_by, match_confirmed_at FROM care_plan_items WHERE id = ${item.id}`;
+  expect(row).toMatchObject({ text: "MRI neck in 2 weeks", matched_document_id: null, match_confirmed_by: null, match_confirmed_at: null });
 });

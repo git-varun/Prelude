@@ -1,4 +1,5 @@
 import { sql } from "../db/client";
+import { matchMarker } from "@prelude/shared";
 import { LIVE_FACT_FILTER } from "./delta";
 import type { CandidateDocument } from "./carePlanLogic";
 
@@ -18,7 +19,10 @@ export async function createPlanItemFromFact(tx: Exec, factId: string, userId: s
     WHERE f.id = ${factId} AND f.verification_state = 'oncologist_signed_off'
       AND f.field_type IN ('tests_advised', 'procedures_planned', 'next_review_date')
       AND btrim(COALESCE(f.value, '')) <> '' AND f.as_of_date IS NOT NULL
-    ON CONFLICT (source_fact_id) DO UPDATE SET text = EXCLUDED.text, advised_at = EXCLUDED.advised_at
+    ON CONFLICT (source_fact_id) DO UPDATE SET text = EXCLUDED.text, advised_at = EXCLUDED.advised_at,
+      matched_document_id = CASE WHEN care_plan_items.text IS DISTINCT FROM EXCLUDED.text THEN NULL ELSE care_plan_items.matched_document_id END,
+      match_confirmed_by = CASE WHEN care_plan_items.text IS DISTINCT FROM EXCLUDED.text THEN NULL ELSE care_plan_items.match_confirmed_by END,
+      match_confirmed_at = CASE WHEN care_plan_items.text IS DISTINCT FROM EXCLUDED.text THEN NULL ELSE care_plan_items.match_confirmed_at END
   `;
 }
 
@@ -40,11 +44,16 @@ export async function loadCandidateDocuments(patientId: string): Promise<Candida
              SELECT max(f.as_of_date) FROM facts f WHERE f.document_id = d.id AND ${LIVE_FACT_FILTER}
            )), 'YYYY-MM-DD') AS date,
            COALESCE((
-             SELECT array_agg(DISTINCT COALESCE(tm.marker_name, f.raw_marker_label))
-             FROM facts f LEFT JOIN tracked_markers tm ON tm.id = f.tracked_marker_id
+             SELECT array_agg(DISTINCT tm.marker_name)
+             FROM facts f JOIN tracked_markers tm ON tm.id = f.tracked_marker_id
              WHERE f.document_id = d.id AND f.field_type = 'marker_value' AND ${LIVE_FACT_FILTER}
-               AND COALESCE(tm.marker_name, f.raw_marker_label) IS NOT NULL
-           ), '{}') AS markers
+           ), '{}') AS markers,
+           COALESCE((
+             SELECT array_agg(DISTINCT f.raw_marker_label)
+             FROM facts f
+             WHERE f.document_id = d.id AND f.field_type = 'marker_value' AND ${LIVE_FACT_FILTER}
+               AND f.raw_marker_label IS NOT NULL
+           ), '{}') AS raw_labels
     FROM documents d
     WHERE d.patient_id = ${patientId} AND COALESCE(d.identity_status::text, '') NOT IN ('mismatch', 'rejected')
   `;
@@ -53,7 +62,8 @@ export async function loadCandidateDocuments(patientId: string): Promise<Candida
     label: [r.imaging_modality ? MODALITY_LABELS[r.imaging_modality] : TYPE_LABELS[r.document_type] ?? r.document_type, r.date]
       .filter(Boolean).join(" · "),
     imaging_modality: r.imaging_modality as string | null,
-    markers: r.markers as string[],
+    // Tracked names, plus raw labels only when they map to a canonical marker.
+    markers: [...new Set([...(r.markers as string[]), ...(r.raw_labels as string[]).map((l) => matchMarker(l)).filter((m): m is string => m !== null)])],
     date: r.date as string | null,
   }));
 }

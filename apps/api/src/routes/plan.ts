@@ -1,8 +1,9 @@
 import { sql } from "../db/client";
 import { jsonError } from "../middleware/auth";
 import type { AuthedUser } from "../middleware/auth";
+import { LIVE_FACT_FILTER } from "../services/delta";
 import { loadCandidateDocuments } from "../services/carePlan";
-import { approximateDate, derivePlanStatus, suggestMatches, type PlanItemType } from "../services/carePlanLogic";
+import { approximateDate, derivePlanStatus, statedDate, suggestMatches, type PlanItemType } from "../services/carePlanLogic";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (s: unknown): s is string => typeof s === "string" && UUID.test(s);
@@ -29,6 +30,7 @@ export async function getPatientPlan(req: Request & { params: { id: string } }):
     SELECT ${ITEM_COLUMNS} FROM care_plan_items i
     LEFT JOIN facts f ON f.id = i.source_fact_id
     WHERE i.patient_id = ${patientId}
+      AND (i.source_fact_id IS NULL OR (f.verification_state = 'oncologist_signed_off' AND ${LIVE_FACT_FILTER}))
     ORDER BY i.advised_at DESC, i.created_at DESC, i.id
   `;
   const candidates = await loadCandidateDocuments(patientId);
@@ -36,12 +38,13 @@ export async function getPatientPlan(req: Request & { params: { id: string } }):
   const today = new Date().toISOString().slice(0, 10);
 
   const items = rows.map((r: any) => {
-    const approx = approximateDate(r.text, r.advised_at);
+    const stated = statedDate(r.text);
+    const approx = stated ? null : approximateDate(r.text, r.advised_at);
     // A confirmed match to a document that has since been held or rejected no longer counts.
     const matched = r.matched_document_id && r.match_confirmed_at ? byId.get(r.matched_document_id) ?? null : null;
     const suggested = matched ? null : suggestMatches({ type: r.type as PlanItemType, text: r.text, advised_at: r.advised_at }, candidates)[0] ?? null;
     const status = derivePlanStatus({
-      advised_at: r.advised_at, approx_date: approx, hasConfirmedMatch: !!matched, hasSuggestion: !!suggested, today,
+      due_date: stated ?? approx, hasConfirmedMatch: !!matched, hasSuggestion: !!suggested, today,
     });
     return {
       id: r.id as string,
@@ -49,6 +52,7 @@ export async function getPatientPlan(req: Request & { params: { id: string } }):
       text: r.text as string,
       advised_at: r.advised_at as string,
       approx_date: approx,
+      stated_date: stated,
       status,
       past_advised: status === "past_advised",
       matched_document: matched ? { id: matched.id, label: matched.label } : null,

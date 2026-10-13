@@ -11,7 +11,13 @@ function shortDate(iso: string, withYear = false): string {
   });
 }
 
-// Only the four allowed status wordings.
+// The date the item is due: one written in the text, else the approximate one (marked ≈), else none.
+function dueLabel(item: PlanItem, withYear = false): string | null {
+  if (item.stated_date) return shortDate(item.stated_date, true);
+  return item.approx_date ? `≈${shortDate(item.approx_date, withYear)}` : null;
+}
+
+// Only the four allowed status wordings; the date appears here and nowhere else in the row.
 function statusText(item: PlanItem): string {
   switch (item.status) {
     case "report_seen":
@@ -19,9 +25,9 @@ function statusText(item: PlanItem): string {
     case "report_suggested":
       return `Report seen · ${item.suggested_document?.label ?? ""} · confirm match`;
     case "past_advised":
-      return "Past advised date · no report seen";
+      return dueLabel(item) ? `Past advised date · ${dueLabel(item)} · no report seen` : "Past advised date · no report seen";
     default:
-      return item.approx_date ? `Planned · ≈${shortDate(item.approx_date)}` : "Planned";
+      return dueLabel(item) ? `Planned · ${dueLabel(item)}` : "Planned";
   }
 }
 
@@ -169,9 +175,10 @@ export function Plan({ patientId }: { patientId: string }) {
           <h6 className="muted" style={{ margin: 0 }}>Plan</h6>
           <h1>
             {review
-              ? `Next review ${review.approx_date ? shortDate(review.approx_date, true) : review.text}`
+              ? `Next review ${review.text}${dueLabel(review, true) ? ` · ${dueLabel(review, true)}` : ""}`
               : "No next review found in documents"}
           </h1>
+          {review && <span className="summary-row__source">advised {shortDate(review.advised_at, true)}</span>}
           {review && <SourceLink item={review} />}
         </div>
         <button className="btn btn--ghost" type="button" onClick={() => navigate(`/patients/${patientId}/snapshot`)}>
@@ -192,7 +199,6 @@ export function Plan({ patientId }: { patientId: string }) {
                 <span className="tag">{TYPE_LABELS[item.type]}</span>
                 <span>
                   {item.text}
-                  {item.approx_date && ` (≈${shortDate(item.approx_date)})`}
                   <span className="summary-row__source">advised {shortDate(item.advised_at, true)}</span>
                 </span>
                 <span className="plan-row__actions">
