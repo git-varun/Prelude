@@ -22,9 +22,11 @@ interface Props {
   /** Whether the Incorrect form is open. Lifted so the review screen can pause its shortcuts while it is. */
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Called after a mark is saved, before the list reloads. */
+  onChecked?: () => void;
 }
 
-export function FactCheck({ fact, trackedMarkers, onChanged, active, open, onOpenChange }: Props) {
+export function FactCheck({ fact, trackedMarkers, onChanged, active, open, onOpenChange, onChecked }: Props) {
   const [errorType, setErrorType] = useState<CheckErrorType | "">("");
   const [input, setInput] = useState("");
   const [busy, setBusy] = useState(false);
@@ -39,6 +41,7 @@ export function FactCheck({ fact, trackedMarkers, onChanged, active, open, onOpe
     try {
       await api.checkFact(fact.id, body);
       close();
+      onChecked?.();
       onChanged();
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Could not save the check.");

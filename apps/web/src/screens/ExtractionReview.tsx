@@ -102,30 +102,47 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
   const keyState = useRef({ sortedFacts, effectiveActiveId, openFormId, load });
   keyState.current = { sortedFacts, effectiveActiveId, openFormId, load };
 
+  // Moves the highlight to the next unchecked card after `factId` was marked, since the list re-sorts.
+  const advanceFrom = useCallback((factId: string) => {
+    const facts = keyState.current.sortedFacts;
+    const index = facts.findIndex((f) => f.id === factId);
+    const next =
+      facts.find((f, i) => i > index && f.check_state === "unchecked") ?? facts.find((f) => f.id !== factId && f.check_state === "unchecked");
+    if (next) setActiveId(next.id);
+  }, []);
+
+  const checkPending = useRef(false);
+
   useEffect(() => {
     function onKeyDown(e: KeyboardEvent) {
-      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      if (e.repeat || e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
       const t = e.target as HTMLElement | null;
       if (t && (t.closest("input, textarea, select") || t.isContentEditable)) return;
       const { sortedFacts: facts, effectiveActiveId: current, openFormId: formOpen, load: reload } = keyState.current;
       if (formOpen !== null || current === null) return;
       const index = facts.findIndex((f) => f.id === current);
       if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        // Arrows on a focused button/summary/link belong to the page (scrolling, disclosure widgets).
+        if (t && t.closest("button, summary, details, a")) return;
+        const next = facts[index + (e.key === "ArrowDown" ? 1 : -1)];
+        if (!next) return; // at a boundary: let the page scroll
         e.preventDefault();
-        const next = facts[Math.min(facts.length - 1, Math.max(0, index + (e.key === "ArrowDown" ? 1 : -1)))];
-        if (next) setActiveId(next.id);
+        setActiveId(next.id);
       } else if (e.key === "c") {
         const fact = facts[index];
         if (!fact || fact.verification_state === "oncologist_signed_off") return;
         e.preventDefault();
-        const nextUnchecked = facts.find((f, i) => i > index && f.check_state === "unchecked") ?? facts.find((f) => f.id !== current && f.check_state === "unchecked");
+        if (checkPending.current) return;
+        checkPending.current = true;
         api.checkFact(fact.id, { result: "correct" }).then(
           () => {
-            if (nextUnchecked) setActiveId(nextUnchecked.id);
+            advanceFrom(fact.id);
             void reload();
           },
           (err) => setError(err instanceof ApiError ? err.message : "Could not save the check."),
-        );
+        ).finally(() => {
+          checkPending.current = false;
+        });
       } else if (e.key === "x") {
         const fact = facts[index];
         if (!fact || fact.verification_state === "oncologist_signed_off") return;
@@ -135,7 +152,7 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
     }
     window.addEventListener("keydown", onKeyDown);
     return () => window.removeEventListener("keydown", onKeyDown);
-  }, []);
+  }, [advanceFrom]);
 
   useEffect(() => {
     if (!effectiveActiveId) return;
@@ -319,6 +336,7 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
                   active: fact.id === effectiveActiveId,
                   open: openFormId === fact.id,
                   onOpenChange: (open) => setOpenFormId(open ? fact.id : null),
+                  onChecked: () => advanceFrom(fact.id),
                 }}
               />
             </div>

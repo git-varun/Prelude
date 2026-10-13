@@ -196,6 +196,8 @@ type StubFact = {
   error_type?: string | null;
   printed_flag?: string | null;
   parse_checks?: { failed?: string[] } | null;
+  f2_check?: string;
+  check_delay?: number;
 };
 
 async function openReviewAs(role: "staff" | "oncologist", stub: StubFact) {
@@ -208,6 +210,7 @@ async function openReviewAs(role: "staff" | "oncologist", stub: StubFact) {
   });
   const posts: string[] = [];
   const checkBodies: any[] = [];
+  const checkedIds: string[] = [];
   const state = { ...stub };
   const cors = {
     "Access-Control-Allow-Origin": BASE,
@@ -230,9 +233,9 @@ async function openReviewAs(role: "staff" | "oncologist", stub: StubFact) {
   });
   const reviewFacts = () =>
     state.needs_manual_date
-      ? [fact(), { ...fact(), id: "f2", tracked_marker_name: "PSA", needs_manual_date: false, as_of_date: "2026-02-01", verification_state: "unverified", has_blocking_conflict: false }]
+      ? [fact(), { ...fact(), id: "f2", tracked_marker_name: "PSA", needs_manual_date: false, as_of_date: "2026-02-01", verification_state: "unverified", has_blocking_conflict: false, check_state: state.f2_check ?? "unchecked", error_type: null, excluded_at: null }]
       : [fact()];
-  await page.route(`${API}/**`, (route) => {
+  await page.route(`${API}/**`, async (route) => {
     const req = route.request();
     const path = new URL(req.url()).pathname;
     if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
@@ -258,9 +261,16 @@ async function openReviewAs(role: "staff" | "oncologist", stub: StubFact) {
       state.verification_state = "oncologist_signed_off";
       return json(fact());
     }
+    if (req.method() === "POST" && path === "/facts/f2/check") {
+      checkedIds.push("f2");
+      state.f2_check = JSON.parse(req.postData() ?? "{}").result;
+      return json({ ...fact(), id: "f2", check_state: state.f2_check });
+    }
     if (req.method() === "POST" && path === "/facts/f1/check") {
       const body = JSON.parse(req.postData() ?? "{}");
       checkBodies.push(body);
+      checkedIds.push("f1");
+      if (state.check_delay) await Bun.sleep(state.check_delay);
       state.check_state = body.result;
       state.error_type = body.error_type ?? null;
       return json(fact());
@@ -285,7 +295,7 @@ async function openReviewAs(role: "staff" | "oncologist", stub: StubFact) {
   const card = page.locator(".card", { has: page.getByRole("heading", { name: heading }) });
   const signOff = card.getByRole("button", { name: "Sign off", exact: true });
   const reopen = card.getByRole("button", { name: "Reopen", exact: true });
-  return { page, errors, posts, checkBodies, signOff, reopen, card };
+  return { page, errors, posts, checkBodies, checkedIds, signOff, reopen, card };
 }
 
 test("Extraction Review: the persistent marker disclaimer footer renders verbatim", async () => {
@@ -1672,39 +1682,70 @@ test("spot-check: a changed (reset) mark says so", async () => {
   await page.close();
 }, 30_000);
 
-test("spot-check keyboard: c checks the active card; keys typed in an input or select do nothing; arrows move the active card", async () => {
+test("spot-check keyboard: keys typed in an input or select do nothing; c on the body checks the active card", async () => {
   const { page, errors, checkBodies, card } = await openReviewAs("staff", {
     verification_state: "unverified", check_state: "unchecked", needs_manual_date: true, unmapped: true,
   });
-  // unmapped + undated: two cards (f1 Mystery Marker undated, f2 PSA)
   const cards = page.locator(".card[data-fact-id]");
   await cards.nth(1).waitFor();
   const current = () => page.locator('.card[aria-current="true"]').getAttribute("data-fact-id");
   const first = await current();
-  await page.keyboard.press("ArrowDown");
-  expect(await current()).not.toBe(first);
-  await page.keyboard.press("ArrowUp");
-  expect(await current()).toBe(first);
 
-  // Typing in the correction value input, and in the marker select, must not trigger shortcuts.
-  await card.locator("summary", { hasText: "Correct this value" }).click().catch(() => {});
-  const markerSelect = page.getByLabel("Existing tracked marker").first();
-  await markerSelect.focus();
+  // Focus in the marker select: c and x must not mark or open the form.
+  await page.getByLabel("Existing tracked marker").first().focus();
   await page.keyboard.press("c");
   await page.keyboard.press("x");
-  const valueInput = page.locator('input[id^="value-"]').first();
-  await valueInput.focus();
-  await page.keyboard.type("cx");
+  await page.waitForTimeout(300);
   expect(checkBodies).toEqual([]);
+  expect(await card.getByText("Not checked yet").count()).toBe(1);
+  expect(await page.getByLabel("What was wrong").count()).toBe(0);
+
+  // Focus in a text input: same.
+  await page.locator("summary", { hasText: "Correct this value" }).first().click();
+  await page.locator('input[id^="value-"]').first().focus();
+  await page.keyboard.type("cx");
+  await page.waitForTimeout(300);
+  expect(checkBodies).toEqual([]);
+  expect(await card.getByText("Not checked yet").count()).toBe(1);
   expect(await page.getByLabel("What was wrong").count()).toBe(0);
   expect(await current()).toBe(first);
 
   // With focus on the body, c checks the active card.
   await page.locator("body").click({ position: { x: 1, y: 1 } });
   await page.keyboard.press("c");
-  await page.getByText("Checked correct").first().waitFor(); // the stub mirrors f1's mark onto its sibling
+  await page.getByText("Checked correct").first().waitFor();
   expect(checkBodies).toHaveLength(1);
   expect(checkBodies[0]).toEqual({ result: "correct" });
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("spot-check keyboard: arrows move the active card, but not when a button is focused or at the ends", async () => {
+  const { page, errors } = await openReviewAs("staff", {
+    verification_state: "unverified", check_state: "unchecked", needs_manual_date: true,
+  });
+  await page.locator(".card[data-fact-id]").nth(1).waitFor();
+  const current = () => page.locator('.card[aria-current="true"]').getAttribute("data-fact-id");
+  const first = await current();
+  await page.locator("body").click({ position: { x: 1, y: 1 } });
+  const prevented = async (key: string) =>
+    page.evaluate((k) => {
+      const ev = new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true });
+      document.body.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    }, key);
+  expect(await prevented("ArrowUp")).toBe(false); // first card: page scrolls
+  await page.keyboard.press("ArrowDown");
+  const second = await current();
+  expect(second).not.toBe(first);
+  expect(await prevented("ArrowDown")).toBe(false); // last card
+  // A focused button keeps its own arrow behaviour.
+  await page.getByRole("button", { name: "Correct", exact: true }).first().focus();
+  await page.keyboard.press("ArrowUp");
+  expect(await current()).toBe(second);
+  await page.locator("body").click({ position: { x: 1, y: 1 } });
+  await page.keyboard.press("ArrowUp");
+  expect(await current()).toBe(first);
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);
@@ -1716,7 +1757,45 @@ test("spot-check keyboard: x opens the Incorrect form and pauses the shortcuts w
   await card.getByLabel("What was wrong").waitFor();
   await card.getByRole("heading", { name: "CEA" }).click();
   await page.keyboard.press("c");
+  await page.waitForTimeout(300);
   expect(checkBodies).toEqual([]);
+  expect(await card.getByText("Not checked yet").count()).toBe(1);
+  await page.close();
+}, 30_000);
+
+test("spot-check keyboard: a held or doubled c sends one request, then c moves on to the next unchecked card", async () => {
+  const { page, errors, checkedIds } = await openReviewAs("staff", {
+    verification_state: "unverified", check_state: "unchecked", needs_manual_date: true, check_delay: 400,
+  });
+  await page.locator(".card[data-fact-id]").nth(1).waitFor();
+  await page.locator("body").click({ position: { x: 1, y: 1 } });
+  const active = await page.locator('.card[aria-current="true"]').getAttribute("data-fact-id");
+  await page.keyboard.press("c");
+  await page.keyboard.press("c");
+  await page.keyboard.down("c"); // auto-repeat
+  await page.keyboard.down("c");
+  await page.keyboard.up("c");
+  await page.getByText("Checked correct").first().waitFor();
+  await page.waitForTimeout(300);
+  expect(checkedIds).toEqual(["f1"]);
+  // Highlight advanced to the other (still unchecked) card, so the next c marks that one.
+  await page.waitForFunction((prev) => document.querySelector('.card[aria-current="true"]')?.getAttribute("data-fact-id") !== prev, active);
+  await page.keyboard.press("c");
+  await page.waitForFunction(() => document.querySelectorAll(".fact-check .tag").length === 2 && !document.body.innerText.includes("Not checked yet"));
+  expect(checkedIds).toEqual(["f1", "f2"]);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("spot-check: marking by mouse also moves the highlight to the next unchecked card", async () => {
+  const { page, errors, card } = await openReviewAs("staff", {
+    verification_state: "unverified", check_state: "unchecked", needs_manual_date: true,
+  });
+  await page.locator(".card[data-fact-id]").nth(1).waitFor();
+  await card.getByRole("button", { name: "Correct", exact: true }).click();
+  await card.getByText("Checked correct").waitFor();
+  await page.waitForFunction(() => document.querySelector('.card[aria-current="true"] h2')?.textContent === "PSA");
+  expect(errors).toEqual([]);
   await page.close();
 }, 30_000);
 

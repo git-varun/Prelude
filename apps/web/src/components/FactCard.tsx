@@ -39,7 +39,7 @@ interface Props {
   /** Extra badge rendered next to the coverage tag — e.g. the Snapshot's delta-since-last-visit status. */
   badge?: ReactNode;
   /** Review screen only: renders the spot-check controls. Absent on the Snapshot, which has no check state. */
-  check?: { active: boolean; open: boolean; onOpenChange: (open: boolean) => void };
+  check?: { active: boolean; open: boolean; onOpenChange: (open: boolean) => void; onChecked?: () => void };
 }
 
 export function FactCard({ fact, trackedMarkers, onChanged, badge, check }: Props) {
@@ -143,6 +143,7 @@ export function FactCard({ fact, trackedMarkers, onChanged, badge, check }: Prop
           active={check.active}
           open={check.open}
           onOpenChange={check.onOpenChange}
+          onChecked={check.onChecked}
         />
       )}
 
