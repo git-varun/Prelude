@@ -9,6 +9,14 @@ const FIELD_LABELS: Record<string, string> = {
   treatment_regimen: "Treatment regimen",
   radiology_impression: "Radiology impression",
   disease_status_trend: "Disease status / trend",
+  diagnosis: "Diagnosis",
+  histology_ihc: "Histology / IHC",
+  stage: "Stage",
+  surgery_procedure: "Surgery / procedure",
+  next_review_date: "Next review",
+  tests_advised: "Tests advised",
+  procedures_planned: "Procedures planned",
+  lesion_size: "Lesion size",
 };
 
 type LoadState = { status: "loading" } | { status: "error"; message: string } | { status: "ready"; detail: ConflictDetail };

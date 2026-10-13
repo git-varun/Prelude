@@ -1,6 +1,7 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { zodOutputFormat } from "@anthropic-ai/sdk/helpers/zod";
 import { z } from "zod";
+import { AS_WRITTEN_FIELD_TYPES } from "@prelude/shared";
 import type { DocumentType, ExtractedFactCandidate, ExtractionProvider, ExtractionResult, FieldType, OcrResult } from "@prelude/shared";
 
 const MODEL = process.env.EXTRACTION_MODEL ?? "claude-sonnet-5-5";
@@ -15,6 +16,7 @@ export const CandidateSchema = z.object({
   sourcePage: z.number().int().nullable(),
   sourceLocation: z.string().nullable(),
   sourceSnippet: z.string().nullable(),
+  facility: z.string().nullable(),
   confidence: z.number().min(0).max(1),
 });
 
@@ -29,8 +31,10 @@ export type RawCandidate = z.infer<typeof CandidateSchema>;
 // rather than all five against every upload.
 export const FIELD_TYPES_BY_DOCUMENT_TYPE: Record<DocumentType, FieldType[]> = {
   blood: ["marker_value", "reference_range"],
-  prescription: ["treatment_regimen"],
-  radiology: ["radiology_impression", "disease_status_trend"],
+  prescription: ["treatment_regimen", "diagnosis", "next_review_date", "tests_advised", "procedures_planned"],
+  radiology: ["radiology_impression", "disease_status_trend", "lesion_size"],
+  pathology: ["diagnosis", "histology_ihc", "stage", "surgery_procedure"],
+  discharge: ["diagnosis", "stage", "surgery_procedure", "treatment_regimen", "next_review_date", "tests_advised", "procedures_planned"],
 };
 
 export function pageAnnotatedText(ocr: OcrResult): string {
@@ -39,6 +43,8 @@ export function pageAnnotatedText(ocr: OcrResult): string {
 }
 
 // Exported for testing the prompt text itself (the marker-matching instruction below).
+const AS_WRITTEN = `This is an "as written" field: value must be copied character-for-character from the OCR text, never normalised, abbreviated, translated or completed. Nothing may be computed or inferred from it.`;
+
 export function promptFor(fieldType: FieldType, documentType: DocumentType, ocrText: string): string {
   const common = `You are extracting structured clinical data from OCR'd text of a ${documentType} document for an oncology patient snapshot tool. This is a decision-support aid, not a diagnostic system — extract only what the document explicitly states. Never infer, guess, or fill in a value the source doesn't contain.
 
@@ -94,6 +100,64 @@ Task: extract any explicit statement of disease status or trend the document its
 disease", "partial response", "progression") — only if the document states this conclusion directly. Do
 not compute or infer a trend from raw values yourself; that's a separate downstream step. Put the stated
 status in value.`;
+
+    case "diagnosis":
+      return `${common}
+
+${AS_WRITTEN}
+Task: extract the diagnosis exactly as the document words it (site, type, any qualifiers). Put it in value.
+One candidate per distinct diagnosis statement. Never infer a diagnosis from a regimen, a marker or an image.`;
+
+    case "histology_ihc":
+      return `${common}
+
+${AS_WRITTEN}
+Task: extract the histology and immunohistochemistry findings (histologic type, grade, receptor/biomarker
+results such as ER/PR/HER2/Ki-67) exactly as written. One candidate per distinct statement; put the text in value.`;
+
+    case "stage":
+      return `${common}
+
+${AS_WRITTEN}
+Task: extract the stage or TNM staging exactly as written (e.g. "pT2 N1 M0", "Stage IIIB"). Put it in value.
+Never derive a stage from other findings.`;
+
+    case "surgery_procedure":
+      return `${common}
+
+${AS_WRITTEN}
+Task: extract surgeries and procedures already performed, exactly as written. One candidate per procedure; put
+the procedure text in value. Set asOfDate to the date of the procedure if the document states it, otherwise to
+the document date. Set facility to the hospital or facility named for it, exactly as written, or null.`;
+
+    case "next_review_date":
+      return `${common}
+
+${AS_WRITTEN}
+Task: extract the advised next review / follow-up, exactly as written — either a date ("15/11/2026") or an
+interval ("review after 2 weeks"). Put the text in value. Do not convert an interval into a date.`;
+
+    case "tests_advised":
+      return `${common}
+
+${AS_WRITTEN}
+Task: extract the tests advised (blood tests, scans, biopsies to be done). One candidate per test or per
+written line; put the text in value. Do not include tests that are only reported as results.`;
+
+    case "procedures_planned":
+      return `${common}
+
+${AS_WRITTEN}
+Task: extract procedures or surgeries planned for the future, exactly as written. One candidate per procedure;
+put the text in value. Do not include procedures already performed.`;
+
+    case "lesion_size":
+      return `${common}
+
+${AS_WRITTEN}
+Task: extract each lesion measurement a radiology report states, exactly as written (e.g. "2.4 x 1.8 cm left
+hepatic lobe lesion"). One candidate per lesion; put the text in value and the unit in unit if stated. Never
+compute a change, a sum or a response category.`;
   }
 }
 
@@ -132,7 +196,16 @@ function verifiedSnippet(candidate: RawCandidate, ocr: OcrResult): string | null
   return searchText.includes(snippet) ? snippet : null;
 }
 
+const squash = (text: string) => text.replace(/\s+/g, " ").trim().toLowerCase();
+
+// An "as written" value that is not in the document is the one failure mode that matters for these types: the
+// text on screen would not be what the document says. Flagged uncertain (below the 0.7 review threshold), never dropped.
+function isVerbatim(value: string | null, ocr: OcrResult): boolean {
+  return value === null || squash(ocr.fullText).includes(squash(value));
+}
+
 export function toExtractedFactCandidate(fieldType: FieldType, candidate: RawCandidate, ocr: OcrResult): ExtractedFactCandidate {
+  const unverbatim = AS_WRITTEN_FIELD_TYPES.includes(fieldType) && !isVerbatim(candidate.value, ocr);
   // No verification_state field exists on ExtractedFactCandidate at all —
   // the extraction pass cannot self-authorize trust (docs/02 M2), so there
   // is nothing here that could set it.
@@ -143,11 +216,12 @@ export function toExtractedFactCandidate(fieldType: FieldType, candidate: RawCan
     unit: candidate.unit,
     referenceRange: candidate.referenceRange,
     asOfDate: normalizeAsOfDate(candidate.asOfDate),
-    coverageStatus: candidate.coverageStatus,
+    coverageStatus: unverbatim ? "extraction_uncertain" : candidate.coverageStatus,
     sourcePage: candidate.sourcePage,
     sourceLocation: candidate.sourceLocation,
     sourceSnippet: verifiedSnippet(candidate, ocr),
-    confidence: candidate.confidence,
+    confidence: unverbatim ? Math.min(candidate.confidence, 0.6) : candidate.confidence,
+    facility: fieldType === "surgery_procedure" ? candidate.facility : null,
   };
 }
 

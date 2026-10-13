@@ -10,7 +10,7 @@ import {
 } from "../api/client";
 import { navigate } from "../router";
 
-const DOCUMENT_TYPES = ["prescription", "blood", "radiology"] as const;
+const DOCUMENT_TYPES = ["prescription", "blood", "radiology", "pathology", "discharge"] as const;
 const SOURCE_ORIGINS = ["own_hospital", "outside_paper", "outside_cd", "whatsapp_pdf"] as const;
 
 // m1-backlog B8: createOrOpenVisit is idempotent per patient/day, but the

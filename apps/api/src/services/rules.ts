@@ -1,4 +1,4 @@
-import type { CoverageStatus, ExtractedFactCandidate } from "@prelude/shared";
+import { MULTI_VALUED_FIELD_TYPES, type CoverageStatus, type ExtractedFactCandidate } from "@prelude/shared";
 import { sql } from "../db/client";
 import { LIVE_FACT_FILTER } from "./delta";
 
@@ -91,6 +91,10 @@ export async function detectConflicts(
     return [];
   }
   if (MARKER_CARRYING_FIELD_TYPES.has(fact.field_type) && fact.tracked_marker_id === null) {
+    return [];
+  }
+  // Two procedures or two advised tests on one date are not disagreeing sources.
+  if ((MULTI_VALUED_FIELD_TYPES as readonly string[]).includes(fact.field_type)) {
     return [];
   }
   // A fact from a document held for an identity mismatch (or rejected) is not this patient's evidence: dating or

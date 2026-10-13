@@ -13,6 +13,7 @@ function rawCandidate(overrides: Partial<RawCandidate> = {}): RawCandidate {
     sourcePage: 1,
     sourceLocation: null,
     sourceSnippet: null,
+    facility: null,
     confidence: 0.9,
     ...overrides,
   };
@@ -140,7 +141,7 @@ test("one field type failing and the other returning nothing is reported as a fa
 });
 
 test("reports no failures when every call succeeds, including with nothing extracted", async () => {
-  const provider = new FakeProvider({ radiology_impression: "empty", disease_status_trend: "empty" });
+  const provider = new FakeProvider({ radiology_impression: "empty", disease_status_trend: "empty", lesion_size: "empty" });
   const result = await provider.extractFacts(ocr, "radiology");
   expect(result).toMatchObject({ candidates: [], failedFieldTypes: [] });
 });

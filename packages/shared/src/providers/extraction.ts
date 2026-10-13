@@ -22,6 +22,8 @@ export interface ExtractedFactCandidate {
   sourceLocation: string | null;
   sourceSnippet: string | null;
   confidence: number;
+  // Facility named for a surgery_procedure, as written; null for every other field type.
+  facility?: string | null;
   // Printed H/L/HH/LL flag as it appears on the report, independent of parseChecks.printedFlagAgrees. Null when the parser is an LLM or no flag was printed.
   printedFlag?: string | null;
   // Free-check results from validate.ts, keyed by check name; null/undefined for an LLM pass.

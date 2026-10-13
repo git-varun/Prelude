@@ -36,7 +36,7 @@ test("provider reports stats including unplaced lines, and never says 'nothing e
 test("non-blood documents are reported as not handled, not as empty", async () => {
   const r = await new DeterministicExtractionProvider().extractFacts(ocr("IMPRESSION: normal"), "radiology");
   expect(r.candidates).toEqual([]);
-  expect(r.failedFieldTypes).toEqual(["radiology_impression", "disease_status_trend"]);
+  expect(r.failedFieldTypes).toEqual(["radiology_impression", "disease_status_trend", "lesion_size"]);
 });
 
 test("a candidate carries the printed flag and per-row parse checks, with confidence reduced for a failed check", () => {

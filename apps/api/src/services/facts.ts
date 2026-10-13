@@ -140,14 +140,15 @@ export async function persistExtractedFacts(
           patient_id, visit_id, document_id, tracked_marker_id, raw_marker_label,
           field_type, value, unit, reference_range, as_of_date, needs_manual_date,
           coverage_status, verification_state,
-          source_page, source_location, source_snippet, printed_flag, parse_checks
+          source_page, source_location, source_snippet, printed_flag, parse_checks, facility
         )
         VALUES (
           ${document.patient_id}, ${document.visit_id}, ${document.id}, ${trackedMarkerId}, ${rawMarkerLabel},
           ${candidate.fieldType}, ${candidate.value}, ${candidate.unit}, ${candidate.referenceRange}, ${candidate.asOfDate}, ${undated},
           ${coverageStatus}, 'unverified',
           ${candidate.sourcePage}, ${candidate.sourceLocation}, ${candidate.sourceSnippet},
-          ${candidate.printedFlag ?? null}, ${candidate.parseChecks ? JSON.stringify(candidate.parseChecks) : null}
+          ${candidate.printedFlag ?? null}, ${candidate.parseChecks ? JSON.stringify(candidate.parseChecks) : null},
+          ${candidate.facility ?? null}
         )
         RETURNING *
       `;

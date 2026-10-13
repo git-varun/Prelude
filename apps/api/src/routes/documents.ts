@@ -12,7 +12,7 @@ import type { DocumentType, ExtractionProvider, ExtractionResult, OcrResult } fr
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (s: unknown): s is string => typeof s === "string" && UUID.test(s);
 
-const DOCUMENT_TYPES = ["prescription", "blood", "radiology"] as const;
+const DOCUMENT_TYPES = ["prescription", "blood", "radiology", "pathology", "discharge"] as const;
 const SOURCE_ORIGINS = ["own_hospital", "outside_paper", "outside_cd", "whatsapp_pdf"] as const;
 
 // file_ref's suffix preserves the original upload's extension (saveDocumentFile), so the

@@ -16,7 +16,7 @@ export interface User {
   created_at: string;
 }
 
-export type DocumentType = "prescription" | "blood" | "radiology";
+export type DocumentType = "prescription" | "blood" | "radiology" | "pathology" | "discharge";
 export type ImagingModality =
   | "ct" | "ct_contrast" | "mri" | "mri_contrast" | "pet_ct" | "ultrasound" | "xray" | "mammography" | "other";
 export type SourceOrigin = "own_hospital" | "outside_paper" | "outside_cd" | "whatsapp_pdf";
@@ -28,7 +28,47 @@ export type FieldType =
   | "reference_range"
   | "treatment_regimen"
   | "radiology_impression"
-  | "disease_status_trend";
+  | "disease_status_trend"
+  // M3 tier 1 (AM-04). Stored verbatim as written; never normalised or computed.
+  | "diagnosis"
+  | "histology_ihc"
+  | "stage"
+  | "surgery_procedure"
+  | "next_review_date"
+  | "tests_advised"
+  | "procedures_planned"
+  | "lesion_size";
+
+// Tier 1 types whose value is the source text itself. A value not found verbatim in the document is flagged uncertain.
+export const AS_WRITTEN_FIELD_TYPES: readonly FieldType[] = [
+  "diagnosis", "histology_ihc", "stage", "surgery_procedure", "next_review_date", "tests_advised", "procedures_planned", "lesion_size",
+];
+
+// Tier 1 types where several different values on the same date are normal (two procedures, three tests), so they
+// must never open a conflict against each other.
+export const MULTI_VALUED_FIELD_TYPES: readonly FieldType[] = [
+  "histology_ihc", "surgery_procedure", "tests_advised", "procedures_planned", "lesion_size",
+];
+
+// Spot-check error options per type (M3-01: "type-specific error options"). "value" means the text read is wrong.
+// The spot-check UI and API read this map instead of hard-coding one list for every type.
+export type SpotCheckErrorType = "value" | "unit" | "marker" | "date" | "range" | "facility" | "not_in_document" | "wrong_patient";
+const EXCLUDING: SpotCheckErrorType[] = ["not_in_document", "wrong_patient"];
+export const SPOT_CHECK_ERRORS_BY_FIELD_TYPE: Record<FieldType, readonly SpotCheckErrorType[]> = {
+  marker_value: ["value", "unit", "marker", "date", "range", ...EXCLUDING],
+  reference_range: ["value", "unit", "marker", "date", "range", ...EXCLUDING],
+  treatment_regimen: ["value", "date", ...EXCLUDING],
+  radiology_impression: ["value", "date", ...EXCLUDING],
+  disease_status_trend: ["value", "date", ...EXCLUDING],
+  diagnosis: ["value", "date", ...EXCLUDING],
+  histology_ihc: ["value", "date", ...EXCLUDING],
+  stage: ["value", "date", ...EXCLUDING],
+  surgery_procedure: ["value", "date", "facility", ...EXCLUDING],
+  next_review_date: ["value", "date", ...EXCLUDING],
+  tests_advised: ["value", "date", ...EXCLUDING],
+  procedures_planned: ["value", "date", ...EXCLUDING],
+  lesion_size: ["value", "unit", "date", ...EXCLUDING],
+};
 
 // Five stored values only (Invariants §1). not_found_in_document_set is
 // synthesized at snapshot-read time and never persisted on a FACT row.
