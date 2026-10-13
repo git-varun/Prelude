@@ -101,8 +101,6 @@ export async function checkFactRoute(req: Request & { params: { id: string } }, 
       return jsonError(409, "conflict", "This fact is oncologist signed-off; it must be reopened before its check mark can change.");
     case "held":
       return jsonError(409, "conflict", "This document is held for a patient identity mismatch; resolve the identity before checking its facts.");
-    case "excluded_needs_check_change":
-      return jsonError(409, "conflict", "This fact was marked as not belonging to this document; change its check mark before editing it.");
     case "needs_value":
       return jsonError(409, "conflict", "A fact with no value cannot be marked correct; mark it incorrect with the value instead.");
     case "needs_date":

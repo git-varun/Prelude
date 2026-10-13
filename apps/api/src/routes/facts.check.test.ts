@@ -120,6 +120,19 @@ test("2. correct is a 409 on a NULL value, a needs_manual_date fact, a signed-of
   }
 });
 
+test("2b. incorrect/not_in_document on a held (mismatch) document is a 409 and writes nothing", async () => {
+  const s = await scope();
+  await sql`UPDATE documents SET identity_status = 'mismatch' WHERE id = ${s.docId}`;
+  const id = await newFact(s);
+  const before = await factRow(id);
+  expect((await check(id, { result: "incorrect", error_type: "not_in_document" })).status).toBe(409);
+  const after = await factRow(id);
+  expect(after).toEqual(before);
+  expect(after.excluded_at).toBeNull();
+  expect(after.check_state).toBe("unchecked");
+  expect(await audits(id, "check_fact")).toHaveLength(0);
+});
+
 test("3. incorrect/value applies the correction and keeps the mark (both correct and check_fact audited)", async () => {
   const s = await scope();
   const id = await newFact(s);
@@ -303,18 +316,48 @@ test("11. concurrent check and PATCH serialize on the fact row", async () => {
     Array.from({ length: 20 }, (_, i) => newFact(s, { asOf: `2026-01-${String(i + 1).padStart(2, "0")}` })),
   );
   const results = await Promise.allSettled(
-    ids.flatMap((id) => [check(id, { result: "correct" }), patch(id, { value: "9" })]),
+    // Alternate which call is issued first so both orders reliably occur.
+    ids.flatMap((id, i) => {
+      const pair = [() => check(id, { result: "correct" }), () => patch(id, { value: "9" })];
+      return (i % 2 === 0 ? pair : pair.reverse()).map((f) => f());
+    }),
   );
   for (const r of results) {
     expect(r.status).toBe("fulfilled");
     if (r.status === "fulfilled") expect(r.value.status).toBe(200);
   }
+  // Both calls lock the fact row first, so exactly one order happened per fact, and the audit trail shows which.
+  const orders = { checkThenPatch: 0, patchThenCheck: 0 };
   for (const id of ids) {
     const row = await factRow(id);
     expect(row.value).toBe("9");
-    expect(["unchecked", "correct"]).toContain(row.check_state);
-    expect(row.check_state === "correct" && row.value === "4.2").toBe(false);
+    const rows: { before: any; after: any }[] = (await audits(id, "check_fact")).map((r: any) => ({
+      before: JSON.parse(r.before_value), after: JSON.parse(r.after_value),
+    }));
+    if (row.check_state === "correct") {
+      // PATCH then check: the one mark must have been taken against the already-corrected value.
+      orders.patchThenCheck++;
+      expect(rows).toHaveLength(1);
+      expect(rows[0]!.before.value).toBe("9");
+      expect(rows[0]!.after.value).toBe("9");
+    } else {
+      // check then PATCH: the mark (taken on 4.2) was reset by the PATCH.
+      orders.checkThenPatch++;
+      expect(row.check_state).toBe("unchecked");
+      // audit created_at is the transaction start, not commit order, so pick the rows by content.
+      expect(rows).toHaveLength(2);
+      const mark = rows.find((r) => r.after.check_state === "correct");
+      const reset = rows.find((r) => r.after.check_state === "unchecked");
+      expect(mark?.before.value).toBe("4.2");
+      expect(mark?.after.value).toBe("4.2");
+      expect(reset?.before.check_state).toBe("correct");
+      expect(reset?.after.value).toBe("9");
+    }
   }
+  expect(orders.checkThenPatch + orders.patchThenCheck).toBe(ids.length);
+  // The test only exercises the race if both orders actually happen (issue order alternates per fact).
+  expect(orders.checkThenPatch).toBeGreaterThan(0);
+  expect(orders.patchThenCheck).toBeGreaterThan(0);
 });
 
 test("bad input: malformed id is 404, bad body is 400", async () => {

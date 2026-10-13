@@ -54,7 +54,7 @@ export function parseCheck(body: unknown): { ok: true; input: CheckInput } | { o
 
 export type CheckOutcome =
   | { outcome: "ok" }
-  | { outcome: "not_found" | "signed_off" | "held" | "excluded_needs_check_change" | "needs_value" | "needs_date" | "bad_marker" | "not_uncertain" };
+  | { outcome: "not_found" | "signed_off" | "held" | "needs_value" | "needs_date" | "bad_marker" | "not_uncertain" };
 
 async function audit(tx: Tx, userId: string, factId: string, before: unknown, after: unknown): Promise<void> {
   await tx`
