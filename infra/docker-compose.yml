@@ -24,6 +24,7 @@ services:
       - ../apps/api/src/db/migrations/007_visits_unique_per_day.sql:/docker-entrypoint-initdb.d/08-visits-unique-per-day.sql:ro
       - ../apps/api/src/db/migrations/008_imaging_modality.sql:/docker-entrypoint-initdb.d/09-imaging-modality.sql:ro
       - ../apps/api/src/db/migrations/009_document_identity_and_parse_metadata.sql:/docker-entrypoint-initdb.d/10-document-identity-and-parse-metadata.sql:ro
+      - ../apps/api/src/db/migrations/010_fact_spot_check.sql:/docker-entrypoint-initdb.d/11-fact-spot-check.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U prelude -d prelude_dev"]
       interval: 2s
