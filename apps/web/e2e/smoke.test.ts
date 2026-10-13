@@ -528,6 +528,9 @@ async function openSnapshot(
     const req = route.request();
     const path = new URL(req.url()).pathname;
     const json = (b: unknown) => route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify(b) });
+    if (req.method() === "OPTIONS") {
+      return route.fulfill({ status: 204, headers: { ...cors, "Access-Control-Allow-Headers": "content-type", "Access-Control-Allow-Methods": "GET,POST,OPTIONS" } });
+    }
     if (path === "/auth/me") return json({ id: "u1", name: "Test", email: "t@opd.local", role });
     if (path === "/patients/p1/snapshot") return json(body);
     if (path === "/patients/p1/summary") return json(summaryBody);
@@ -1989,6 +1992,67 @@ test("plan screen: next review + source, four status wordings, confirm match, ad
   expect(added).toEqual({ type: "test", text: "MRI brain in 3 months", advised_at: "2030-10-13" });
   expect(errors).toEqual([]);
   await page.close();
+}, 30_000);
+
+test("Snapshot batch sign-off: checkbox only on eligible facts, no select-all, sign off then toast Undo", async () => {
+  const body = snapshotBody({
+    tumor_markers: [
+      snapshotField({ fact_id: "f1", marker_name: "CEA" }),
+      snapshotField({ fact_id: "f2", marker_name: "PSA", tracked_marker_id: "m2", value: "1.0" }),
+      snapshotField({ fact_id: "f3", marker_name: "CA-125", tracked_marker_id: "m3", check_state: "unchecked" }),
+    ],
+  });
+  const calls: { path: string; body: unknown }[] = [];
+  let signed = false;
+  const { page, errors } = await openSnapshot("oncologist", body, {}, (path, method) => {
+    if (method === "POST" && path.startsWith("/facts/sign-off-batch")) {
+      calls.push({ path, body: null });
+      signed = !path.endsWith("/undo");
+      return { count: 2 };
+    }
+    return undefined;
+  });
+  const posts: string[] = [];
+  page.on("request", (r) => { if (r.method() === "POST") posts.push(`${new URL(r.url()).pathname} ${r.postData()}`); });
+
+  const button = (name: string | RegExp) => page.getByRole("button", { name });
+  await button("Select facts to sign off").waitFor();
+  expect(await button("Select facts to sign off").isDisabled()).toBe(true);
+  expect(await page.getByRole("checkbox").count()).toBe(2); // f3 is unchecked by staff: no box
+  expect(await page.getByText("Needs staff check first").count()).toBe(1);
+  expect(await page.getByLabel(/select all/i).count()).toBe(0);
+  expect(await page.getByRole("checkbox", { checked: true }).count()).toBe(0);
+
+  await page.getByRole("checkbox", { name: "Select CEA for sign-off" }).check();
+  await page.getByRole("checkbox", { name: "Select PSA for sign-off" }).check();
+  await button("Sign off 2 reviewed").click();
+  await page.getByText("Signed off 2 facts").waitFor();
+  expect(posts).toEqual([`/facts/sign-off-batch ${JSON.stringify({ fact_ids: ["f1", "f2"] })}`]);
+  expect(signed).toBe(true);
+
+  await button("Undo").click();
+  await page.getByText("Signed off 2 facts").waitFor({ state: "detached" });
+  expect(posts[1]).toBe(`/facts/sign-off-batch/undo ${JSON.stringify({ fact_ids: ["f1", "f2"] })}`);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Snapshot batch sign-off: selected row is tinted, keeps value and source, and staff see no controls", async () => {
+  const body = snapshotBody({ tumor_markers: [snapshotField({ fact_id: "f1", marker_name: "CEA" })] });
+  const onc = await openSnapshot("oncologist", body);
+  await onc.page.getByRole("checkbox", { name: "Select CEA for sign-off" }).check();
+  const row = onc.page.locator(".snapshot-field--selected");
+  await row.getByText("4.2 ng/mL").waitFor();
+  await row.getByRole("button", { name: /View uploaded document/ }).waitFor();
+  expect(await row.count()).toBe(1);
+  expect(onc.errors).toEqual([]);
+  await onc.page.close();
+
+  const staff = await openSnapshot("staff", body);
+  await staff.page.getByRole("heading", { name: "CEA" }).waitFor();
+  expect(await staff.page.getByRole("checkbox").count()).toBe(0);
+  expect(await staff.page.getByText("Select facts to sign off").count()).toBe(0);
+  await staff.page.close();
 }, 30_000);
 
 test("Snapshot: an unchecked fact reaches FactCard as a disabled Sign off with the check reason", async () => {

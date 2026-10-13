@@ -109,6 +109,16 @@ test("POST /facts/:id/sign-off: no session -> 401, staff -> 403 and the fact is 
   expect((await post({ cookie: oncologist.cookie })).status).toBe(200);
 });
 
+test("POST /facts/sign-off-batch and /undo: no session -> 401, staff -> 403, oncologist reaches the handler (400 on an empty list)", async () => {
+  for (const path of ["/facts/sign-off-batch", "/facts/sign-off-batch/undo"]) {
+    const post = (headers: Record<string, string> = {}) =>
+      fetch(`${BASE}${path}`, { method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ fact_ids: [] }) });
+    expect((await post()).status).toBe(401);
+    expect((await post({ cookie: staff.cookie })).status).toBe(403);
+    expect((await post({ cookie: oncologist.cookie })).status).toBe(400);
+  }
+});
+
 test("POST /facts/:id/reopen: no session -> 401, staff -> 403 and the fact is untouched, oncologist passes the role check", async () => {
   const [visit] = await sql`SELECT id FROM visits WHERE patient_id = ${patientId} LIMIT 1`;
   const [fact] = await sql`

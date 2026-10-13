@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
+import { RoleGate } from "../auth/AuthContext";
 import { api, ApiError, type PatientSnapshot, type ReviewFact, type SnapshotField } from "../api/client";
 import { FactCard } from "../components/FactCard";
 import { MarkerDisclaimerFooter } from "../components/MarkerDisclaimerFooter";
@@ -141,18 +142,38 @@ function DeltaSummary({ fields }: { fields: SnapshotField[] }) {
   );
 }
 
+// AM-01: a fact can be picked for batch sign-off only when it is checked Correct, dated, mapped, and has no open
+// conflict. Held and excluded facts never reach the snapshot. The server re-checks all of it.
+type BatchState = { kind: "eligible" } | { kind: "signed" } | { kind: "blocked"; reason: string | null };
+
+function batchState(f: SnapshotField): BatchState {
+  if (f.verification_state === "oncologist_signed_off") return { kind: "signed" };
+  if (f.conflicts.some((c) => c.status === "open" || c.status === "annotated")) return { kind: "blocked", reason: "Resolve the conflict first" };
+  if (f.as_of_date === null) return { kind: "blocked", reason: "Add a date first" };
+  if (f.field_type === "marker_value" && !f.tracked_marker_id) return { kind: "blocked", reason: "Map the marker first" };
+  if (f.check_state !== "correct") return { kind: "blocked", reason: "Needs staff check first" };
+  return { kind: "eligible" };
+}
+
+interface Batch {
+  selected: Set<string>;
+  toggle: (factId: string) => void;
+}
+
 function FieldEntry({
   field,
   patientId,
   visitId,
   onChanged,
   showTrend,
+  batch,
 }: {
   field: SnapshotField;
   patientId: string;
   visitId: string;
   onChanged: () => void;
   showTrend?: boolean;
+  batch: Batch;
 }) {
   const heading = field.marker_name ?? FIELD_LABELS[field.field_type] ?? field.field_type;
 
@@ -167,8 +188,22 @@ function FieldEntry({
     );
   }
 
+  const state = batchState(field);
+  const picked = batch.selected.has(field.fact_id);
   return (
-    <div className="snapshot-field">
+    <div className={`snapshot-field${picked ? " snapshot-field--selected" : ""}${state.kind === "signed" ? " snapshot-field--signed" : ""}`}>
+      <RoleGate roles={["oncologist"]}>
+        {state.kind === "eligible" && (
+          <label className="batch-pick">
+            <input type="checkbox" checked={picked} onChange={() => batch.toggle(field.fact_id!)} />
+            Select {heading} for sign-off
+          </label>
+        )}
+        {state.kind === "signed" && (
+          <div className="batch-pick"><span className="tag">Signed off</span></div>
+        )}
+        {state.kind === "blocked" && state.reason && <div className="batch-pick muted">{state.reason}</div>}
+      </RoleGate>
       <FactCard
         fact={toReviewFact(field, patientId, visitId)}
         trackedMarkers={[]}
@@ -191,6 +226,7 @@ function Section({
   visitId,
   onChanged,
   showTrend,
+  batch,
 }: {
   title: string;
   fields: SnapshotField[];
@@ -198,6 +234,7 @@ function Section({
   visitId: string;
   onChanged: () => void;
   showTrend?: boolean;
+  batch: Batch;
 }) {
   return (
     <section aria-labelledby={`section-${title}`} style={{ marginBottom: 32 }}>
@@ -213,6 +250,7 @@ function Section({
             visitId={visitId}
             onChanged={onChanged}
             showTrend={showTrend}
+            batch={batch}
           />
         ))
       )}
@@ -226,6 +264,10 @@ export function Snapshot({ patientId }: { patientId: string }) {
   const [loading, setLoading] = useState(true);
 
   const [heldCount, setHeldCount] = useState(0);
+  const [selected, setSelected] = useState<Set<string>>(new Set());
+  const [batchBusy, setBatchBusy] = useState(false);
+  const [batchError, setBatchError] = useState<string | null>(null);
+  const [toast, setToast] = useState<{ ids: string[] } | null>(null);
 
   const latestLoad = useRef(0);
   const currentPatientId = useRef<string | null>(null);
@@ -273,12 +315,63 @@ export function Snapshot({ patientId }: { patientId: string }) {
     };
   }, [load, patientId]);
 
+  // The toast (with Undo) lasts 4 seconds.
+  useEffect(() => {
+    if (!toast) return;
+    const timer = setTimeout(() => setToast(null), 4000);
+    return () => clearTimeout(timer);
+  }, [toast]);
+
   if (loading) return <p className="muted">Loading...</p>;
   if (!data) return <div className="error-banner">{error ?? "Patient not found."}</div>;
 
   const visitId = data.current_visit.id;
   const { patient } = data;
   const age = ageFromDob(patient.date_of_birth);
+
+  const visitFields = [...data.current_treatment, ...data.tumor_markers, ...data.radiology].filter((f) => f.fact_id !== null);
+  const eligibleIds = new Set(visitFields.filter((f) => batchState(f).kind === "eligible").map((f) => f.fact_id!));
+  // Only still-eligible picks count (a reload can change a fact's state).
+  const picked = [...selected].filter((id) => eligibleIds.has(id));
+  const signedCount = visitFields.filter((f) => f.verification_state === "oncologist_signed_off").length;
+  const batch: Batch = {
+    selected: new Set(picked),
+    toggle: (id) =>
+      setSelected((prev) => {
+        const next = new Set(prev);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        return next;
+      }),
+  };
+
+  async function signOffSelected() {
+    setBatchBusy(true);
+    setBatchError(null);
+    try {
+      await api.signOffBatch(picked);
+      setSelected(new Set());
+      setToast({ ids: picked });
+    } catch (err) {
+      setBatchError(err instanceof ApiError ? err.message : "Sign-off failed.");
+    } finally {
+      setBatchBusy(false);
+      void load();
+    }
+  }
+
+  async function undoSignOff() {
+    if (!toast) return;
+    const ids = toast.ids;
+    setToast(null);
+    try {
+      await api.undoSignOffBatch(ids);
+    } catch (err) {
+      setBatchError(err instanceof ApiError ? err.message : "Undo failed.");
+    } finally {
+      void load();
+    }
+  }
 
   return (
     <div>
@@ -344,12 +437,33 @@ export function Snapshot({ patientId }: { patientId: string }) {
         </section>
       )}
 
+      <RoleGate roles={["oncologist"]}>
+        <section aria-labelledby="section-for-this-visit" style={{ marginBottom: 16 }}>
+          <div className="page-heading" style={{ marginBottom: 8 }}>
+            <h2 id="section-for-this-visit" style={{ margin: 0 }}>For this visit</h2>
+            <span style={{ display: "flex", alignItems: "center", gap: 12 }}>
+              <span className="muted">{signedCount} signed off this visit</span>
+              <button
+                className="btn btn--primary"
+                type="button"
+                disabled={picked.length === 0 || batchBusy}
+                onClick={() => void signOffSelected()}
+              >
+                {picked.length === 0 ? "Select facts to sign off" : batchBusy ? "Signing off..." : `Sign off ${picked.length} reviewed`}
+              </button>
+            </span>
+          </div>
+          {batchError && <div className="error-banner">{batchError}</div>}
+        </section>
+      </RoleGate>
+
       <Section
         title="Current treatment"
         fields={data.current_treatment}
         patientId={data.patient.id}
         visitId={visitId}
         onChanged={load}
+        batch={batch}
       />
       <Section
         title="Tumor markers"
@@ -358,6 +472,7 @@ export function Snapshot({ patientId }: { patientId: string }) {
         visitId={visitId}
         onChanged={load}
         showTrend
+        batch={batch}
       />
       <Section
         title="Radiology"
@@ -365,9 +480,17 @@ export function Snapshot({ patientId }: { patientId: string }) {
         patientId={data.patient.id}
         visitId={visitId}
         onChanged={load}
+        batch={batch}
       />
 
       <MarkerDisclaimerFooter />
+
+      {toast && (
+        <div className="toast" role="status">
+          <span>Signed off {toast.ids.length} {toast.ids.length === 1 ? "fact" : "facts"}</span>
+          <button className="btn btn--secondary" type="button" onClick={() => void undoSignOff()}>Undo</button>
+        </div>
+      )}
     </div>
   );
 }

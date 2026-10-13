@@ -566,6 +566,12 @@ export const api = {
 
   reopenFact: (factId: string) => request<ReviewFact>(`/facts/${factId}/reopen`, { method: "POST" }),
 
+  signOffBatch: (factIds: string[]) =>
+    request<{ count: number }>(`/facts/sign-off-batch`, { method: "POST", body: JSON.stringify({ fact_ids: factIds }) }),
+
+  undoSignOffBatch: (factIds: string[]) =>
+    request<{ count: number }>(`/facts/sign-off-batch/undo`, { method: "POST", body: JSON.stringify({ fact_ids: factIds }) }),
+
   getConflict: (conflictId: string) => request<ConflictDetail>(`/conflicts/${conflictId}`),
 
   annotateConflict: (conflictId: string, annotationNote: string) =>

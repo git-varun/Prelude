@@ -3,7 +3,9 @@ import { jsonError } from "../middleware/auth";
 import type { AuthedUser } from "../middleware/auth";
 import { applyCorrection, isUuid, parseCorrection } from "../services/corrections";
 import { provenanceFor } from "../services/provenance";
-import { createPlanItemFromFact } from "../services/carePlan";
+import {
+  MAX_BATCH, SIGN_OFF_REASONS, reopenOne, signOffBatch, signOffOne, undoSignOffBatch, type BatchResult,
+} from "../services/signOff";
 import { CONFLICT_SIDES_LIVE } from "../services/delta";
 import { checkFact, parseCheck, resetCheck } from "../services/factChecks";
 
@@ -124,71 +126,52 @@ export async function signOffFact(req: Request & { params: { id: string } }, use
   const factId = req.params.id;
   if (!isUuid(factId)) return jsonError(404, "not_found", "Fact not found.");
 
-  const outcome = await sql.begin(async (tx) => {
-    const [before] = await tx`SELECT * FROM facts WHERE id = ${factId} FOR UPDATE`;
-    if (!before) return "not_found" as const;
-    if (before.verification_state === "oncologist_signed_off") return "already_signed_off" as const;
-
-    // Application-level checks so a violation is a clean 409; the DB constraints
-    // (no_signoff_while_undated, signed_off_requires_oncologist) remain the backstop.
-    if (before.as_of_date === null) return "undated" as const;
-    if (before.field_type === "marker_value" && before.tracked_marker_id === null) return "unmapped" as const;
-    const [conflict] = await tx`
-      SELECT c.id FROM conflicts c
-      WHERE (c.fact_id_a = ${factId} OR c.fact_id_b = ${factId}) AND c.status IN ('open', 'annotated')
-        AND ${CONFLICT_SIDES_LIVE}
-      LIMIT 1
-    `;
-    if (conflict) return "conflict" as const;
-    if (before.excluded_at !== null) return "excluded" as const;
-    if (before.check_state === "unchecked") return "unchecked" as const;
-
-    const [updated] = await tx`
-      UPDATE facts SET verification_state = 'oncologist_signed_off', signed_off_by = ${user.id}, signed_off_at = now()
-      WHERE id = ${factId}
-      RETURNING *
-    `;
-    await tx`
-      INSERT INTO audit_log (actor_id, action, entity_type, entity_id, before_value, after_value)
-      VALUES (${user.id}, 'sign_off', 'fact', ${factId}, ${JSON.stringify(before)}::jsonb, ${JSON.stringify(updated)}::jsonb)
-    `;
-    await createPlanItemFromFact(tx, factId, user.id);
-    return "ok" as const;
-  });
-
-  if (outcome === "not_found") return jsonError(404, "not_found", "Fact not found.");
-  if (outcome === "already_signed_off") return jsonError(409, "conflict", "This fact is already oncologist signed-off.");
-  if (outcome === "undated") return jsonError(409, "conflict", "A fact without an as-of date cannot be signed off; supply the date first.");
-  if (outcome === "unmapped") return jsonError(409, "conflict", "A marker must be mapped to a tracked marker before sign-off.");
-  if (outcome === "conflict") return jsonError(409, "conflict", "Sign-off is blocked by an unresolved conflict involving this fact.");
-  if (outcome === "excluded") return jsonError(409, "conflict", "This fact was excluded from this document and cannot be signed off.");
-  if (outcome === "unchecked") return jsonError(409, "conflict", "This fact has not been checked against its source. Mark it Correct or Incorrect first.");
+  const outcome = await sql.begin((tx) => signOffOne(tx, factId, user.id));
+  if (outcome === "not_found") return jsonError(404, "not_found", SIGN_OFF_REASONS.not_found);
+  if (outcome !== "ok") return jsonError(409, "conflict", SIGN_OFF_REASONS[outcome]);
 
   const [fact] = await queryFacts(sql, { factId });
   return Response.json(fact);
+}
+
+async function parseBatch(req: Request): Promise<{ ids: string[] } | Response> {
+  let body: any;
+  try { body = await req.json(); } catch { return jsonError(400, "bad_request", "Malformed JSON body."); }
+  const ids = body?.fact_ids;
+  if (!Array.isArray(ids) || ids.length === 0) return jsonError(400, "bad_request", "fact_ids must be a non-empty array.");
+  if (ids.length > MAX_BATCH) return jsonError(400, "bad_request", `At most ${MAX_BATCH} facts per batch.`);
+  if (!ids.every(isUuid)) return jsonError(400, "bad_request", "fact_ids must be UUIDs.");
+  return { ids };
+}
+
+function batchResponse(result: BatchResult): Response {
+  if (result.ok) return Response.json({ count: result.count });
+  if (result.kind === "mixed_patients") return jsonError(400, "bad_request", "A batch must contain facts of a single patient.");
+  return Response.json(
+    { error: { code: "conflict", message: "Some facts cannot be processed; nothing was changed." }, failures: result.failures },
+    { status: 409 },
+  );
+}
+
+/** POST /facts/sign-off-batch {fact_ids}: all-or-nothing, one audit row per fact. */
+export async function signOffFactsBatch(req: Request, user: AuthedUser): Promise<Response> {
+  const parsed = await parseBatch(req);
+  if (parsed instanceof Response) return parsed;
+  return batchResponse(await signOffBatch(sql, parsed.ids, user.id));
+}
+
+/** POST /facts/sign-off-batch/undo {fact_ids}: reopens the caller's own fresh sign-offs, one audit row per fact. */
+export async function undoSignOffFactsBatch(req: Request, user: AuthedUser): Promise<Response> {
+  const parsed = await parseBatch(req);
+  if (parsed instanceof Response) return parsed;
+  return batchResponse(await undoSignOffBatch(sql, parsed.ids, user.id));
 }
 
 export async function reopenFact(req: Request & { params: { id: string } }, user: AuthedUser): Promise<Response> {
   const factId = req.params.id;
   if (!isUuid(factId)) return jsonError(404, "not_found", "Fact not found.");
 
-  const outcome = await sql.begin(async (tx) => {
-    const [before] = await tx`SELECT * FROM facts WHERE id = ${factId} FOR UPDATE`;
-    if (!before) return "not_found" as const;
-    if (before.verification_state !== "oncologist_signed_off") return "not_signed_off" as const;
-
-    // signed_off_by / signed_off_at are deliberately left as the record of the most recent sign-off.
-    const [updated] = await tx`
-      UPDATE facts SET verification_state = 'reopened_by_oncologist', reopened_by = ${user.id}, reopened_at = now()
-      WHERE id = ${factId}
-      RETURNING *
-    `;
-    await tx`
-      INSERT INTO audit_log (actor_id, action, entity_type, entity_id, before_value, after_value)
-      VALUES (${user.id}, 'reopen', 'fact', ${factId}, ${JSON.stringify(before)}::jsonb, ${JSON.stringify(updated)}::jsonb)
-    `;
-    return "ok" as const;
-  });
+  const outcome = await sql.begin((tx) => reopenOne(tx, factId, user.id));
 
   if (outcome === "not_found") return jsonError(404, "not_found", "Fact not found.");
   if (outcome === "not_signed_off") return jsonError(409, "conflict", "Only an oncologist signed-off fact can be reopened.");

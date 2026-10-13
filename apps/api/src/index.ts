@@ -3,7 +3,7 @@ import { createUser } from "./routes/users";
 import { createPatient, listPatients, getPatient, updatePatient, addMarker, getPatientSnapshot, getMarkerTrend, getPatientTimeline, getPatientSummary, getPatientDocumentIdentity } from "./routes/patients";
 import { createOrOpenVisit, listVisits } from "./routes/visits";
 import { uploadDocument, getDocument, getDocumentFile, setDocumentIdentityStatus } from "./routes/documents";
-import { getDocumentFacts, patchFact, checkFactRoute, signOffFact, reopenFact } from "./routes/facts";
+import { getDocumentFacts, patchFact, checkFactRoute, signOffFact, reopenFact, signOffFactsBatch, undoSignOffFactsBatch } from "./routes/facts";
 import { getDocumentCheckSummary, getLabCheckSummary } from "./routes/checks";
 import { getConflict, annotateConflict, resolveConflict } from "./routes/conflicts";
 import { getPatientPlan, addPlanItem, setPlanItemMatch } from "./routes/plan";
@@ -82,6 +82,12 @@ const server = Bun.serve({
     }),
     "/facts/:id/check": cors({
       POST: requireRole(["staff", "oncologist"], checkFactRoute),
+    }),
+    "/facts/sign-off-batch": cors({
+      POST: requireRole(["oncologist"], signOffFactsBatch),
+    }),
+    "/facts/sign-off-batch/undo": cors({
+      POST: requireRole(["oncologist"], undoSignOffFactsBatch),
     }),
     "/facts/:id/sign-off": cors({
       POST: requireRole(["oncologist"], signOffFact),
