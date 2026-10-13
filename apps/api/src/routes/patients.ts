@@ -163,6 +163,15 @@ export async function listPatients(req: Request): Promise<Response> {
     ) AS needs_attention_count
   `;
 
+  // Spot-check backlog: unchecked live facts on the current visit (same scoping as needs_attention_count).
+  const uncheckedSubquery = sql`
+    (SELECT count(*)::int FROM facts f
+     WHERE f.visit_id = (SELECT id FROM visits WHERE patient_id = p.id ORDER BY visit_date DESC, id DESC LIMIT 1)
+       AND ${LIVE_FACT_FILTER}
+       AND f.check_state = 'unchecked'
+    ) AS unchecked_fact_count
+  `;
+
   // Documents held for an identity mismatch (not 'partial': that is a softer signal and its facts stay live).
   // Independent of needs_attention_count, which already excludes held facts via LIVE_FACT_FILTER.
   const heldDocumentSubquery = sql`
@@ -177,6 +186,7 @@ export async function listPatients(req: Request): Promise<Response> {
                to_char(p.date_of_birth, 'YYYY-MM-DD') AS date_of_birth, p.stage,
                (SELECT to_char(MAX(v.visit_date), 'YYYY-MM-DD') FROM visits v WHERE v.patient_id = p.id) AS last_visit_date,
                ${needsAttentionSubquery},
+               ${uncheckedSubquery},
                ${heldDocumentSubquery}
         FROM patients p
         WHERE p.name ILIKE ${"%" + search + "%"}
@@ -188,6 +198,7 @@ export async function listPatients(req: Request): Promise<Response> {
                to_char(p.date_of_birth, 'YYYY-MM-DD') AS date_of_birth, p.stage,
                (SELECT to_char(MAX(v.visit_date), 'YYYY-MM-DD') FROM visits v WHERE v.patient_id = p.id) AS last_visit_date,
                ${needsAttentionSubquery},
+               ${uncheckedSubquery},
                ${heldDocumentSubquery}
         FROM patients p
         ORDER BY last_visit_date DESC NULLS LAST

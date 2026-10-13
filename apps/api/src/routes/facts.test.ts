@@ -677,3 +677,20 @@ test("sign-off and reopen responses carry has_blocking_conflict too", async () =
   const res = await signOffFact(signOffReq(id), asAuthedUser(oncologist));
   expect(((await res.json()) as any).has_blocking_conflict).toBe(false);
 });
+
+test("GET facts carry the check fields and a check_summary over every fact (excluded counts as incorrect)", async () => {
+  const docId = await newDocument();
+  await newFact(docId, { check: "correct" });
+  await newFact(docId, { check: "excluded" });
+  await newFact(docId, { check: "unchecked" });
+  await newFact(docId, { check: "unchecked" });
+
+  const body = (await (await getDocumentFacts(getReq(docId))).json()) as any;
+  expect(body.check_summary).toEqual({ total: 4, correct: 1, incorrect: 1, unchecked: 2 });
+  for (const f of body.facts) {
+    for (const k of ["check_state", "checked_by", "checked_at", "error_type", "excluded_at", "printed_flag", "parse_checks"]) {
+      expect(k in f).toBe(true);
+    }
+  }
+  expect(body.facts.filter((f: any) => f.excluded_at !== null)).toHaveLength(1);
+});

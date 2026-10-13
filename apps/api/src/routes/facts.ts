@@ -16,6 +16,7 @@ async function queryFacts(exec: Exec, filter: { documentId?: string; factId?: st
            tm.marker_name AS tracked_marker_name, f.raw_marker_label, f.field_type, f.value, f.unit,
            f.reference_range, to_char(f.as_of_date, 'YYYY-MM-DD') AS as_of_date, f.needs_manual_date,
            f.coverage_status, f.verification_state, f.source_page, f.source_location, f.source_snippet,
+           f.check_state, f.checked_by, f.checked_at, f.error_type, f.excluded_at, f.printed_flag, f.parse_checks,
            EXISTS (
              SELECT 1 FROM conflicts c
              WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated') AND ${CONFLICT_SIDES_LIVE}
@@ -49,7 +50,10 @@ export async function getDocumentFacts(req: Request & { params: { id: string } }
     SELECT id, marker_name, is_custom, added_at, added_by FROM tracked_markers
     WHERE patient_id = ${document.patient_id} ORDER BY added_at ASC
   `;
-  return Response.json({ document, facts, tracked_markers: trackedMarkers });
+  // Every fact of the document counts; an excluded fact is check_state 'incorrect'.
+  const check_summary = { total: facts.length, correct: 0, incorrect: 0, unchecked: 0 };
+  for (const f of facts as any[]) check_summary[f.check_state as "correct" | "incorrect" | "unchecked"]++;
+  return Response.json({ document, facts, tracked_markers: trackedMarkers, check_summary });
 }
 
 export async function patchFact(req: Request & { params: { id: string } }, user: AuthedUser): Promise<Response> {
