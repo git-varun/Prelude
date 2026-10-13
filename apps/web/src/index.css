@@ -176,6 +176,11 @@ select {
   padding: var(--space-5);
 }
 
+.card[aria-current="true"] {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
 .card + .card {
   margin-top: var(--space-4);
 }

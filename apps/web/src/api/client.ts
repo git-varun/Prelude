@@ -91,6 +91,8 @@ export interface PatientSummary {
   needs_attention_count: number;
   /** Documents held for a patient-identity mismatch (their facts are excluded from every view). */
   held_document_count: number;
+  /** Live facts nobody has spot-checked yet. */
+  unchecked_fact_count: number;
 }
 
 export interface TrackedMarker {
@@ -144,6 +146,9 @@ export interface DocumentRecord {
   lab_name: string | null;
 }
 
+export type CheckState = "unchecked" | "correct" | "incorrect";
+export type CheckErrorType = "value" | "unit" | "marker" | "date" | "range" | "not_in_document" | "wrong_patient";
+
 export interface ReviewFact {
   id: string;
   patient_id: string;
@@ -166,7 +171,29 @@ export interface ReviewFact {
   source_location: string | null;
   source_snippet: string | null;
   fallback_level: "exact" | "page" | "document";
+  check_state: CheckState;
+  checked_by: string | null;
+  checked_at: string | null;
+  error_type: CheckErrorType | null;
+  excluded_at: string | null;
+  printed_flag: string | null;
+  parse_checks: { failed?: string[] } | null;
 }
+
+export interface CheckSummary {
+  total: number;
+  correct: number;
+  incorrect: number;
+  unchecked: number;
+}
+
+export type CheckBody =
+  | { result: "correct" }
+  | {
+      result: "incorrect";
+      error_type: CheckErrorType;
+      correction?: { value?: string; unit?: string; reference_range?: string; tracked_marker_id?: string; as_of_date?: string };
+    };
 
 export interface IdentityDocument {
   id: string;
@@ -188,6 +215,7 @@ export interface DocumentReview {
   document: DocumentRecord;
   facts: ReviewFact[];
   tracked_markers: TrackedMarker[];
+  check_summary: CheckSummary;
 }
 
 export interface DocumentOcrPage {
@@ -464,6 +492,14 @@ export const api = {
 
   patchFact: (factId: string, patch: { value?: string; tracked_marker_id?: string; as_of_date?: string }) =>
     request<ReviewFact>(`/facts/${factId}`, { method: "PATCH", body: JSON.stringify(patch) }),
+
+  checkFact: (factId: string, body: CheckBody) =>
+    request<ReviewFact>(`/facts/${factId}/check`, { method: "POST", body: JSON.stringify(body) }),
+
+  getDocumentCheckSummary: (documentId: string) =>
+    request<CheckSummary & { document_id: string; checked: number; agreement: number | null }>(
+      `/documents/${documentId}/check-summary`,
+    ),
 
   signOffFact: (factId: string) => request<ReviewFact>(`/facts/${factId}/sign-off`, { method: "POST" }),
 

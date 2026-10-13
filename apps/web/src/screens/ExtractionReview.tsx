@@ -1,8 +1,9 @@
-import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } from "react";
 import { api, ApiError, type DocumentFileCheck, type DocumentReview } from "../api/client";
 import { FactCard } from "../components/FactCard";
 import { MarkerDisclaimerFooter } from "../components/MarkerDisclaimerFooter";
 import { IdentityDecision, IdentityNames, type IdentityOutcome } from "../components/IdentityDecision";
+import { sortByRisk } from "../lib/riskOrder";
 import { navigate } from "../router";
 import { OriginalDocument } from "./SourceView";
 
@@ -23,6 +24,8 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
   const generation = useRef(0);
   const currentDocumentId = useRef<string | null>(null);
   const [bulkError, setBulkError] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState<string | null>(null);
+  const [openFormId, setOpenFormId] = useState<string | null>(null);
 
   const loadRecordedName = useCallback(async (patientId: string, token: number) => {
     setRecordedError(null);
@@ -87,6 +90,59 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
     };
   }, [load, documentId]);
 
+  const sortedFacts = useMemo(() => (data ? sortByRisk(data.facts) : []), [data]);
+  // Falls back to the first unchecked card (or the first card) until the reviewer picks one.
+  const effectiveActiveId =
+    sortedFacts.find((f) => f.id === activeId)?.id ??
+    sortedFacts.find((f) => f.check_state === "unchecked")?.id ??
+    sortedFacts[0]?.id ??
+    null;
+
+  // Keep the latest values reachable from one stable window listener.
+  const keyState = useRef({ sortedFacts, effectiveActiveId, openFormId, load });
+  keyState.current = { sortedFacts, effectiveActiveId, openFormId, load };
+
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if (e.metaKey || e.ctrlKey || e.altKey || e.shiftKey) return;
+      const t = e.target as HTMLElement | null;
+      if (t && (t.closest("input, textarea, select") || t.isContentEditable)) return;
+      const { sortedFacts: facts, effectiveActiveId: current, openFormId: formOpen, load: reload } = keyState.current;
+      if (formOpen !== null || current === null) return;
+      const index = facts.findIndex((f) => f.id === current);
+      if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+        e.preventDefault();
+        const next = facts[Math.min(facts.length - 1, Math.max(0, index + (e.key === "ArrowDown" ? 1 : -1)))];
+        if (next) setActiveId(next.id);
+      } else if (e.key === "c") {
+        const fact = facts[index];
+        if (!fact || fact.verification_state === "oncologist_signed_off") return;
+        e.preventDefault();
+        const nextUnchecked = facts.find((f, i) => i > index && f.check_state === "unchecked") ?? facts.find((f) => f.id !== current && f.check_state === "unchecked");
+        api.checkFact(fact.id, { result: "correct" }).then(
+          () => {
+            if (nextUnchecked) setActiveId(nextUnchecked.id);
+            void reload();
+          },
+          (err) => setError(err instanceof ApiError ? err.message : "Could not save the check."),
+        );
+      } else if (e.key === "x") {
+        const fact = facts[index];
+        if (!fact || fact.verification_state === "oncologist_signed_off") return;
+        e.preventDefault();
+        setOpenFormId(fact.id);
+      }
+    }
+    window.addEventListener("keydown", onKeyDown);
+    return () => window.removeEventListener("keydown", onKeyDown);
+  }, []);
+
+  useEffect(() => {
+    if (!effectiveActiveId) return;
+    const el = window.document.querySelector(`[data-fact-id="${effectiveActiveId}"]`);
+    if (el && "scrollIntoView" in el) (el as HTMLElement).scrollIntoView({ block: "nearest" });
+  }, [effectiveActiveId]);
+
   async function applyDateToAll(e: FormEvent) {
     e.preventDefault();
     if (!data) return;
@@ -128,7 +184,8 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
   if (loading) return <p className="muted">Loading...</p>;
   if (!data) return <div className="error-banner">{error ?? "Document not found."}</div>;
 
-  const { document, facts, tracked_markers } = data;
+  const { document, facts, tracked_markers, check_summary } = data;
+  const checkedCount = check_summary.correct + check_summary.incorrect;
   const undated = facts.filter((f) => f.needs_manual_date);
   const wholeDocumentUndated = facts.length > 0 && undated.length === facts.length;
 
@@ -245,8 +302,26 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
               </p>
             </div>
           )}
-          {facts.map((fact) => (
-            <FactCard key={fact.id} fact={fact} trackedMarkers={tracked_markers} onChanged={load} />
+          <div className="card" role="status">
+            <strong>{checkedCount} of {check_summary.total} checked</strong>
+            {check_summary.total > 0 && check_summary.unchecked === 0 && <span> All facts checked.</span>}
+            <p className="field-hint" style={{ margin: "4px 0 0" }}>
+              Keys: c marks the highlighted fact correct, x opens Incorrect, up and down arrows move between facts.
+            </p>
+          </div>
+          {sortedFacts.map((fact) => (
+            <div key={fact.id} style={{ marginTop: "var(--space-4)" }} onClick={() => setActiveId(fact.id)}>
+              <FactCard
+                fact={fact}
+                trackedMarkers={tracked_markers}
+                onChanged={load}
+                check={{
+                  active: fact.id === effectiveActiveId,
+                  open: openFormId === fact.id,
+                  onOpenChange: (open) => setOpenFormId(open ? fact.id : null),
+                }}
+              />
+            </div>
           ))}
         </>
       )}
