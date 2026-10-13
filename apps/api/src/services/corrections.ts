@@ -86,6 +86,16 @@ export function parseCorrection(body: unknown): { ok: true; correction: Correcti
   return { ok: true, correction: c };
 }
 
+/** An excluded fact (spot-check: not in the document / wrong patient) never holds its document in "needs a date".
+ * The caller must hold the document row lock. */
+export async function recomputeDocumentNeedsManualDate(tx: Tx, documentId: string): Promise<void> {
+  await tx`
+    UPDATE documents SET needs_manual_date =
+      EXISTS (SELECT 1 FROM facts WHERE document_id = ${documentId} AND needs_manual_date AND excluded_at IS NULL)
+    WHERE id = ${documentId}
+  `;
+}
+
 /** Runs inside the caller's transaction. Locks fact, then document (re-locking an already-held row is a no-op). */
 export async function applyCorrection(tx: Tx, factId: string, c: Correction, userId: string): Promise<ApplyOutcome> {
   const newValue = c.value ?? null;
@@ -133,11 +143,7 @@ export async function applyCorrection(tx: Tx, factId: string, c: Correction, use
     RETURNING *
   `;
 
-  await tx`
-    UPDATE documents SET needs_manual_date =
-      EXISTS (SELECT 1 FROM facts WHERE document_id = ${before.document_id} AND needs_manual_date)
-    WHERE id = ${before.document_id}
-  `;
+  await recomputeDocumentNeedsManualDate(tx, before.document_id);
   await tx`
     INSERT INTO audit_log (actor_id, action, entity_type, entity_id, before_value, after_value)
     VALUES (${userId}, 'correct', 'fact', ${factId}, ${JSON.stringify(before)}::jsonb, ${JSON.stringify(updated)}::jsonb)

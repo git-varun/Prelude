@@ -4,6 +4,7 @@ import type { AuthedUser } from "../middleware/auth";
 import { applyCorrection, isUuid, parseCorrection } from "../services/corrections";
 import { provenanceFor } from "../services/provenance";
 import { CONFLICT_SIDES_LIVE } from "../services/delta";
+import { checkFact, parseCheck, resetCheck } from "../services/factChecks";
 
 
 type Exec = typeof sql;
@@ -59,8 +60,20 @@ export async function patchFact(req: Request & { params: { id: string } }, user:
   const parsed = parseCorrection(body);
   if (!parsed.ok) return jsonError(400, "bad_request", parsed.message);
 
-  const result = await sql.begin((tx) => applyCorrection(tx, factId, parsed.correction, user.id));
+  const result = await sql.begin(async (tx) => {
+    // Lock the fact first (applyCorrection then locks the document), the same order as POST /facts/:id/check.
+    const [row] = await tx`SELECT excluded_at FROM facts WHERE id = ${factId} FOR UPDATE`;
+    if (!row) return { outcome: "not_found" as const };
+    if (row.excluded_at !== null) return { outcome: "excluded" as const };
+    const applied = await applyCorrection(tx, factId, parsed.correction, user.id);
+    // An edit invalidates a spot-check mark: the reviewer checked the old values.
+    if (applied.outcome === "ok") await resetCheck(tx, factId, user.id);
+    return applied;
+  });
   if (result.outcome === "not_found") return jsonError(404, "not_found", "Fact not found.");
+  if (result.outcome === "excluded") {
+    return jsonError(409, "conflict", "This fact was marked as not belonging to this document; change its check mark before editing it.");
+  }
   if (result.outcome === "signed_off") {
     return jsonError(409, "conflict", "This fact is oncologist signed-off; it must be reopened before it can be corrected.");
   }
@@ -68,6 +81,37 @@ export async function patchFact(req: Request & { params: { id: string } }, user:
     return jsonError(409, "conflict", "resolution applies only to facts whose coverage_status is extraction_uncertain.");
   }
   if (result.outcome === "bad_marker") return jsonError(400, "bad_request", "tracked_marker_id does not belong to this fact's patient.");
+  const [fact] = await queryFacts(sql, { factId });
+  return Response.json(fact);
+}
+
+export async function checkFactRoute(req: Request & { params: { id: string } }, user: AuthedUser): Promise<Response> {
+  const factId = req.params.id;
+  if (!isUuid(factId)) return jsonError(404, "not_found", "Fact not found.");
+  let body: unknown;
+  try { body = await req.json(); } catch { return jsonError(400, "bad_request", "Malformed JSON body."); }
+  const parsed = parseCheck(body);
+  if (!parsed.ok) return jsonError(400, "bad_request", parsed.message);
+
+  const { outcome } = await sql.begin((tx) => checkFact(tx, factId, parsed.input, user.id));
+  switch (outcome) {
+    case "ok": break;
+    case "not_found": return jsonError(404, "not_found", "Fact not found.");
+    case "signed_off":
+      return jsonError(409, "conflict", "This fact is oncologist signed-off; it must be reopened before its check mark can change.");
+    case "held":
+      return jsonError(409, "conflict", "This document is held for a patient identity mismatch; resolve the identity before checking its facts.");
+    case "excluded_needs_check_change":
+      return jsonError(409, "conflict", "This fact was marked as not belonging to this document; change its check mark before editing it.");
+    case "needs_value":
+      return jsonError(409, "conflict", "A fact with no value cannot be marked correct; mark it incorrect with the value instead.");
+    case "needs_date":
+      return jsonError(409, "conflict", "A fact without an as-of date cannot be marked correct; supply the date first.");
+    case "not_uncertain":
+      return jsonError(409, "conflict", "resolution applies only to facts whose coverage_status is extraction_uncertain.");
+    case "bad_marker":
+      return jsonError(400, "bad_request", "tracked_marker_id does not belong to this fact's patient.");
+  }
   const [fact] = await queryFacts(sql, { factId });
   return Response.json(fact);
 }
