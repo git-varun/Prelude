@@ -51,9 +51,8 @@ export const MULTI_VALUED_FIELD_TYPES: readonly FieldType[] = [
 ];
 
 // Spot-check error options per type (M3-01: "type-specific error options"). "value" means the text read is wrong.
-// NOTE: nothing consumes this map yet. The spot-check branch's check_error_type enum must gain `facility` when
-// it merges (its migration 010 does not have it). Once wired, the UI and API should read this map instead of
-// hard-coding one list for every type.
+// The check endpoint validates against this map and the review UI offers only these options
+// (migration 013 added `facility` to the check_error_type enum).
 export type SpotCheckErrorType = "value" | "unit" | "marker" | "date" | "range" | "facility" | "not_in_document" | "wrong_patient";
 const EXCLUDING: SpotCheckErrorType[] = ["not_in_document", "wrong_patient"];
 export const SPOT_CHECK_ERRORS_BY_FIELD_TYPE: Record<FieldType, readonly SpotCheckErrorType[]> = {

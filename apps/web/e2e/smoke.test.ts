@@ -12,6 +12,18 @@ const BASE = `http://localhost:${PORT}`;
 // Fake API origin: never listened on, every request is stubbed via page.route.
 const API = "http://opd-api.test";
 
+// Spot-check fields every fact carries; a stub overrides check_state when it exercises the check flow.
+const CHECKED = {
+  check_state: "correct", checked_by: null, checked_at: null, error_type: null,
+  excluded_at: null, printed_flag: null, parse_checks: null,
+};
+const checkSummaryFor = (facts: { check_state: string }[]) => ({
+  total: facts.length,
+  correct: facts.filter((f) => f.check_state === "correct").length,
+  incorrect: facts.filter((f) => f.check_state === "incorrect").length,
+  unchecked: facts.filter((f) => f.check_state === "unchecked").length,
+});
+
 let server: ReturnType<typeof Bun.spawn>;
 let browser: Browser;
 
@@ -104,6 +116,7 @@ async function openReview(extractionStatus: "pending" | "done") {
         },
         facts: [],
         tracked_markers: [],
+        check_summary: checkSummaryFor([]),
       });
     }
     return route.fulfill({ status: 404, contentType: "application/json", headers: cors, body: "{}" });
@@ -179,6 +192,12 @@ type StubFact = {
   blocking_conflict_id?: string | null;
   needs_manual_date?: boolean;
   unmapped?: boolean;
+  check_state?: string;
+  error_type?: string | null;
+  printed_flag?: string | null;
+  parse_checks?: { failed?: string[] } | null;
+  f2_check?: string;
+  check_delay?: number;
 };
 
 async function openReviewAs(role: "staff" | "oncologist", stub: StubFact) {
@@ -190,6 +209,8 @@ async function openReviewAs(role: "staff" | "oncologist", stub: StubFact) {
     if (msg.type() === "error") errors.push(`console: ${msg.text()}`);
   });
   const posts: string[] = [];
+  const checkBodies: any[] = [];
+  const checkedIds: string[] = [];
   const state = { ...stub };
   const cors = {
     "Access-Control-Allow-Origin": BASE,
@@ -206,8 +227,15 @@ async function openReviewAs(role: "staff" | "oncologist", stub: StubFact) {
     has_blocking_conflict: state.has_blocking_conflict ?? false,
     blocking_conflict_id: state.has_blocking_conflict ? (state.blocking_conflict_id ?? "c1") : null,
     source_page: 1, source_location: null, source_snippet: "CEA 4.2 ng/mL",
+    ...CHECKED, check_state: state.check_state ?? "correct", error_type: state.error_type ?? null,
+    excluded_at: state.error_type === "not_in_document" ? "2026-02-02T00:00:00Z" : null,
+    printed_flag: state.printed_flag ?? null, parse_checks: state.parse_checks ?? null,
   });
-  await page.route(`${API}/**`, (route) => {
+  const reviewFacts = () =>
+    state.needs_manual_date
+      ? [fact(), { ...fact(), id: "f2", tracked_marker_name: "PSA", needs_manual_date: false, as_of_date: "2026-02-01", verification_state: "unverified", has_blocking_conflict: false, check_state: state.f2_check ?? "unchecked", error_type: null, excluded_at: null }]
+      : [fact()];
+  await page.route(`${API}/**`, async (route) => {
     const req = route.request();
     const path = new URL(req.url()).pathname;
     if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
@@ -223,13 +251,28 @@ async function openReviewAs(role: "staff" | "oncologist", stub: StubFact) {
         },
         // Undated facts only render as cards when a sibling is dated (an all-undated document
         // shows the bulk-date form instead), so an undated stub gets a dated PSA sibling.
-        facts: state.needs_manual_date ? [fact(), { ...fact(), id: "f2", tracked_marker_name: "PSA", needs_manual_date: false, as_of_date: "2026-02-01", verification_state: "unverified", has_blocking_conflict: false }] : [fact()],
-        tracked_markers: [],
+        facts: reviewFacts(),
+        tracked_markers: [{ id: "m1", marker_name: "CEA", is_custom: false, added_at: "2026-01-01", added_by: "u1" }, { id: "m2", marker_name: "PSA", is_custom: false, added_at: "2026-01-01", added_by: "u1" }],
+        check_summary: checkSummaryFor(reviewFacts()),
       });
     }
     if (req.method() === "POST" && path === "/facts/f1/sign-off") {
       posts.push(path);
       state.verification_state = "oncologist_signed_off";
+      return json(fact());
+    }
+    if (req.method() === "POST" && path === "/facts/f2/check") {
+      checkedIds.push("f2");
+      state.f2_check = JSON.parse(req.postData() ?? "{}").result;
+      return json({ ...fact(), id: "f2", check_state: state.f2_check });
+    }
+    if (req.method() === "POST" && path === "/facts/f1/check") {
+      const body = JSON.parse(req.postData() ?? "{}");
+      checkBodies.push(body);
+      checkedIds.push("f1");
+      if (state.check_delay) await Bun.sleep(state.check_delay);
+      state.check_state = body.result;
+      state.error_type = body.error_type ?? null;
       return json(fact());
     }
     if (req.method() === "POST" && path === "/facts/f1/reopen") {
@@ -252,7 +295,7 @@ async function openReviewAs(role: "staff" | "oncologist", stub: StubFact) {
   const card = page.locator(".card", { has: page.getByRole("heading", { name: heading }) });
   const signOff = card.getByRole("button", { name: "Sign off", exact: true });
   const reopen = card.getByRole("button", { name: "Reopen", exact: true });
-  return { page, errors, posts, signOff, reopen, card };
+  return { page, errors, posts, checkBodies, checkedIds, signOff, reopen, card };
 }
 
 test("Extraction Review: the persistent marker disclaimer footer renders verbatim", async () => {
@@ -365,7 +408,7 @@ test("per-fact undated fact: sign-off is disabled with a reason until its date i
   const base = {
     patient_id: "p1", visit_id: "v1", document_id: "doc1", tracked_marker_id: "m1", raw_marker_label: null,
     field_type: "marker_value", value: "4.2", unit: "ng/mL", reference_range: "0-5", coverage_status: "value_found",
-    has_blocking_conflict: false, source_page: 1, source_location: null, source_snippet: "x",
+    has_blocking_conflict: false, source_page: 1, source_location: null, source_snippet: "x", ...CHECKED,
   };
   const f1 = { ...base, id: "f1", tracked_marker_name: "CEA", as_of_date: "2026-02-01", needs_manual_date: false, verification_state: "unverified" };
   const f2 = { ...base, id: "f2", tracked_marker_name: "PSA", as_of_date: null as string | null, needs_manual_date: true, verification_state: "unverified" };
@@ -387,6 +430,7 @@ test("per-fact undated fact: sign-off is disabled with a reason until its date i
         },
         facts: [f1, f2],
         tracked_markers: [],
+        check_summary: checkSummaryFor([f1, f2]),
       });
     }
     if (req.method() === "PATCH" && path === "/facts/f2") {
@@ -447,7 +491,7 @@ function snapshotField(overrides: Record<string, unknown> = {}) {
   return {
     fact_id: "f1", field_type: "marker_value", tracked_marker_id: "m1", marker_name: "CEA",
     value: "4.2", unit: "ng/mL", reference_range: "0-5", as_of_date: "2026-02-01",
-    coverage_status: "value_found", verification_state: "unverified", delta_status: null,
+    coverage_status: "value_found", verification_state: "unverified", check_state: "correct", delta_status: null,
     conflicts: [], provenance: provenance(), ...overrides,
   };
 }
@@ -794,7 +838,7 @@ async function openConflictScenario(
     return {
       fact_id: fact.id, field_type: fact.field_type, tracked_marker_id: null, marker_name: null,
       value: fact.value, unit: fact.unit, reference_range: fact.reference_range, as_of_date: fact.as_of_date,
-      coverage_status: fact.coverage_status, verification_state: fact.verification_state, delta_status: null,
+      coverage_status: fact.coverage_status, verification_state: fact.verification_state, check_state: "correct", delta_status: null,
       conflicts: [{
         conflict_id: "c1", status: state.status, other_fact_id: fact.id === "f1" ? "f9" : "f1",
         other_value: fact.id === "f1" ? "FOLFIRI" : "FOLFOX", other_source: provenance(),
@@ -1090,7 +1134,7 @@ test("Snapshot -> Timeline: navigates via the new button, renders the chart/lege
             value: "no new lesions", unit: null, reference_range: null, as_of_date: "2026-02-01",
             needs_manual_date: false, coverage_status: "value_found", verification_state: "oncologist_signed_off",
             has_blocking_conflict: false, source_page: 2, source_location: null, source_snippet: "no new lesions",
-            fallback_level: "exact",
+            fallback_level: "exact", ...CHECKED,
           },
           {
             id: "f2", patient_id: "p1", visit_id: "v2", document_id: "doc1", tracked_marker_id: "m1",
@@ -1098,10 +1142,11 @@ test("Snapshot -> Timeline: navigates via the new button, renders the chart/lege
             value: "9.0", unit: "ng/mL", reference_range: null, as_of_date: "2026-02-01",
             needs_manual_date: false, coverage_status: "value_found", verification_state: "oncologist_signed_off",
             has_blocking_conflict: false, source_page: null, source_location: null, source_snippet: null,
-            fallback_level: "document",
+            fallback_level: "document", ...CHECKED,
           },
         ],
         tracked_markers: [],
+        check_summary: checkSummaryFor([CHECKED, CHECKED]),
       };
     }
     return undefined;
@@ -1146,7 +1191,7 @@ function sourceFact(overrides: Record<string, unknown> = {}) {
   // Mirrors the real provenanceFor rule (apps/api/src/services/provenance.ts), rather than
   // hardcoding fallback_level per test, so overriding source_page/source_snippet alone is enough.
   const fallback_level = base.source_page != null && base.source_snippet != null ? "exact" : base.source_page != null ? "page" : "document";
-  return { ...base, fallback_level };
+  return { ...base, fallback_level, ...CHECKED };
 }
 
 const SOURCE_OCR = {
@@ -1185,7 +1230,7 @@ async function openSource({ document = {}, fact: factOverrides, fileStatus, file
     if (path === "/auth/me") return json({ id: "u1", name: "Test Staff", email: "s@opd.local", role: "staff" });
     if (path === "/documents/doc1") return json({ document: sourceDocumentRecord(document), ocr: SOURCE_OCR });
     if (path === "/documents/doc1/facts") {
-      return json({ document: sourceDocumentRecord(document), facts: [sourceFact(factOverrides)], tracked_markers: [] });
+      return json({ document: sourceDocumentRecord(document), facts: [sourceFact(factOverrides)], tracked_markers: [], check_summary: checkSummaryFor([CHECKED]) });
     }
     if (path === "/documents/doc1/file") {
       return route.fulfill({
@@ -1396,7 +1441,7 @@ async function openHeldScenario(startAt: string, opts: { conflictOnConfirm?: boo
     if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
     if (path === "/auth/me") return json({ id: "u1", name: "Test Staff", email: "s@opd.local", role: "staff" });
     if (path === "/patients" && req.method() === "GET") {
-      const base = { cancer_type: "Breast", created_at: "2026-01-01", created_by: "u1", mrn: null, patient_origin: "own_hospital", date_of_birth: null, stage: null, last_visit_date: "2026-02-01", needs_attention_count: 0 };
+      const base = { cancer_type: "Breast", created_at: "2026-01-01", created_by: "u1", mrn: null, patient_origin: "own_hospital", date_of_birth: null, stage: null, last_visit_date: "2026-02-01", needs_attention_count: 0, unchecked_fact_count: 0 };
       return json([
         { ...base, id: "p1", name: "Test Patient", held_document_count: heldCount() },
         { ...base, id: "p2", name: "Clean Patient", held_document_count: 0 },
@@ -1436,7 +1481,7 @@ async function openHeldScenario(startAt: string, opts: { conflictOnConfirm?: boo
     const facts = path.match(/^\/documents\/([^/]+)\/facts$/);
     if (facts) {
       const d = docs.find((x) => x.id === facts[1]);
-      if (d) return json({ document: docRecord(d), facts: [], tracked_markers: [] });
+      if (d) return json({ document: docRecord(d), facts: [], tracked_markers: [], check_summary: checkSummaryFor([]) });
     }
     return json({}, 404);
   });
@@ -1654,6 +1699,225 @@ test("Snapshot: summary strip shows data and 'Full summary' opens the Summary ro
   await page.close();
 }, 30_000);
 
+// Spot-check controls on the review screen.
+test("spot-check: Correct POSTs the mark, the card shows it, and progress updates", async () => {
+  const { page, errors, checkBodies, card } = await openReviewAs("staff", { verification_state: "unverified", check_state: "unchecked" });
+  await page.getByText("0 of 1 checked").waitFor();
+  await card.getByRole("button", { name: "Incorrect", exact: true }).waitFor();
+  await card.getByRole("button", { name: "Correct", exact: true }).click();
+  await card.getByText("Checked correct").waitFor();
+  await page.getByText("1 of 1 checked").waitFor();
+  await page.getByText("All facts checked.").waitFor();
+  expect(checkBodies).toEqual([{ result: "correct" }]);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("spot-check: Incorrect needs a 'What was wrong' choice before the submit enables, then POSTs the correction", async () => {
+  const { page, errors, checkBodies, card } = await openReviewAs("staff", { verification_state: "unverified", check_state: "unchecked" });
+  await card.getByRole("button", { name: "Incorrect", exact: true }).click();
+  const save = card.getByRole("button", { name: "Save correction" });
+  expect(await save.isDisabled()).toBe(true);
+  await card.getByLabel("What was wrong").selectOption("value");
+  expect(await save.isDisabled()).toBe(true);
+  await card.getByLabel("Corrected value").fill("5.0");
+  expect(await save.isEnabled()).toBe(true);
+  await save.click();
+  await card.getByText("Marked incorrect: value").waitFor();
+  expect(checkBodies).toEqual([{ result: "incorrect", error_type: "value", correction: { value: "5.0" } }]);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("spot-check: 'Not in the document' asks for confirmation and POSTs nothing until Confirm", async () => {
+  const { page, errors, checkBodies, card } = await openReviewAs("staff", { verification_state: "unverified", check_state: "unchecked" });
+  await card.getByRole("button", { name: "Incorrect", exact: true }).click();
+  await card.getByLabel("What was wrong").selectOption("not_in_document");
+  await card.getByText("This fact will be excluded from every view. Continue?").waitFor();
+  expect(checkBodies).toEqual([]);
+  await card.getByRole("button", { name: "Cancel" }).click();
+  expect(checkBodies).toEqual([]);
+  await card.getByRole("button", { name: "Incorrect", exact: true }).click();
+  await card.getByLabel("What was wrong").selectOption("not_in_document");
+  await card.getByRole("button", { name: "Confirm" }).click();
+  await card.getByText("Marked incorrect: not in the document").waitFor();
+  expect(checkBodies).toEqual([{ result: "incorrect", error_type: "not_in_document" }]);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("spot-check: an unchecked fact blocks sign-off with the check reason, and the conflict reason wins when both apply", async () => {
+  const a = await openReviewAs("oncologist", { verification_state: "unverified", check_state: "unchecked" });
+  expect(await a.signOff.isDisabled()).toBe(true);
+  await a.card.getByText("Check this fact against the source first").waitFor();
+  await a.page.close();
+  const b = await openReviewAs("oncologist", { verification_state: "unverified", check_state: "unchecked", has_blocking_conflict: true });
+  await b.page.getByText("Blocked by an unresolved conflict").waitFor();
+  expect(await b.page.getByText("Check this fact against the source first").count()).toBe(0);
+  await b.page.close();
+}, 30_000);
+
+test("spot-check: a changed (reset) mark says so", async () => {
+  const { page, card } = await openReviewAs("staff", { verification_state: "staff_corrected", check_state: "unchecked" });
+  await card.getByText("Changed since it was checked. Mark it again.").waitFor();
+  await page.close();
+}, 30_000);
+
+test("spot-check keyboard: keys typed in an input or select do nothing; c on the body checks the active card", async () => {
+  const { page, errors, checkBodies, card } = await openReviewAs("staff", {
+    verification_state: "unverified", check_state: "unchecked", needs_manual_date: true, unmapped: true,
+  });
+  const cards = page.locator(".card[data-fact-id]");
+  await cards.nth(1).waitFor();
+  const current = () => page.locator('.card[aria-current="true"]').getAttribute("data-fact-id");
+  const first = await current();
+
+  // Focus in the marker select: c and x must not mark or open the form.
+  await page.getByLabel("Existing tracked marker").first().focus();
+  await page.keyboard.press("c");
+  await page.keyboard.press("x");
+  await page.waitForTimeout(300);
+  expect(checkBodies).toEqual([]);
+  expect(await card.getByText("Not checked yet").count()).toBe(1);
+  expect(await page.getByLabel("What was wrong").count()).toBe(0);
+
+  // Focus in a text input: same.
+  await page.locator("summary", { hasText: "Correct this value" }).first().click();
+  await page.locator('input[id^="value-"]').first().focus();
+  await page.keyboard.type("cx");
+  await page.waitForTimeout(300);
+  expect(checkBodies).toEqual([]);
+  expect(await card.getByText("Not checked yet").count()).toBe(1);
+  expect(await page.getByLabel("What was wrong").count()).toBe(0);
+  expect(await current()).toBe(first);
+
+  // With focus on the body, c checks the active card.
+  await page.locator("body").click({ position: { x: 1, y: 1 } });
+  await page.keyboard.press("c");
+  await page.getByText("Checked correct").first().waitFor();
+  expect(checkBodies).toHaveLength(1);
+  expect(checkBodies[0]).toEqual({ result: "correct" });
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("spot-check keyboard: arrows move the active card, but not when a button is focused or at the ends", async () => {
+  const { page, errors } = await openReviewAs("staff", {
+    verification_state: "unverified", check_state: "unchecked", needs_manual_date: true,
+  });
+  await page.locator(".card[data-fact-id]").nth(1).waitFor();
+  const current = () => page.locator('.card[aria-current="true"]').getAttribute("data-fact-id");
+  const first = await current();
+  await page.locator("body").click({ position: { x: 1, y: 1 } });
+  const prevented = async (key: string) =>
+    page.evaluate((k) => {
+      const ev = new KeyboardEvent("keydown", { key: k, bubbles: true, cancelable: true });
+      document.body.dispatchEvent(ev);
+      return ev.defaultPrevented;
+    }, key);
+  expect(await prevented("ArrowUp")).toBe(false); // first card: page scrolls
+  await page.keyboard.press("ArrowDown");
+  const second = await current();
+  expect(second).not.toBe(first);
+  expect(await prevented("ArrowDown")).toBe(false); // last card
+  // A focused button keeps its own arrow behaviour.
+  await page.getByRole("button", { name: "Correct", exact: true }).first().focus();
+  await page.keyboard.press("ArrowUp");
+  expect(await current()).toBe(second);
+  await page.locator("body").click({ position: { x: 1, y: 1 } });
+  await page.keyboard.press("ArrowUp");
+  expect(await current()).toBe(first);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("spot-check keyboard: x opens the Incorrect form and pauses the shortcuts while it is open", async () => {
+  const { page, checkBodies, card } = await openReviewAs("staff", { verification_state: "unverified", check_state: "unchecked" });
+  await page.locator("body").click({ position: { x: 1, y: 1 } });
+  await page.keyboard.press("x");
+  await card.getByLabel("What was wrong").waitFor();
+  await card.getByRole("heading", { name: "CEA" }).click();
+  await page.keyboard.press("c");
+  await page.waitForTimeout(300);
+  expect(checkBodies).toEqual([]);
+  expect(await card.getByText("Not checked yet").count()).toBe(1);
+  await page.close();
+}, 30_000);
+
+test("spot-check keyboard: a held or doubled c sends one request, then c moves on to the next unchecked card", async () => {
+  const { page, errors, checkedIds } = await openReviewAs("staff", {
+    verification_state: "unverified", check_state: "unchecked", needs_manual_date: true, check_delay: 400,
+  });
+  await page.locator(".card[data-fact-id]").nth(1).waitFor();
+  await page.locator("body").click({ position: { x: 1, y: 1 } });
+  const active = await page.locator('.card[aria-current="true"]').getAttribute("data-fact-id");
+  await page.keyboard.press("c");
+  await page.keyboard.press("c");
+  await page.keyboard.down("c"); // auto-repeat
+  await page.keyboard.down("c");
+  await page.keyboard.up("c");
+  await page.getByText("Checked correct").first().waitFor();
+  await page.waitForTimeout(300);
+  expect(checkedIds).toEqual(["f1"]);
+  // Highlight advanced to the other (still unchecked) card, so the next c marks that one.
+  await page.waitForFunction((prev) => document.querySelector('.card[aria-current="true"]')?.getAttribute("data-fact-id") !== prev, active);
+  await page.keyboard.press("c");
+  await page.waitForFunction(() => document.querySelectorAll(".fact-check .tag").length === 2 && !document.body.innerText.includes("Not checked yet"));
+  expect(checkedIds).toEqual(["f1", "f2"]);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("spot-check: marking by mouse also moves the highlight to the next unchecked card", async () => {
+  const { page, errors, card } = await openReviewAs("staff", {
+    verification_state: "unverified", check_state: "unchecked", needs_manual_date: true,
+  });
+  await page.locator(".card[data-fact-id]").nth(1).waitFor();
+  await card.getByRole("button", { name: "Correct", exact: true }).click();
+  await card.getByText("Checked correct").waitFor();
+  await page.waitForFunction(() => document.querySelector('.card[aria-current="true"] h2')?.textContent === "PSA");
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("spot-check: a document with no facts shows no 'All facts checked.' banner", async () => {
+  const { page, errors } = await openReview("done");
+  await page.getByText(ZERO_FACTS_TEXT).waitFor();
+  expect(await page.getByText("All facts checked.").count()).toBe(0);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("spot-check: the patient list shows 'N to check' only when something is unchecked", async () => {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  const errors: string[] = [];
+  page.on("pageerror", (err) => errors.push(`pageerror: ${err.message}`));
+  page.on("console", (msg) => {
+    if (msg.type() === "error") errors.push(`console: ${msg.text()}`);
+  });
+  const cors = { "Access-Control-Allow-Origin": BASE, "Access-Control-Allow-Credentials": "true" };
+  await page.route(`${API}/**`, (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const json = (b: unknown) => route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify(b) });
+    if (path === "/auth/me") return json({ id: "u1", name: "Test Staff", email: "s@opd.local", role: "staff" });
+    if (path === "/patients") {
+      const base = { cancer_type: "Breast", created_at: "2026-01-01", created_by: "u1", mrn: null, patient_origin: "own_hospital", date_of_birth: null, stage: null, last_visit_date: "2026-02-01", needs_attention_count: 0, held_document_count: 0 };
+      return json([
+        { ...base, id: "p1", name: "Busy Patient", unchecked_fact_count: 2 },
+        { ...base, id: "p2", name: "Done Patient", unchecked_fact_count: 0 },
+      ]);
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", headers: cors, body: "{}" });
+  });
+  await page.goto(`${BASE}/#/patients`);
+  await page.getByText("2 to check").waitFor();
+  expect(await page.getByText("0 to check").count()).toBe(0);
+  expect(await page.getByText(/to check/).count()).toBe(1);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
 test("plan screen: next review + source, four status wordings, confirm match, add item, load error with Retry", async () => {
   const page = await browser.newPage();
   const errors: string[] = [];
@@ -1723,6 +1987,33 @@ test("plan screen: next review + source, four status wordings, confirm match, ad
   await page.getByRole("button", { name: "Add", exact: true }).click();
   await page.getByRole("button", { name: "+ Add plan item" }).waitFor();
   expect(added).toEqual({ type: "test", text: "MRI brain in 3 months", advised_at: "2030-10-13" });
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Snapshot: an unchecked fact reaches FactCard as a disabled Sign off with the check reason", async () => {
+  const body = snapshotBody({ tumor_markers: [snapshotField({ fact_id: "f1", marker_name: "CEA", check_state: "unchecked" })] });
+  const { page, errors } = await openSnapshot("oncologist", body);
+  const card = page.locator(".card", { has: page.getByRole("heading", { name: "CEA" }) });
+  const signOff = card.getByRole("button", { name: "Sign off", exact: true });
+  await signOff.waitFor();
+  expect(await signOff.isDisabled()).toBe(true);
+  await card.getByText("Check this fact against the source first").waitFor();
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("spot-check: an excluded undated fact does not trigger the undated notice, and c on an excluded fact POSTs nothing", async () => {
+  const { page, errors, checkBodies } = await openReviewAs("staff", {
+    verification_state: "unverified", check_state: "incorrect", error_type: "not_in_document", needs_manual_date: true, f2_check: "correct",
+  });
+  await page.locator(".card[data-fact-id]").first().waitFor();
+  expect(await page.getByText("fact(s) have no as-of date").count()).toBe(0);
+  const excluded = page.locator('.card[data-fact-id="f1"]');
+  await excluded.click();
+  await page.keyboard.press("c");
+  await page.waitForTimeout(300);
+  expect(checkBodies).toEqual([]);
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);

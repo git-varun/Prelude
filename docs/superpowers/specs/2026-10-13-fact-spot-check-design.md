@@ -1,6 +1,6 @@
 # Fact spot-check: design
 
-_2026-10-13. Status: awaiting review. Architectural path (new per-fact state, a new sign-off rule, a shared service refactor)._
+_2026-10-13. Status: implemented (not deployed). Architectural path (new per-fact state, a new sign-off rule, a shared service refactor)._
 
 ## 1. Purpose
 
@@ -100,3 +100,16 @@ Oncologist re-check of a staff mark, sampling instead of checking everything, dr
 4. Review-screen UI.
 5. Roll-up and export.
 6. Docs: Invariants §2 paragraph, Decisions Log entry, status doc.
+
+## Corrections from implementation review
+
+Eight points resolved after the spec review; where they differ from the text above, these win.
+
+1. **Excluded facts keep their open conflicts.** A conflict with an excluded fact on either side is ignored everywhere a conflict is read (blocking, sign-off, needs-attention, snapshot, conflict screen, `detectConflicts` duplicate guard). The row is kept. Clearing the exclusion re-runs detection.
+2. **PATCH of an excluded fact is a 409.** It would otherwise silently un-exclude; the only way back is `POST /facts/:id/check` with a different mark.
+3. **`schema.sql` is not updated** (it contains none of migrations 006-009; adding 010's `CREATE TYPE` would break a fresh database). Migration file plus both compose mounts only; only the `audit_log.action` comment gains `'check_fact'`.
+4. **Exported keys cannot measure recall.** They carry `keyOrigin: "spot_check"`, are scored under their own source `real_spot_check`, and measure precision and value accuracy only. Excluded facts are left out; the printed label comes from the fact's `upload` audit row.
+5. **Held and rejected documents.** `POST /facts/:id/check` returns 409 for `identity_status` `mismatch` or `rejected`. `unchecked_fact_count` and progress figures exclude facts of held/rejected documents and excluded facts.
+6. **Any PATCH of a checked fact resets the mark**, and the card shows "Changed since it was checked. Mark it again."
+7. **Document-list badge.** There is no document-list endpoint, so `unchecked_fact_count` goes on the patient list; per-document figures come from `GET /documents/:id/check-summary` and the review screen.
+8. **Risk ordering.** There is no stored confidence column; the sort is `extraction_uncertain`, failed `parse_checks`, printed flag disagreement, out-of-range, unmapped marker, then page order.

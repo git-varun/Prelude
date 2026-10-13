@@ -34,8 +34,8 @@ async function newDocument(o: { modality?: string; reportedOn?: string; identity
 
 async function newFact(documentId: string, fieldType: string, value: string, asOf = "2026-01-01") {
   const [row] = await sql`
-    INSERT INTO facts (patient_id, visit_id, document_id, field_type, value, as_of_date, coverage_status, verification_state)
-    VALUES (${patientId}, ${visitId}, ${documentId}, ${fieldType}::field_type, ${value}, ${asOf}, 'value_found', 'unverified')
+    INSERT INTO facts (patient_id, visit_id, document_id, field_type, value, as_of_date, coverage_status, verification_state, check_state)
+    VALUES (${patientId}, ${visitId}, ${documentId}, ${fieldType}::field_type, ${value}, ${asOf}, 'value_found', 'unverified', 'correct')
     RETURNING id`;
   return row.id as string;
 }

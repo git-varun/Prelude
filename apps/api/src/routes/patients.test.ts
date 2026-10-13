@@ -109,3 +109,35 @@ test("listPatients respects limit and offset", async () => {
   const body = (await res.json()) as any[];
   expect(body.length).toBeLessThanOrEqual(1);
 });
+
+test("listPatients unchecked_fact_count counts unchecked live facts on the latest visit only", async () => {
+  const { sql } = await import("../db/client");
+  const { createTestPatient } = await import("../test-helpers");
+  const pid = (await createTestPatient(staff.id)).id;
+  patientIds.push(pid);
+  const [{ id: oldVisit }] = await sql`INSERT INTO visits (patient_id, visit_date) VALUES (${pid}, '2026-01-01') RETURNING id`;
+  const [{ id: visit }] = await sql`INSERT INTO visits (patient_id, visit_date) VALUES (${pid}, '2026-02-01') RETURNING id`;
+  const mkDoc = async (v: string, identity: string) => (await sql`
+    INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, ocr_status, identity_status)
+    VALUES (${pid}, ${v}, 'local://t/x.pdf', 'blood', 'own_hospital', ${staff.id}, 'done', ${identity}) RETURNING id`)[0]!.id as string;
+  const mkFact = async (v: string, d: string, state: string, excluded = false) => (await sql`
+    INSERT INTO facts (patient_id, visit_id, document_id, field_type, value, as_of_date, coverage_status, verification_state, check_state, error_type, excluded_at)
+    VALUES (${pid}, ${v}, ${d}, 'radiology_impression', 'x', '2026-02-01', 'value_found', 'unverified', ${state},
+            ${excluded ? "not_in_document" : null}, ${excluded ? sql`now()` : null}) RETURNING id`)[0]!.id as string;
+  const okDoc = await mkDoc(visit, "matched");
+  const heldDoc = await mkDoc(visit, "mismatch");
+  const oldDoc = await mkDoc(oldVisit, "matched");
+  const live1 = await mkFact(visit, okDoc, "unchecked");
+  const live2 = await mkFact(visit, okDoc, "unchecked");
+  await mkFact(visit, okDoc, "incorrect", true);
+  await mkFact(visit, heldDoc, "unchecked");
+  await mkFact(oldVisit, oldDoc, "unchecked");
+
+  const count = async () => {
+    const rows = (await (await listPatients(new Request("http://localhost/patients?search=Test%20Patient&limit=200"))).json()) as any[];
+    return rows.find((p) => p.id === pid).unchecked_fact_count;
+  };
+  expect(await count()).toBe(2);
+  await sql`UPDATE facts SET check_state = 'correct' WHERE id IN ${sql([live1, live2])}`;
+  expect(await count()).toBe(0);
+});

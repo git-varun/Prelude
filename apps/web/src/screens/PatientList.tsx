@@ -63,6 +63,7 @@ export function PatientList() {
                   {p.needs_attention_count} need{p.needs_attention_count === 1 ? "s" : ""} review
                 </span>
               )}
+              {p.unchecked_fact_count > 0 && <span className="tag tag--pending">{p.unchecked_fact_count} to check</span>}
               {p.held_document_count > 0 && (
                 <button
                   type="button"

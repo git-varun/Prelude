@@ -6,7 +6,7 @@ Log. Unlike those, **this document is not frozen** — update it as items get
 resolved or new ones surface. Mirrors the pattern established in
 `docs/m1-backlog.md` / `docs/m2-backlog.md`.
 
-Last updated: 2026-10-09, after granular imaging modality shipped.
+Last updated: 2026-10-13, after fact spot-check implemented (not deployed).
 
 ---
 
@@ -29,6 +29,7 @@ Three gaps were identified, ranked by effort-to-impact:
 | 1 | No pre-visit synthesis/triage — doctor has to read every block to find what matters | **Done** (commit `95bcd2c`) |
 | 2 | Three disconnected blocks (Treatment/Markers/Radiology), no correlation | Open |
 | 3 | No granular imaging report types (CT/MRI/PET-CT/etc.) | Implemented, **not deployed** (see below) |
+| 4 | Fact spot-check (staff mark facts Correct/Incorrect; sign-off gate; eval answer keys) | Implemented, **not deployed**; migration 010 not applied to production (see below) |
 
 A fourth, smaller item (marker panel admin UI) was split out separately —
 panel *content* needs real oncologist input and is out of scope for design
@@ -93,6 +94,22 @@ noisy in practice, split into two counts.
   (44 tests).
 
 ---
+
+### Fact spot-check (implemented, not deployed)
+
+Spec: `docs/superpowers/specs/2026-10-13-fact-spot-check-design.md`. Migration 010 is **not applied to production** and must be applied before the new API code starts (see `docs/extraction-pipeline-status.md`, section 1F).
+
+Follow-ups parked during implementation:
+
+- Eval: the `real_spot_check` per-source recall line prints 100% and aggregate recall includes spot-check docs, which can flatter a recall gate. Exclude or annotate.
+- Eval export aborts the whole run on one ZodError, and overwrites on a duplicate `file_sha256` slug. `exportChecks` also uses a `toISOString` date pattern that needs review.
+- UI: an open Incorrect form can strand keyboard shortcuts (no Escape or document-change reset).
+- Resolve/annotate on a conflict with an excluded side should return 409 (`ConflictResolution.tsx` ignores `excluded`).
+- Stale conflict row after un-exclude with a value-matching correction.
+- Lock-order deadlock between identity confirm and fact check (`setDocumentIdentityStatus` locks the document then writes facts; check and PATCH lock fact then document), plus concurrent exclusion of both sides of a conflict. Postgres aborts one transaction (rare 500, no corruption).
+- Facts with a null value (`no_usable_value` / `source_states_not_performed`) cannot be marked correct, so cannot be signed off; the spec's "non-marker fact type with content" carve-out is not implemented.
+- The patient-list badge and the review-screen progress disagree for facts that lost a resolved conflict.
+- Add a DB-level CHECK backing the sign-off gate (deliberately not in migration 010).
 
 ## Open
 

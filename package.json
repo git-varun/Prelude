@@ -12,7 +12,8 @@
     "eval:ingestion": "bun apps/api/src/scripts/evalIngestion.ts",
     "eval:fixtures": "bun apps/api/eval/buildFixtures.ts",
     "eval:extraction": "bun apps/api/eval/run.ts",
-    "eval:synthetic": "bun apps/api/eval/synthetic.ts"
+    "eval:synthetic": "bun apps/api/eval/synthetic.ts",
+    "eval:export-checks": "bun apps/api/eval/exportChecks.ts"
   },
   "devDependencies": {
     "@types/bun": "latest",

@@ -3,6 +3,7 @@ import { RoleGate } from "../auth/AuthContext";
 import { api, ApiError, type ReviewFact, type TrackedMarker } from "../api/client";
 import { flagForRange } from "../lib/referenceRange";
 import { navigate } from "../router";
+import { FactCheck } from "./FactCheck";
 
 const RANGE_FLAG_LABEL: Record<"above" | "below", string> = {
   above: "Above laboratory reference interval",
@@ -45,9 +46,11 @@ interface Props {
   onChanged: () => void;
   /** Extra badge rendered next to the coverage tag — e.g. the Snapshot's delta-since-last-visit status. */
   badge?: ReactNode;
+  /** Review screen only: renders the spot-check controls. Absent on the Snapshot, which has no check state. */
+  check?: { active: boolean; open: boolean; onOpenChange: (open: boolean) => void; onChecked?: () => void };
 }
 
-export function FactCard({ fact, trackedMarkers, onChanged, badge }: Props) {
+export function FactCard({ fact, trackedMarkers, onChanged, badge, check }: Props) {
   const [value, setValue] = useState(fact.value ?? "");
   const [markerId, setMarkerId] = useState("");
   const [customName, setCustomName] = useState("");
@@ -81,10 +84,14 @@ export function FactCard({ fact, trackedMarkers, onChanged, badge }: Props) {
       ? "Needs a date before sign-off"
       : fact.field_type === "marker_value" && !fact.tracked_marker_id
         ? "A marker must be mapped to a tracked marker before sign-off"
-        : null;
+        : fact.check_state === "unchecked"
+          ? "Check this fact against the source first"
+          : fact.excluded_at
+            ? "Excluded from this document"
+            : null;
 
   return (
-    <div className="card">
+    <div className="card" aria-current={check?.active ? "true" : undefined} data-fact-id={fact.id}>
       <div className="page-heading" style={{ marginBottom: 8 }}>
         <h2 style={{ margin: 0 }}>{heading}</h2>
         <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
@@ -136,6 +143,18 @@ export function FactCard({ fact, trackedMarkers, onChanged, badge }: Props) {
         })()}
       </div>
 
+      {check && (
+        <FactCheck
+          fact={fact}
+          trackedMarkers={trackedMarkers}
+          onChanged={onChanged}
+          active={check.active}
+          open={check.open}
+          onOpenChange={check.onOpenChange}
+          onChecked={check.onChecked}
+        />
+      )}
+
       <details className="fact-correction">
         <summary>Correct this value</summary>
         <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 12 }}>
@@ -165,6 +184,7 @@ export function FactCard({ fact, trackedMarkers, onChanged, badge }: Props) {
                   {busy === "value" ? "Saving..." : "Save value"}
                 </button>
               </div>
+              {check && fact.check_state !== "unchecked" && <p className="field-hint">Saving clears the check mark, so you will need to check this fact again.</p>}
             </form>
           </div>
         </div>

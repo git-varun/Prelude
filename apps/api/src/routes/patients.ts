@@ -3,7 +3,7 @@ import { jsonError } from "../middleware/auth";
 import type { AuthedUser } from "../middleware/auth";
 import { isControlledMarker } from "@prelude/shared";
 import {
-  deltaKey, deltaForCurrentFact, deltaForAbsentField, loadDeltaBaselines, LIVE_FACT_FILTER,
+  deltaKey, deltaForCurrentFact, deltaForAbsentField, loadDeltaBaselines, LIVE_FACT_FILTER, CONFLICT_SIDES_LIVE,
   type DeltaBaseline, type DeltaStatus,
 } from "../services/delta";
 import { provenanceFor, type Provenance } from "../services/provenance";
@@ -157,10 +157,19 @@ export async function listPatients(req: Request): Promise<Response> {
          OR f.coverage_status = 'extraction_uncertain'
          OR EXISTS (
            SELECT 1 FROM conflicts c
-           WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated')
+           WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated') AND ${CONFLICT_SIDES_LIVE}
          )
        )
     ) AS needs_attention_count
+  `;
+
+  // Spot-check backlog: unchecked live facts on the current visit (same scoping as needs_attention_count).
+  const uncheckedSubquery = sql`
+    (SELECT count(*)::int FROM facts f
+     WHERE f.visit_id = (SELECT id FROM visits WHERE patient_id = p.id ORDER BY visit_date DESC, id DESC LIMIT 1)
+       AND ${LIVE_FACT_FILTER}
+       AND f.check_state = 'unchecked'
+    ) AS unchecked_fact_count
   `;
 
   // Documents held for an identity mismatch (not 'partial': that is a softer signal and its facts stay live).
@@ -177,6 +186,7 @@ export async function listPatients(req: Request): Promise<Response> {
                to_char(p.date_of_birth, 'YYYY-MM-DD') AS date_of_birth, p.stage,
                (SELECT to_char(MAX(v.visit_date), 'YYYY-MM-DD') FROM visits v WHERE v.patient_id = p.id) AS last_visit_date,
                ${needsAttentionSubquery},
+               ${uncheckedSubquery},
                ${heldDocumentSubquery}
         FROM patients p
         WHERE p.name ILIKE ${"%" + search + "%"}
@@ -188,6 +198,7 @@ export async function listPatients(req: Request): Promise<Response> {
                to_char(p.date_of_birth, 'YYYY-MM-DD') AS date_of_birth, p.stage,
                (SELECT to_char(MAX(v.visit_date), 'YYYY-MM-DD') FROM visits v WHERE v.patient_id = p.id) AS last_visit_date,
                ${needsAttentionSubquery},
+               ${uncheckedSubquery},
                ${heldDocumentSubquery}
         FROM patients p
         ORDER BY last_visit_date DESC NULLS LAST
@@ -317,6 +328,7 @@ interface SnapshotFactRow {
   as_of_date: string | null;
   coverage_status: string | null;
   verification_state: string | null;
+  check_state?: string | null;
   document_id: string | null;
   source_page: number | null;
   source_location: string | null;
@@ -340,7 +352,7 @@ async function loadTumorMarkers(patientId: string, visitId: string): Promise<Sna
       SELECT f.id FROM live f
       WHERE EXISTS (
         SELECT 1 FROM conflicts c
-        WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated')
+        WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated') AND ${CONFLICT_SIDES_LIVE}
       )
     ), ranked AS (
       SELECT f.*, RANK() OVER (PARTITION BY f.tracked_marker_id ORDER BY f.as_of_date DESC NULLS LAST) AS rnk
@@ -348,17 +360,17 @@ async function loadTumorMarkers(patientId: string, visitId: string): Promise<Sna
       WHERE f.id NOT IN (SELECT id FROM blocked)
     ), winners AS (
       SELECT id, tracked_marker_id, value, unit, reference_range, as_of_date, coverage_status,
-             verification_state, document_id, source_page, source_location, source_snippet
+             verification_state, check_state, document_id, source_page, source_location, source_snippet
       FROM ranked WHERE rnk = 1
       UNION ALL
       SELECT id, tracked_marker_id, value, unit, reference_range, as_of_date, coverage_status,
-             verification_state, document_id, source_page, source_location, source_snippet
+             verification_state, check_state, document_id, source_page, source_location, source_snippet
       FROM live WHERE id IN (SELECT id FROM blocked)
     )
     SELECT tm.id AS tracked_marker_id, tm.marker_name,
            w.id AS fact_id, w.value, w.unit, w.reference_range,
            to_char(w.as_of_date, 'YYYY-MM-DD') AS as_of_date,
-           w.coverage_status, w.verification_state,
+           w.coverage_status, w.verification_state, w.check_state,
            w.document_id, w.source_page, w.source_location, w.source_snippet
     FROM tracked_markers tm
     LEFT JOIN winners w ON w.tracked_marker_id = tm.id
@@ -378,7 +390,7 @@ async function loadCurrentTreatment(visitId: string): Promise<SnapshotFactRow[]>
       SELECT f.id FROM live f
       WHERE EXISTS (
         SELECT 1 FROM conflicts c
-        WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated')
+        WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated') AND ${CONFLICT_SIDES_LIVE}
       )
     ), ranked AS (
       SELECT f.*, RANK() OVER (ORDER BY f.as_of_date DESC NULLS LAST) AS rnk
@@ -387,13 +399,13 @@ async function loadCurrentTreatment(visitId: string): Promise<SnapshotFactRow[]>
     )
     SELECT id AS fact_id, value, unit, reference_range,
            to_char(as_of_date, 'YYYY-MM-DD') AS as_of_date,
-           coverage_status, verification_state,
+           coverage_status, verification_state, check_state,
            document_id, source_page, source_location, source_snippet
     FROM ranked WHERE rnk = 1
     UNION ALL
     SELECT id AS fact_id, value, unit, reference_range,
            to_char(as_of_date, 'YYYY-MM-DD') AS as_of_date,
-           coverage_status, verification_state,
+           coverage_status, verification_state, check_state,
            document_id, source_page, source_location, source_snippet
     FROM live WHERE id IN (SELECT id FROM blocked)
     ORDER BY as_of_date DESC NULLS LAST, fact_id
@@ -414,7 +426,7 @@ async function loadRadiology(visitId: string): Promise<SnapshotFactRow[]> {
       SELECT f.id FROM live f
       WHERE EXISTS (
         SELECT 1 FROM conflicts c
-        WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated')
+        WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated') AND ${CONFLICT_SIDES_LIVE}
       )
     ), ranked AS (
       SELECT f.*, RANK() OVER (ORDER BY f.as_of_date DESC NULLS LAST) AS rnk
@@ -423,7 +435,7 @@ async function loadRadiology(visitId: string): Promise<SnapshotFactRow[]> {
     )
     SELECT r.id AS fact_id, r.value, r.unit, r.reference_range,
            to_char(r.as_of_date, 'YYYY-MM-DD') AS as_of_date,
-           r.coverage_status, r.verification_state,
+           r.coverage_status, r.verification_state, r.check_state,
            r.document_id, r.source_page, r.source_location, r.source_snippet,
            d.imaging_modality
     FROM ranked r LEFT JOIN documents d ON d.id = r.document_id
@@ -431,7 +443,7 @@ async function loadRadiology(visitId: string): Promise<SnapshotFactRow[]> {
     UNION ALL
     SELECT l.id AS fact_id, l.value, l.unit, l.reference_range,
            to_char(l.as_of_date, 'YYYY-MM-DD') AS as_of_date,
-           l.coverage_status, l.verification_state,
+           l.coverage_status, l.verification_state, l.check_state,
            l.document_id, l.source_page, l.source_location, l.source_snippet,
            d.imaging_modality
     FROM live l LEFT JOIN documents d ON d.id = l.document_id
@@ -463,10 +475,10 @@ async function loadConflicts(factIds: string[]): Promise<Map<string, ConflictEnt
            ofact.source_snippet AS other_source_snippet
     FROM (
       SELECT c.id AS conflict_id, c.status, c.authoritative_fact_id, c.fact_id_a AS this_fact_id, c.fact_id_b AS other_fact_id
-      FROM conflicts c WHERE c.fact_id_a IN ${sql(factIds)}
+      FROM conflicts c WHERE c.fact_id_a IN ${sql(factIds)} AND ${CONFLICT_SIDES_LIVE}
       UNION ALL
       SELECT c.id, c.status, c.authoritative_fact_id, c.fact_id_b, c.fact_id_a
-      FROM conflicts c WHERE c.fact_id_b IN ${sql(factIds)}
+      FROM conflicts c WHERE c.fact_id_b IN ${sql(factIds)} AND ${CONFLICT_SIDES_LIVE}
     ) pairs
     JOIN facts ofact ON ofact.id = pairs.other_fact_id
     -- the other side of a conflict is shown to the reader: never a fact from a held/rejected document
@@ -508,6 +520,7 @@ function fieldObject(
     as_of_date: factId ? row.as_of_date : null,
     coverage_status: factId ? row.coverage_status : "not_found_in_document_set",
     verification_state: factId ? row.verification_state : null,
+    check_state: factId ? (row.check_state ?? "unchecked") : null,
     delta_status: deltaStatus,
     conflicts: factId ? (conflictsByFactId.get(factId) ?? []) : [],
     provenance: factId ? provenanceFor(row.document_id!, row.source_page, row.source_location, row.source_snippet) : null,

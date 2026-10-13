@@ -87,6 +87,13 @@ function toReviewFact(field: SnapshotField, patientId: string, visitId: string):
     source_location: provenance?.source_location ?? null,
     source_snippet: provenance?.source_snippet ?? null,
     fallback_level: provenance?.fallback_level ?? "document",
+    check_state: field.check_state ?? "unchecked",
+    checked_by: null,
+    checked_at: null,
+    error_type: null,
+    excluded_at: null,
+    printed_flag: null,
+    parse_checks: null,
   };
 }
 

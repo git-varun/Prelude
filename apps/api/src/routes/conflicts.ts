@@ -9,7 +9,8 @@ async function factWithProvenance(id: string) {
   const [row] = await sql`
     SELECT f.id, f.patient_id, f.visit_id, f.document_id, f.tracked_marker_id, tm.marker_name AS tracked_marker_name,
            f.field_type, f.value, f.unit, f.reference_range, to_char(f.as_of_date, 'YYYY-MM-DD') AS as_of_date,
-           f.coverage_status, f.verification_state, f.source_page, f.source_location, f.source_snippet
+           f.coverage_status, f.verification_state, f.source_page, f.source_location, f.source_snippet,
+           (f.excluded_at IS NOT NULL) AS excluded
     FROM facts f
     LEFT JOIN tracked_markers tm ON tm.id = f.tracked_marker_id
     WHERE f.id = ${id}

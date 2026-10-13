@@ -17,20 +17,30 @@ export function deltaKey(fieldType: string, trackedMarkerId: string | null): str
   return `${fieldType}::${trackedMarkerId ?? ""}`;
 }
 
-// Excludes a fact that lost an authoritative-pick conflict resolution (docs/03 §3),
+// Excludes a fact the spot-check marked as not belonging to the record (excluded_at: not_in_document /
+// wrong_patient), a fact that lost an authoritative-pick conflict resolution (docs/03 §3),
 // and a fact whose document is held for a patient-identity mismatch (or was
 // rejected after review) -- docs/superpowers/specs/2026-10-10-deterministic-extraction-design.md
 // "Identity match". NULL/'matched'/'partial'/'unknown'/'confirmed' are never held.
 // Shared with every other fact-reading query, which aliases facts as `f` too.
 export const LIVE_FACT_FILTER = sql`
-  NOT EXISTS (
+  f.excluded_at IS NULL
+  AND NOT EXISTS (
     SELECT 1 FROM conflicts c
     WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id)
       AND c.status = 'resolved' AND c.authoritative_fact_id IS NOT NULL AND c.authoritative_fact_id != f.id
+      AND NOT EXISTS (SELECT 1 FROM facts af WHERE af.id = c.authoritative_fact_id AND af.excluded_at IS NOT NULL)
   )
   AND NOT EXISTS (
     SELECT 1 FROM documents d WHERE d.id = f.document_id AND d.identity_status IN ('mismatch', 'rejected')
   )
+`;
+
+// "Neither fact of conflict `c` is excluded." Every read that decides whether a conflict blocks, is open or is
+// shown adds `AND ${CONFLICT_SIDES_LIVE}`; the conflicts table MUST be aliased `c` there. A conflict with an
+// excluded side stops blocking the other fact (the row itself is kept, and GET /conflicts/:id still serves it).
+export const CONFLICT_SIDES_LIVE = sql`
+  NOT EXISTS (SELECT 1 FROM facts xf WHERE xf.id IN (c.fact_id_a, c.fact_id_b) AND xf.excluded_at IS NOT NULL)
 `;
 
 // Most recent prior oncologist_signed_off fact per (field_type, tracked_marker_id), searched across the patient's whole visit history, not just the visit immediately before currentVisitDate.

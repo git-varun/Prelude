@@ -109,7 +109,7 @@ CREATE TABLE conflicts (
 CREATE TABLE audit_log (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   actor_id UUID NOT NULL REFERENCES users(id),
-  action TEXT NOT NULL,        -- 'upload' | 'correct' | 'sign_off' | 'reopen' | 'resolve_conflict' | 'delete'
+  action TEXT NOT NULL,        -- 'upload' | 'correct' | 'sign_off' | 'reopen' | 'resolve_conflict' | 'delete' | 'check_fact'
   entity_type TEXT NOT NULL,
   entity_id UUID NOT NULL,
   before_value JSONB,
