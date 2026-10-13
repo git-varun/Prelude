@@ -43,7 +43,8 @@ bun run eval:fixtures && bun run eval:synthetic        # rebuild fixtures from d
 ```
 
 Real reports in `docs/reports/`, their fixtures and answer keys, and eval results are PHI
-and gitignored; never commit them. Status, operating notes and remaining work:
+and gitignored; never commit them.
+`bun run eval:export-checks` exports staff spot-checked facts as answer keys (`keyOrigin: "spot_check"`; precision only, recall is not measurable from them). Status, operating notes and remaining work:
 [`docs/extraction-pipeline-status.md`](docs/extraction-pipeline-status.md).
 
 ## Documentation

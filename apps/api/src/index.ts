@@ -3,7 +3,8 @@ import { createUser } from "./routes/users";
 import { createPatient, listPatients, getPatient, updatePatient, addMarker, getPatientSnapshot, getMarkerTrend, getPatientTimeline, getPatientDocumentIdentity } from "./routes/patients";
 import { createOrOpenVisit, listVisits } from "./routes/visits";
 import { uploadDocument, getDocument, getDocumentFile, setDocumentIdentityStatus } from "./routes/documents";
-import { getDocumentFacts, patchFact, signOffFact, reopenFact } from "./routes/facts";
+import { getDocumentFacts, patchFact, checkFactRoute, signOffFact, reopenFact } from "./routes/facts";
+import { getDocumentCheckSummary, getLabCheckSummary } from "./routes/checks";
 import { getConflict, annotateConflict, resolveConflict } from "./routes/conflicts";
 import { requireRole } from "./middleware/roles";
 import { cors } from "./middleware/cors";
@@ -60,11 +61,16 @@ const server = Bun.serve({
     "/documents/:id/facts": cors({
       GET: requireRole(["staff", "oncologist"], getDocumentFacts),
     }),
+    "/documents/:id/check-summary": cors({ GET: requireRole(["staff", "oncologist"], getDocumentCheckSummary) }),
+    "/checks/by-lab": cors({ GET: requireRole(["staff", "oncologist"], getLabCheckSummary) }),
     "/documents/:id/identity": cors({
       POST: requireRole(["staff", "oncologist"], setDocumentIdentityStatus),
     }),
     "/facts/:id": cors({
       PATCH: requireRole(["staff", "oncologist"], patchFact),
+    }),
+    "/facts/:id/check": cors({
+      POST: requireRole(["staff", "oncologist"], checkFactRoute),
     }),
     "/facts/:id/sign-off": cors({
       POST: requireRole(["oncologist"], signOffFact),

@@ -1,6 +1,6 @@
 import type { CoverageStatus, ExtractedFactCandidate } from "@prelude/shared";
 import { sql } from "../db/client";
-import { LIVE_FACT_FILTER } from "./delta";
+import { LIVE_FACT_FILTER, CONFLICT_SIDES_LIVE } from "./delta";
 
 type Exec = typeof sql;
 
@@ -101,6 +101,10 @@ export async function detectConflicts(
     WHERE f.id = ${fact.id}::uuid AND d.identity_status IN ('mismatch', 'rejected')
   `;
   if (held) return [];
+  // An excluded fact (spot-check: not in the document / wrong patient) is not evidence: re-detection over a
+  // document's facts (identity confirm, backfill) must never open a conflict from it against live facts.
+  const [excluded] = await tx`SELECT 1 FROM facts WHERE id = ${fact.id}::uuid AND excluded_at IS NOT NULL`;
+  if (excluded) return [];
 
   // Compares against the fact's own just-written as_of_date via a subquery
   // (rather than re-serializing fact.as_of_date, which may already be a JS
@@ -120,9 +124,10 @@ export async function detectConflicts(
   const pairs: ConflictPair[] = [];
   for (const match of matches) {
     const [existing] = await tx`
-      SELECT id FROM conflicts
-      WHERE (fact_id_a = ${fact.id}::uuid AND fact_id_b = ${match.id}::uuid)
-         OR (fact_id_a = ${match.id}::uuid AND fact_id_b = ${fact.id}::uuid)
+      SELECT c.id FROM conflicts c
+      WHERE ((c.fact_id_a = ${fact.id}::uuid AND c.fact_id_b = ${match.id}::uuid)
+         OR (c.fact_id_a = ${match.id}::uuid AND c.fact_id_b = ${fact.id}::uuid))
+        AND ${CONFLICT_SIDES_LIVE}
     `;
     pairs.push({ factIdA: fact.id, factIdB: match.id, alreadyExists: !!existing });
     if (opts.dryRun) continue;

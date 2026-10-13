@@ -36,6 +36,12 @@ Two independent fresh-context reviews (one per phase) found 7 Critical and 13 Im
 ### E. Production release (2026-10-11)
 Backup `s3://prelude-backups-036281891241/20261011_150834/` → migrations **008 and 009** applied by hand (production was on 007) → `infra/deploy.sh`. 36 documents / 79 facts / 11 patients intact, 0 documents held, `/api/health` 200, no API errors. `EXTRACTION_MODE` unset.
 
+### F. Fact spot-check (implemented, **not deployed**)
+Staff mark each extracted fact Correct or Incorrect against its source (`POST /facts/:id/check`). `check_state` (`unchecked` / `correct` / `incorrect`) is a separate axis from `verification_state`; an unchecked or excluded fact cannot be oncologist-signed-off, and any PATCH of a checked fact resets it to `unchecked`. An Incorrect mark carries a required error type; `not_in_document` / `wrong_patient` also exclude the fact from every live read (`LIVE_FACT_FILTER`), and conflicts with an excluded side are ignored (rows kept). Roll-ups are labelled "staff-checked agreement" (never "accuracy"): `GET /documents/:id/check-summary`, per-lab figures, and `unchecked_fact_count` on the patient list. `bun run eval:export-checks` writes answer keys with `keyOrigin: "spot_check"`; the harness reports them as `real_spot_check` and they cannot measure recall (they contain only extracted rows). Spec: `docs/superpowers/specs/2026-10-13-fact-spot-check-design.md`.
+
+- **Deploy note.** Migration 010 is **not applied to production**. It must be applied **before** the new API code starts, because `queryFacts` selects the new columns and `signOffFact` reads `check_state`: `docker exec -i <postgres> psql -U prelude -d prelude -v ON_ERROR_STOP=1 --single-transaction < apps/api/src/db/migrations/010_fact_spot_check.sql`. Take a backup first (`infra/backup.sh`). After deploy, every existing unsigned fact is `unchecked` and shows up in the "to check" badge.
+- **Cutover window.** Sign-offs made by the old API between migrating and swapping the code land signed-off but `unchecked`. Either stop the API during the window, or after the swap re-run only: `UPDATE facts SET check_state='correct', checked_at=now() WHERE verification_state='oncologist_signed_off' AND check_state='unchecked';` (scoped so staff marks are not overwritten).
+
 ---
 
 ## 2. How to operate it
