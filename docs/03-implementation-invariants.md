@@ -41,12 +41,15 @@ Authoritative engineering contracts for Prelude, subordinate to the frozen MVP S
 - POST /facts/:id/reopen is oncologist-only (403 for staff) and valid only from oncologist\_signed\_off (409 from any other state — there's nothing to reopen).
 - The LLM/extraction pipeline never writes any value other than unverified to verification\_state. It cannot create, correct into, or sign off a trusted fact under any code path — this is enforced structurally by the signed\_off\_requires\_oncologist database constraint (Implementation Blueprint, Database Schema) in addition to application-layer role checks.
 - Cross-cutting rule with section 1: sign-off is blocked only while the fact has an open or annotated CONFLICT (section 3), not by its coverage\_status value per se. Once the CONFLICT is resolved — authoritative-pick or both-stand — sign-off is allowed, even for a historical losing fact or either both-stand fact, though coverage\_status stays conflicting\_sources as a permanent record of what happened.
+- Second cross-cutting rule: a fact cannot be oncologist\_signed\_off until it has been spot-checked (`check_state` is `correct` or `incorrect`) and it is not excluded (`excluded_at IS NULL`). `check_state` is a separate axis from `verification_state`; it adds no state to this matrix. Any PATCH of a checked fact resets it to `unchecked`; PATCH of an excluded fact is a 409.
 
 ## 3. Conflict Lifecycle & Resolution Semantics
 
 **Detection scope:** patient-wide, not visit-scoped. Two FACTs for the same patient + field\_type (+ tracked\_marker\_id where applicable) with overlapping or ambiguous as\_of\_date and differing values auto-create a CONFLICT, whether they came from the same visit or different visits. Same value with compatible dates never creates a conflict, regardless of visit — both facts are retained as separate observations. The system never uses last-write-wins.
 
 **Pairwise schema, multi-source reality:** the CONFLICT table is pairwise (fact\_id\_a, fact\_id\_b). When three or more documents disagree on the same field, the rules engine creates one CONFLICT per disagreeing pair, not one N-way conflict record. This is a deliberate scope limit, not an oversight — the frozen spec never asked for N-way conflict resolution, and collapsing pairwise conflicts into a single N-way UI is an unwarranted addition. The Snapshot and Conflict Resolution screens must group same-field conflicts visually so the oncologist sees all disagreeing values together, but the underlying records stay pairwise.
+
+A conflict with an excluded fact on either side is ignored for blocking and display; clearing the exclusion re-runs detection.
 
 **Conflict state machine:**
 
