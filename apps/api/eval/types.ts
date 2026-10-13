@@ -29,8 +29,8 @@ export const ExpectedDocSchema = z.object({
       labPatientRef: z.string().nullable().optional(),
     })
     .optional(),
-  // "scripted" keys were generated from the document text by a script (not read by hand), so scoring a parser against them is circular.
-  keyOrigin: z.enum(["hand", "scripted"]).default("hand"),
+  // "scripted" keys were generated from the document text by a script (not read by hand), so scoring a parser against them is circular. "spot_check" keys are exported from staff-checked extractions: they hold only rows the extractor found, so they cannot measure recall.
+  keyOrigin: z.enum(["hand", "scripted", "spot_check"]).default("hand"),
   facts: z.array(ExpectedFactSchema),
 });
 

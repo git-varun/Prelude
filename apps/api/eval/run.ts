@@ -50,7 +50,7 @@ for (let run = 1; run <= repeat; run++) {
     }
     const { candidates, failedFieldTypes } = result;
     if (delayMs > 0) await sleep(delayMs);
-    const source = expected.keyOrigin === "scripted" ? "real_scripted" : expected.source;
+    const source = expected.keyOrigin === "scripted" ? "real_scripted" : expected.keyOrigin === "spot_check" ? "real_spot_check" : expected.source;
     const score = scoreDoc(repeat > 1 ? `${name}#${run}` : name, expected.facts, candidates, failedFieldTypes, source);
     docs.push(score);
     let extra = "";
@@ -76,6 +76,7 @@ for (let run = 1; run <= repeat; run++) {
 const summary = summarize(docs);
 console.log("\n" + formatSummary(summary));
 if (deterministic && headerChecked > 0) console.log(`header fields correct: ${headerCorrect}/${headerChecked}`);
+if (docs.some((d) => d.source === "real_spot_check")) console.log("real_spot_check: recall not measurable: the key contains only rows the extractor found");
 for (const g of evaluateGates(summary)) console.log(`${g.pass ? "PASS" : "FAIL"} ${g.name} (${g.detail})`);
 
 const stamp = new Date().toISOString().replace(/[:.]/g, "-");
