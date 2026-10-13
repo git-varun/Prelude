@@ -41,17 +41,19 @@ export type FieldType =
 
 // Tier 1 types whose value is the source text itself. A value not found verbatim in the document is flagged uncertain.
 export const AS_WRITTEN_FIELD_TYPES: readonly FieldType[] = [
-  "diagnosis", "histology_ihc", "stage", "surgery_procedure", "next_review_date", "tests_advised", "procedures_planned", "lesion_size",
+  "treatment_regimen", "diagnosis", "histology_ihc", "stage", "surgery_procedure", "next_review_date", "tests_advised", "procedures_planned", "lesion_size",
 ];
 
-// Tier 1 types where several different values on the same date are normal (two procedures, three tests), so they
-// must never open a conflict against each other.
+// Tier 1 types where several different values on the same date are normal (two procedures, three tests, two
+// diagnoses, clinical cT plus pathological pT), so they must never open a conflict against each other.
 export const MULTI_VALUED_FIELD_TYPES: readonly FieldType[] = [
-  "histology_ihc", "surgery_procedure", "tests_advised", "procedures_planned", "lesion_size",
+  "diagnosis", "stage", "histology_ihc", "surgery_procedure", "tests_advised", "procedures_planned", "lesion_size",
 ];
 
 // Spot-check error options per type (M3-01: "type-specific error options"). "value" means the text read is wrong.
-// The spot-check UI and API read this map instead of hard-coding one list for every type.
+// NOTE: nothing consumes this map yet. The spot-check branch's check_error_type enum must gain `facility` when
+// it merges (its migration 010 does not have it). Once wired, the UI and API should read this map instead of
+// hard-coding one list for every type.
 export type SpotCheckErrorType = "value" | "unit" | "marker" | "date" | "range" | "facility" | "not_in_document" | "wrong_patient";
 const EXCLUDING: SpotCheckErrorType[] = ["not_in_document", "wrong_patient"];
 export const SPOT_CHECK_ERRORS_BY_FIELD_TYPE: Record<FieldType, readonly SpotCheckErrorType[]> = {
@@ -67,7 +69,7 @@ export const SPOT_CHECK_ERRORS_BY_FIELD_TYPE: Record<FieldType, readonly SpotChe
   next_review_date: ["value", "date", ...EXCLUDING],
   tests_advised: ["value", "date", ...EXCLUDING],
   procedures_planned: ["value", "date", ...EXCLUDING],
-  lesion_size: ["value", "unit", "date", ...EXCLUDING],
+  lesion_size: ["value", "date", ...EXCLUDING],
 };
 
 // Five stored values only (Invariants §1). not_found_in_document_set is

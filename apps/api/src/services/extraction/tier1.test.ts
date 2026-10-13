@@ -6,6 +6,15 @@ import { createTestUser, deleteTestUsers, createTestPatient, deleteTestPatients,
 import { detectConflicts } from "../rules";
 import { persistExtractedFacts } from "../facts";
 import { FIELD_TYPES_BY_DOCUMENT_TYPE, promptFor, toExtractedFactCandidate, type RawCandidate } from "./anthropicExtraction";
+import { DeterministicExtractionProvider } from "./deterministic/provider";
+
+test("the deterministic provider reports pathology and discharge as not handled, not as empty", async () => {
+  for (const type of ["pathology", "discharge"] as const) {
+    const r = await new DeterministicExtractionProvider().extractFacts(ocr("Diagnosis: carcinoma"), type);
+    expect(r.candidates).toEqual([]);
+    expect(r.failedFieldTypes).toEqual(FIELD_TYPES_BY_DOCUMENT_TYPE[type]);
+  }
+});
 
 // M3-01 (AM-04): tier 1 "as written" field types.
 
@@ -43,6 +52,7 @@ test("every field type has spot-check error options, each with the two exclusion
   }
   expect(SPOT_CHECK_ERRORS_BY_FIELD_TYPE.surgery_procedure).toContain("facility");
   expect(SPOT_CHECK_ERRORS_BY_FIELD_TYPE.stage).not.toContain("unit");
+  expect(SPOT_CHECK_ERRORS_BY_FIELD_TYPE.lesion_size).not.toContain("unit");
 });
 
 test("an as-written value found in the document (whitespace and case aside) keeps its confidence", () => {
@@ -109,9 +119,17 @@ test("multi-valued tier 1 types never conflict: two procedures or tests on one d
   expect(await conflictCount()).toBe(0);
 });
 
-test("single-valued tier 1 types still conflict when two sources disagree on one date", async () => {
+test("two diagnoses in one document do not conflict", async () => {
   const a = await newFact("diagnosis", "Carcinoma breast");
   await newFact("diagnosis", "Carcinoma ovary");
+  await sql.begin(async (tx) => {
+    expect(await detectConflicts(tx, a)).toEqual([]);
+  });
+});
+
+test("single-valued tier 1 types still conflict when two sources disagree on one date", async () => {
+  const a = await newFact("next_review_date", "15/11/2026");
+  await newFact("next_review_date", "01/12/2026");
   await sql.begin(async (tx) => {
     expect((await detectConflicts(tx, a)).length).toBe(1);
   });

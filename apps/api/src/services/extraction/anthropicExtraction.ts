@@ -83,6 +83,7 @@ trackedMarkerLabel to the field/test this range applies to, if named.`;
     case "treatment_regimen":
       return `${common}
 
+${AS_WRITTEN}
 Task: extract the treatment regimen/protocol explicitly stated (drug names, cycle or line information,
 dosage) — only what's written, never a therapy inferred from a diagnosis. Put the regimen description
 in value.`;
@@ -156,7 +157,7 @@ put the text in value. Do not include procedures already performed.`;
 
 ${AS_WRITTEN}
 Task: extract each lesion measurement a radiology report states, exactly as written (e.g. "2.4 x 1.8 cm left
-hepatic lobe lesion"). One candidate per lesion; put the text in value and the unit in unit if stated. Never
+hepatic lobe lesion"). One candidate per lesion; put the text in value. Leave unit null because the measurement text already contains it. Never
 compute a change, a sum or a response category.`;
   }
 }
