@@ -27,9 +27,9 @@ function withId<T extends Record<string, string>>(path: string, params: T): Requ
 async function fact(value: string, o: { verification?: string; documentId?: string } = {}): Promise<string> {
   const [row] = await sql`
     INSERT INTO facts (patient_id, visit_id, document_id, tracked_marker_id, field_type, value, as_of_date,
-      coverage_status, verification_state, signed_off_by)
+      coverage_status, verification_state, signed_off_by, check_state)
     VALUES (${patientId}, ${visitId}, ${o.documentId ?? docId}, ${markerId}, 'marker_value', ${value}, '2026-02-01',
-      'value_found', ${o.verification ?? "unverified"}, ${o.verification === "oncologist_signed_off" ? oncologist.id : null})
+      'value_found', ${o.verification ?? "unverified"}, ${o.verification === "oncologist_signed_off" ? oncologist.id : null}, 'correct')
     RETURNING id`;
   return row.id;
 }

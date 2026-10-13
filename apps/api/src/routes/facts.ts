@@ -134,6 +134,8 @@ export async function signOffFact(req: Request & { params: { id: string } }, use
       LIMIT 1
     `;
     if (conflict) return "conflict" as const;
+    if (before.excluded_at !== null) return "excluded" as const;
+    if (before.check_state === "unchecked") return "unchecked" as const;
 
     const [updated] = await tx`
       UPDATE facts SET verification_state = 'oncologist_signed_off', signed_off_by = ${user.id}, signed_off_at = now()
@@ -152,6 +154,8 @@ export async function signOffFact(req: Request & { params: { id: string } }, use
   if (outcome === "undated") return jsonError(409, "conflict", "A fact without an as-of date cannot be signed off; supply the date first.");
   if (outcome === "unmapped") return jsonError(409, "conflict", "A marker must be mapped to a tracked marker before sign-off.");
   if (outcome === "conflict") return jsonError(409, "conflict", "Sign-off is blocked by an unresolved conflict involving this fact.");
+  if (outcome === "excluded") return jsonError(409, "conflict", "This fact was excluded from this document and cannot be signed off.");
+  if (outcome === "unchecked") return jsonError(409, "conflict", "This fact has not been checked against its source. Mark it Correct or Incorrect first.");
 
   const [fact] = await queryFacts(sql, { factId });
   return Response.json(fact);

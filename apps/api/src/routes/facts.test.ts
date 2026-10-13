@@ -38,14 +38,19 @@ async function newDocument(): Promise<string> {
 async function newFact(documentId: string, o: Record<string, unknown> = {}): Promise<string> {
   const f = {
     value: "4.2", asOf: "2026-02-01", needsDate: false, coverage: "value_found", verification: "unverified",
-    rawLabel: null as string | null, markerId: null as string | null, ...o,
-  };
+    rawLabel: null as string | null, markerId: null as string | null, check: "correct", ...o,
+  } as { check: "unchecked" | "correct" | "incorrect" | "excluded" } & Record<string, any>;
+  const checkState = f.check === "excluded" ? "incorrect" : f.check;
+  const errorType = f.check === "excluded" ? "not_in_document" : f.check === "incorrect" ? "value" : null;
+  const excludedAt = f.check === "excluded" ? new Date() : null;
   const [row] = await sql`
     INSERT INTO facts (patient_id, visit_id, document_id, tracked_marker_id, raw_marker_label, field_type, value,
-      as_of_date, needs_manual_date, coverage_status, verification_state, signed_off_by)
+      as_of_date, needs_manual_date, coverage_status, verification_state, signed_off_by,
+      check_state, error_type, excluded_at)
     VALUES (${patientId}, ${visitId}, ${documentId}, ${f.markerId}, ${f.rawLabel}, 'marker_value', ${f.value},
       ${f.asOf}, ${f.needsDate}, ${f.coverage}, ${f.verification},
-      ${f.verification === "oncologist_signed_off" ? oncologist.id : null})
+      ${f.verification === "oncologist_signed_off" ? oncologist.id : null},
+      ${checkState}, ${errorType}, ${excludedAt})
     RETURNING id`;
   return row.id;
 }
@@ -488,6 +493,44 @@ test("sign-off is blocked with 409 by an open or annotated conflict on either si
     }
     await sql`UPDATE conflicts SET status = 'resolved' WHERE id = ${c.id}`;
     expect((await signOffFact(signOffReq(a), asAuthedUser(oncologist))).status).toBe(200);
+  } finally {
+    await sql`DELETE FROM conflicts WHERE id = ${c.id}`;
+  }
+});
+
+test("sign-off is a 409 while the fact is unchecked", async () => {
+  const id = await newFact(await newDocument(), { markerId: ceaMarkerId, check: "unchecked" });
+  const res = await signOffFact(signOffReq(id), asAuthedUser(oncologist));
+  expect(res.status).toBe(409);
+  expect(((await res.json()) as any).message).toBe("This fact has not been checked against its source. Mark it Correct or Incorrect first.");
+  expect((await factRow(id)).verification_state).toBe("unverified");
+  expect(await signOffAuditCount(id)).toBe(0);
+});
+
+test("sign-off succeeds once the fact is checked correct or incorrect", async () => {
+  for (const state of ["correct", "incorrect"] as const) {
+    const id = await newFact(await newDocument(), { markerId: ceaMarkerId, check: state });
+    expect((await signOffFact(signOffReq(id), asAuthedUser(oncologist))).status).toBe(200);
+  }
+});
+
+test("sign-off is a 409 for an excluded fact even though its check_state is incorrect", async () => {
+  const id = await newFact(await newDocument(), { markerId: ceaMarkerId, check: "excluded" });
+  const res = await signOffFact(signOffReq(id), asAuthedUser(oncologist));
+  expect(res.status).toBe(409);
+  expect(((await res.json()) as any).message).toBe("This fact was excluded from this document and cannot be signed off.");
+  expect(await signOffAuditCount(id)).toBe(0);
+});
+
+test("a conflict reason is reported before the unchecked reason", async () => {
+  const docId = await newDocument();
+  const a = await newFact(docId, { markerId: ceaMarkerId, check: "unchecked" });
+  const b = await newFact(docId, { markerId: ceaMarkerId });
+  const [c] = await sql`INSERT INTO conflicts (fact_id_a, fact_id_b, status) VALUES (${a}, ${b}, 'open') RETURNING id`;
+  try {
+    const res = await signOffFact(signOffReq(a), asAuthedUser(oncologist));
+    expect(res.status).toBe(409);
+    expect(((await res.json()) as any).message).toContain("conflict");
   } finally {
     await sql`DELETE FROM conflicts WHERE id = ${c.id}`;
   }

@@ -98,16 +98,16 @@ async function seedDemoPatient(site: string, markers: readonly string[]) {
 
     await sql`
       INSERT INTO facts (patient_id, visit_id, document_id, tracked_marker_id, field_type, value, unit,
-        reference_range, as_of_date, coverage_status, verification_state, signed_off_by, signed_off_at)
+        reference_range, as_of_date, coverage_status, verification_state, signed_off_by, signed_off_at, check_state, checked_at)
       VALUES (${patient.id}, ${earliestVisit.id}, ${earliestDoc.id}, ${tracked.id}, 'marker_value', ${data.earliest}, ${data.unit},
-        ${data.range}, '2025-11-15', 'value_found', 'oncologist_signed_off', ${oncologist.id}, now())
+        ${data.range}, '2025-11-15', 'value_found', 'oncologist_signed_off', ${oncologist.id}, now(), 'correct', now())
     `;
 
     await sql`
       INSERT INTO facts (patient_id, visit_id, document_id, tracked_marker_id, field_type, value, unit,
-        reference_range, as_of_date, coverage_status, verification_state, signed_off_by, signed_off_at)
+        reference_range, as_of_date, coverage_status, verification_state, signed_off_by, signed_off_at, check_state, checked_at)
       VALUES (${patient.id}, ${oldVisit.id}, ${oldDoc.id}, ${tracked.id}, 'marker_value', ${data.baseline}, ${data.unit},
-        ${data.range}, '2026-01-15', 'value_found', 'oncologist_signed_off', ${oncologist.id}, now())
+        ${data.range}, '2026-01-15', 'value_found', 'oncologist_signed_off', ${oncologist.id}, now(), 'correct', now())
     `;
 
     const currentValue = OUT_OF_RANGE_OVERRIDES[`${site}::${marker}`] ?? data.current;

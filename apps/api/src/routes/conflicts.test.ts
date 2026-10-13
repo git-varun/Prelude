@@ -28,8 +28,8 @@ afterAll(async () => {
 
 async function newFact(value: string): Promise<string> {
   const [row] = await sql`
-    INSERT INTO facts (patient_id, visit_id, document_id, field_type, value, as_of_date, coverage_status, verification_state)
-    VALUES (${patientId}, ${visitId}, ${documentId}, 'treatment_regimen', ${value}, '2026-02-01', 'conflicting_sources', 'unverified')
+    INSERT INTO facts (patient_id, visit_id, document_id, field_type, value, as_of_date, coverage_status, verification_state, check_state)
+    VALUES (${patientId}, ${visitId}, ${documentId}, 'treatment_regimen', ${value}, '2026-02-01', 'conflicting_sources', 'unverified', 'correct')
     RETURNING id`;
   return row.id;
 }
