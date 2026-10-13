@@ -48,9 +48,11 @@ interface Props {
   badge?: ReactNode;
   /** Review screen only: renders the spot-check controls. Absent on the Snapshot, which has no check state. */
   check?: { active: boolean; open: boolean; onOpenChange: (open: boolean) => void; onChecked?: () => void };
+  /** Called after this card's own Sign off succeeds (the Snapshot shows its Undo toast from it). */
+  onSignedOff?: (factId: string) => void;
 }
 
-export function FactCard({ fact, trackedMarkers, onChanged, badge, check }: Props) {
+export function FactCard({ fact, trackedMarkers, onChanged, badge, check, onSignedOff }: Props) {
   const [value, setValue] = useState(fact.value ?? "");
   const [markerId, setMarkerId] = useState("");
   const [customName, setCustomName] = useState("");
@@ -288,7 +290,10 @@ export function FactCard({ fact, trackedMarkers, onChanged, badge, check }: Prop
               className={signOffBlockedReason === null ? "btn btn--primary" : "btn"}
               type="button"
               disabled={busy !== null || signOffBlockedReason !== null}
-              onClick={() => void run("signoff", () => api.signOffFact(fact.id))}
+              onClick={() => void run("signoff", async () => {
+                await api.signOffFact(fact.id);
+                onSignedOff?.(fact.id);
+              })}
             >
               {busy === "signoff" ? "Signing off..." : "Sign off"}
             </button>

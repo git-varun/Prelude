@@ -1,6 +1,6 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { sql } from "../db/client";
-import { signOffFactsBatch, undoSignOffFactsBatch, reopenFact } from "./facts";
+import { signOffFact, signOffFactsBatch, undoSignOffFactsBatch, reopenFact } from "./facts";
 import { getPatientPlan } from "./plan";
 import { createTestUser, deleteTestUsers, createTestPatient, deleteTestPatients, asAuthedUser, type TestUser } from "../test-helpers";
 
@@ -95,6 +95,14 @@ test("each ineligibility rejects the whole batch with a per-fact reason and sign
   // Several failures are all listed.
   const res = await signBatch([good, cases.unchecked, cases.undated]);
   expect(((await res.json()) as any).failures.map((f: any) => f.reason).sort()).toEqual(["unchecked", "undated"]);
+});
+
+test("single sign-off of a fact in a held document is refused with 409 and signs nothing", async () => {
+  const id = await newFact({ doc: await newDoc(patientId, visitId, "mismatch") });
+  const res = await signOffFact(Object.assign(new Request("http://localhost/s", { method: "POST" }), { params: { id } }), asAuthedUser(onc));
+  expect(res.status).toBe(409);
+  expect(await state(id)).toBe("unverified");
+  expect(await auditCount([id], "sign_off")).toBe(0);
 });
 
 test("validation: empty and oversized lists 400, bad ids 400, mixed patients 400 and nothing is signed", async () => {

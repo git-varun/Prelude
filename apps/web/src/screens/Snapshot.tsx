@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RoleGate } from "../auth/AuthContext";
-import { api, ApiError, type PatientSnapshot, type ReviewFact, type SnapshotField } from "../api/client";
+import { api, ApiError, type BatchFailure, type PatientSnapshot, type ReviewFact, type SnapshotField } from "../api/client";
 import { FactCard } from "../components/FactCard";
 import { MarkerDisclaimerFooter } from "../components/MarkerDisclaimerFooter";
 import { SummaryStrip } from "../components/SummaryStrip";
@@ -151,6 +151,7 @@ function batchState(f: SnapshotField): BatchState {
   if (f.conflicts.some((c) => c.status === "open" || c.status === "annotated")) return { kind: "blocked", reason: "Resolve the conflict first" };
   if (f.as_of_date === null) return { kind: "blocked", reason: "Add a date first" };
   if (f.field_type === "marker_value" && !f.tracked_marker_id) return { kind: "blocked", reason: "Map the marker first" };
+  if (f.check_state === "incorrect") return { kind: "blocked", reason: "Marked incorrect — correct it first" };
   if (f.check_state !== "correct") return { kind: "blocked", reason: "Needs staff check first" };
   return { kind: "eligible" };
 }
@@ -158,6 +159,7 @@ function batchState(f: SnapshotField): BatchState {
 interface Batch {
   selected: Set<string>;
   toggle: (factId: string) => void;
+  onSignedOff: (factId: string) => void;
 }
 
 function FieldEntry({
@@ -208,6 +210,7 @@ function FieldEntry({
         fact={toReviewFact(field, patientId, visitId)}
         trackedMarkers={[]}
         onChanged={onChanged}
+        onSignedOff={batch.onSignedOff}
         badge={field.imaging_modality && <span className="tag">{field.imaging_modality.replace(/_/g, " ")}</span>}
       />
       {showTrend && field.tracked_marker_id && (
@@ -267,6 +270,8 @@ export function Snapshot({ patientId }: { patientId: string }) {
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchError, setBatchError] = useState<string | null>(null);
+  const [batchFailures, setBatchFailures] = useState<BatchFailure[]>([]);
+  // Each sign-off makes a new toast object (the timer effect re-arms on it); its Undo covers only these ids.
   const [toast, setToast] = useState<{ ids: string[] } | null>(null);
 
   const latestLoad = useRef(0);
@@ -277,6 +282,10 @@ export function Snapshot({ patientId }: { patientId: string }) {
   useEffect(() => {
     let current = true;
     setHeldCount(0);
+    setSelected(new Set());
+    setToast(null);
+    setBatchError(null);
+    setBatchFailures([]);
     api
       .getPatientIdentityDocuments(patientId)
       .then((r) => {
@@ -343,17 +352,24 @@ export function Snapshot({ patientId }: { patientId: string }) {
         else next.add(id);
         return next;
       }),
+    onSignedOff: (id) => setToast({ ids: [id] }),
+  };
+  const labelFor = (factId: string) => {
+    const f = visitFields.find((v) => v.fact_id === factId);
+    return f ? (f.marker_name ?? FIELD_LABELS[f.field_type] ?? f.field_type) : "Unknown fact";
   };
 
   async function signOffSelected() {
     setBatchBusy(true);
     setBatchError(null);
+    setBatchFailures([]);
     try {
       await api.signOffBatch(picked);
       setSelected(new Set());
       setToast({ ids: picked });
     } catch (err) {
       setBatchError(err instanceof ApiError ? err.message : "Sign-off failed.");
+      if (err instanceof ApiError) setBatchFailures(err.failures);
     } finally {
       setBatchBusy(false);
       void load();
@@ -454,6 +470,13 @@ export function Snapshot({ patientId }: { patientId: string }) {
             </span>
           </div>
           {batchError && <div className="error-banner">{batchError}</div>}
+          {batchFailures.length > 0 && (
+            <ul data-testid="batch-failures">
+              {batchFailures.map((f) => (
+                <li key={f.fact_id}>{labelFor(f.fact_id)}: {f.message}</li>
+              ))}
+            </ul>
+          )}
         </section>
       </RoleGate>
 

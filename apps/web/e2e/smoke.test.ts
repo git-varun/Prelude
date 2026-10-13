@@ -2037,6 +2037,75 @@ test("Snapshot batch sign-off: checkbox only on eligible facts, no select-all, s
   await page.close();
 }, 30_000);
 
+test("Snapshot batch sign-off: a 409 lists each refused fact with the server's reason", async () => {
+  const body = snapshotBody({
+    tumor_markers: [
+      snapshotField({ fact_id: "f1", marker_name: "CEA" }),
+      snapshotField({ fact_id: "f2", marker_name: "PSA", tracked_marker_id: "m2" }),
+    ],
+  });
+  const { page, errors } = await openSnapshot("oncologist", body);
+  const cors = { "Access-Control-Allow-Origin": BASE, "Access-Control-Allow-Credentials": "true" };
+  await page.route(`${API}/facts/sign-off-batch`, (route) => {
+    if (route.request().method() !== "POST") return route.fallback();
+    return route.fulfill({
+      status: 409, contentType: "application/json", headers: cors,
+      body: JSON.stringify({
+        error: "conflict", message: "Some facts cannot be processed; nothing was changed.",
+        failures: [{ fact_id: "f2", reason: "held", message: "This document is held for a patient identity mismatch." }],
+      }),
+    });
+  });
+  await page.getByRole("checkbox", { name: "Select CEA for sign-off" }).check();
+  await page.getByRole("checkbox", { name: "Select PSA for sign-off" }).check();
+  await page.getByRole("button", { name: "Sign off 2 reviewed" }).click();
+  const list = page.getByTestId("batch-failures");
+  await list.getByText("PSA: This document is held for a patient identity mismatch.").waitFor();
+  expect(await list.locator("li").count()).toBe(1);
+  expect(errors.filter((e) => !e.includes("409"))).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Snapshot: a single-fact Sign off shows the 'Signed off 1 fact' toast and its Undo posts that one id", async () => {
+  const body = snapshotBody({ tumor_markers: [snapshotField({ fact_id: "f1", marker_name: "CEA" })] });
+  const { page, errors } = await openSnapshot("oncologist", body, {}, (path, method) => {
+    if (method === "POST" && path === "/facts/f1/sign-off") return snapshotField({ fact_id: "f1" });
+    if (method === "POST" && path === "/facts/sign-off-batch/undo") return { count: 1 };
+    return undefined;
+  });
+  const posts: string[] = [];
+  page.on("request", (r) => { if (r.method() === "POST") posts.push(`${new URL(r.url()).pathname} ${r.postData()}`); });
+  await page.locator(".card", { has: page.getByRole("heading", { name: "CEA" }) }).getByRole("button", { name: "Sign off", exact: true }).click();
+  await page.getByText("Signed off 1 fact").waitFor();
+  await page.getByRole("button", { name: "Undo" }).click();
+  await page.getByText("Signed off 1 fact").waitFor({ state: "detached" });
+  expect(posts).toContain(`/facts/sign-off-batch/undo ${JSON.stringify({ fact_ids: ["f1"] })}`);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Snapshot: switching patient clears the sign-off toast", async () => {
+  const body = snapshotBody({ tumor_markers: [snapshotField({ fact_id: "f1", marker_name: "CEA" })] });
+  const { page, errors } = await openSnapshot("oncologist", body, {}, (path, method) =>
+    method === "POST" && path === "/facts/f1/sign-off" ? snapshotField({ fact_id: "f1" }) : undefined);
+  const cors = { "Access-Control-Allow-Origin": BASE, "Access-Control-Allow-Credentials": "true" };
+  await page.route(`${API}/patients/p2/**`, (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const json = (b: unknown) => route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify(b) });
+    if (path === "/patients/p2/snapshot") return json({ ...snapshotBody(), patient: { id: "p2", name: "Other Patient", cancer_type: "Breast" } });
+    if (path === "/patients/p2/summary") return json(EMPTY_SUMMARY);
+    if (path === "/patients/p2/documents/identity") return json({ patient_name: "Other Patient", documents: [] });
+    return route.fallback();
+  });
+  await page.locator(".card", { has: page.getByRole("heading", { name: "CEA" }) }).getByRole("button", { name: "Sign off", exact: true }).click();
+  await page.getByText("Signed off 1 fact").waitFor();
+  await page.evaluate(() => { location.hash = "#/patients/p2/snapshot"; });
+  await page.getByRole("heading", { name: "Other Patient" }).waitFor();
+  expect(await page.getByText("Signed off 1 fact").count()).toBe(0);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
 test("Snapshot batch sign-off: selected row is tinted, keeps value and source, and staff see no controls", async () => {
   const body = snapshotBody({ tumor_markers: [snapshotField({ fact_id: "f1", marker_name: "CEA" })] });
   const onc = await openSnapshot("oncologist", body);

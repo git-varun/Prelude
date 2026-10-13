@@ -39,7 +39,9 @@ export async function signOffOne(
   `;
   if (conflict) return "conflict";
   if (before.excluded_at !== null) return "excluded";
-  const [doc] = await tx`SELECT identity_status FROM documents WHERE id = ${before.document_id}`;
+  // Lock order fact -> document (as checkFact). FOR SHARE blocks a concurrent hold (FOR UPDATE) until we commit,
+  // without making concurrent sign-offs of the same document wait on each other.
+  const [doc] = await tx`SELECT identity_status FROM documents WHERE id = ${before.document_id} FOR SHARE`;
   if (doc && (doc.identity_status === "mismatch" || doc.identity_status === "rejected")) return "held";
   if (before.check_state === "unchecked") return "unchecked";
   if (opts.requireCorrect && before.check_state !== "correct") return "not_correct";

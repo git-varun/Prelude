@@ -32,13 +32,18 @@ function getApiBaseUrl(): Promise<string> {
   return apiBaseUrl;
 }
 
+/** One fact a batch call refused, from a 409 body. */
+export interface BatchFailure { fact_id: string; reason: string; message: string }
+
 export class ApiError extends Error {
   status: number;
   code: string;
-  constructor(status: number, code: string, message: string) {
+  failures: BatchFailure[];
+  constructor(status: number, code: string, message: string, failures: BatchFailure[] = []) {
     super(message);
     this.status = status;
     this.code = code;
+    this.failures = failures;
   }
 }
 
@@ -58,7 +63,7 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 
   const body = await res.json().catch(() => null);
   if (!res.ok) {
-    throw new ApiError(res.status, body?.error ?? "unknown_error", body?.message ?? res.statusText);
+    throw new ApiError(res.status, body?.error ?? "unknown_error", body?.message ?? res.statusText, Array.isArray(body?.failures) ? body.failures : []);
   }
   return body as T;
 }
