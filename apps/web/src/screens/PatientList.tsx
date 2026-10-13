@@ -103,6 +103,17 @@ export function PatientList() {
                 onClick={(e) => {
                   e.stopPropagation();
                   e.preventDefault();
+                  navigate(`/patients/${p.id}/plan`);
+                }}
+              >
+                Plan
+              </button>
+              <button
+                className="btn btn--ghost"
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  e.preventDefault();
                   navigate(`/patients/${p.id}/markers`);
                 }}
               >

@@ -3,6 +3,7 @@ import { jsonError } from "../middleware/auth";
 import type { AuthedUser } from "../middleware/auth";
 import { detectConflicts } from "../services/rules";
 import { provenanceFor } from "../services/provenance";
+import { createPlanItemFromFact } from "../services/carePlan";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (s: unknown): s is string => typeof s === "string" && UUID.test(s);
@@ -225,6 +226,7 @@ export async function signOffFact(req: Request & { params: { id: string } }, use
       INSERT INTO audit_log (actor_id, action, entity_type, entity_id, before_value, after_value)
       VALUES (${user.id}, 'sign_off', 'fact', ${factId}, ${JSON.stringify(before)}::jsonb, ${JSON.stringify(updated)}::jsonb)
     `;
+    await createPlanItemFromFact(tx, factId, user.id);
     return "ok" as const;
   });
 

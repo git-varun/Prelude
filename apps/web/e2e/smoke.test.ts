@@ -1653,3 +1653,77 @@ test("Snapshot: summary strip shows data and 'Full summary' opens the Summary ro
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);
+
+test("plan screen: next review + source, four status wordings, confirm match, add item, load error with Retry", async () => {
+  const page = await browser.newPage();
+  const errors: string[] = [];
+  page.on("pageerror", (err) => errors.push(`pageerror: ${err.message}`));
+  page.on("console", (msg) => {
+    if (msg.type() !== "error") return;
+    // Only the deliberately failed first plan request (500) is expected.
+    if (msg.location().url === `${API}/patients/p1/plan` && msg.text().includes("status of 500")) return;
+    errors.push(`console: ${msg.text()}`);
+  });
+  const cors = { "Access-Control-Allow-Origin": BASE, "Access-Control-Allow-Credentials": "true" };
+  const base = {
+    approx_date: null, past_advised: false, matched_document: null, suggested_document: null,
+    source_fact_id: null, source_document_id: null,
+  };
+  const review = { ...base, id: "i1", type: "review", text: "after 2 weeks", advised_at: "2030-10-13", approx_date: "2030-10-27", status: "planned", source_fact_id: "f1", source_document_id: "d1" };
+  const suggested = { ...base, id: "i2", type: "test", text: "CT chest", advised_at: "2030-09-01", status: "report_suggested", suggested_document: { id: "d2", label: "CT · 2030-09-20" } };
+  const past = { ...base, id: "i3", type: "procedure", text: "Port insertion", advised_at: "2020-01-01", status: "past_advised", past_advised: true };
+  let confirmed = false;
+  let added: unknown = null;
+  let planCalls = 0;
+  const plan = () => {
+    const i2 = confirmed
+      ? { ...suggested, status: "report_seen", suggested_document: null, matched_document: suggested.suggested_document }
+      : suggested;
+    return { next_review: review, items: [review, i2, past] };
+  };
+  await page.route(`${API}/**`, (route) => {
+    const req = route.request();
+    const path = new URL(req.url()).pathname;
+    const json = (body: unknown, status = 200) =>
+      route.fulfill({ status, contentType: "application/json", headers: cors, body: JSON.stringify(body) });
+    if (req.method() === "OPTIONS") {
+      return route.fulfill({ status: 204, headers: { ...cors, "Access-Control-Allow-Headers": "content-type", "Access-Control-Allow-Methods": "GET,POST,OPTIONS" } });
+    }
+    if (path === "/auth/me") return json({ id: "u1", name: "Test Staff", email: "s@opd.local", role: "staff" });
+    if (path === "/patients/p1/plan" && req.method() === "GET") {
+      if (++planCalls === 1) return json({ error: "server", message: "Boom" }, 500);
+      return json(plan());
+    }
+    if (path === "/patients/p1/plan" && req.method() === "POST") {
+      added = req.postDataJSON();
+      return json({ id: "i4" }, 201);
+    }
+    if (path === "/plan-items/i2/match" && req.method() === "POST") {
+      expect(req.postDataJSON()).toEqual({ document_id: "d2" });
+      confirmed = true;
+      return json({ id: "i2", matched_document_id: "d2" });
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", headers: cors, body: "{}" });
+  });
+  await page.goto(`${BASE}/#/patients/p1/plan`);
+  await page.getByRole("button", { name: "Retry" }).click();
+  await page.getByRole("heading", { name: "Next review 27 Oct 2030" }).waitFor();
+  expect(await page.locator('a[href="#/documents/d1/source?fact=f1"]').count()).toBeGreaterThan(0);
+  await page.getByText("after 2 weeks (≈27 Oct)").waitFor();
+  await page.getByText("Planned · ≈27 Oct").waitFor();
+  await page.getByText("Report seen · CT · 2030-09-20 · confirm match").waitFor();
+  await page.getByText("Past advised date · no report seen").waitFor();
+
+  await page.getByRole("button", { name: "Confirm match" }).click();
+  await page.getByText("Report seen · CT · 2030-09-20", { exact: true }).waitFor();
+  expect(await page.getByRole("button", { name: "Confirm match" }).count()).toBe(0);
+
+  await page.getByRole("button", { name: "+ Add plan item" }).click();
+  await page.getByLabel("As written").fill("MRI brain in 3 months");
+  await page.getByLabel("Advised on").fill("2030-10-13");
+  await page.getByRole("button", { name: "Add", exact: true }).click();
+  await page.getByRole("button", { name: "+ Add plan item" }).waitFor();
+  expect(added).toEqual({ type: "test", text: "MRI brain in 3 months", advised_at: "2030-10-13" });
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);

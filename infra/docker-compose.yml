@@ -25,6 +25,7 @@ services:
       - ../apps/api/src/db/migrations/008_imaging_modality.sql:/docker-entrypoint-initdb.d/09-imaging-modality.sql:ro
       - ../apps/api/src/db/migrations/009_document_identity_and_parse_metadata.sql:/docker-entrypoint-initdb.d/10-document-identity-and-parse-metadata.sql:ro
       - ../apps/api/src/db/migrations/011_m3_extraction_tier1.sql:/docker-entrypoint-initdb.d/11-m3-extraction-tier1.sql:ro
+      - ../apps/api/src/db/migrations/012_care_plan_items.sql:/docker-entrypoint-initdb.d/12-care-plan-items.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U prelude -d prelude_dev"]
       interval: 2s

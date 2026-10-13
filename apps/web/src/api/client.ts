@@ -344,6 +344,28 @@ export interface PatientSummary {
   prescriptions: SummaryPrescription[];
 }
 
+export type PlanItemType = "test" | "procedure" | "review";
+export type PlanStatus = "planned" | "report_suggested" | "report_seen" | "past_advised";
+
+export interface PlanItem {
+  id: string;
+  type: PlanItemType;
+  text: string;
+  advised_at: string;
+  approx_date: string | null;
+  status: PlanStatus;
+  past_advised: boolean;
+  matched_document: { id: string; label: string } | null;
+  suggested_document: { id: string; label: string } | null;
+  source_fact_id: string | null;
+  source_document_id: string | null;
+}
+
+export interface PatientPlan {
+  next_review: PlanItem | null;
+  items: PlanItem[];
+}
+
 export interface TimelineResponse {
   patient: { id: string; name: string | null; cancer_type: string | null };
   markers: TimelineMarkerSeries[];
@@ -407,6 +429,14 @@ export const api = {
     request<MarkerTrend>(`/patients/${patientId}/markers/${trackedMarkerId}/trend`),
 
   getPatientSummary: (patientId: string) => request<PatientSummary>(`/patients/${patientId}/summary`),
+
+  getPatientPlan: (patientId: string) => request<PatientPlan>(`/patients/${patientId}/plan`),
+
+  addPlanItem: (patientId: string, input: { type: PlanItemType; text: string; advised_at: string }) =>
+    request<{ id: string }>(`/patients/${patientId}/plan`, { method: "POST", body: JSON.stringify(input) }),
+
+  setPlanItemMatch: (itemId: string, documentId: string | null) =>
+    request<{ id: string }>(`/plan-items/${itemId}/match`, { method: "POST", body: JSON.stringify({ document_id: documentId }) }),
 
   getTimeline: (patientId: string) => request<TimelineResponse>(`/patients/${patientId}/timeline`),
 

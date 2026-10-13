@@ -5,6 +5,7 @@ import { createOrOpenVisit, listVisits } from "./routes/visits";
 import { uploadDocument, getDocument, getDocumentFile, setDocumentIdentityStatus } from "./routes/documents";
 import { getDocumentFacts, patchFact, signOffFact, reopenFact } from "./routes/facts";
 import { getConflict, annotateConflict, resolveConflict } from "./routes/conflicts";
+import { getPatientPlan, addPlanItem, setPlanItemMatch } from "./routes/plan";
 import { requireRole } from "./middleware/roles";
 import { cors } from "./middleware/cors";
 
@@ -37,6 +38,13 @@ const server = Bun.serve({
     }),
     "/patients/:id/markers/:trackedMarkerId/trend": cors({
       GET: requireRole(["staff", "oncologist"], getMarkerTrend),
+    }),
+    "/patients/:id/plan": cors({
+      GET: requireRole(["staff", "oncologist"], getPatientPlan),
+      POST: requireRole(["staff", "oncologist"], addPlanItem),
+    }),
+    "/plan-items/:id/match": cors({
+      POST: requireRole(["staff", "oncologist"], setPlanItemMatch),
     }),
     "/patients/:id/summary": cors({
       GET: requireRole(["staff", "oncologist"], getPatientSummary),

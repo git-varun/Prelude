@@ -587,3 +587,33 @@ select {
 .summary-strip__cells h6 {
   margin: 0 0 var(--space-1);
 }
+
+/* Plan (M3-03): item rows with a neutral text status tag -- no red/green or alarm styling. */
+.plan-row {
+  display: grid;
+  grid-template-columns: 96px minmax(0, 1fr) auto;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+
+.plan-row + .plan-row {
+  border-top: 1px solid var(--color-border);
+}
+
+.plan-row__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.plan-row__actions .btn,
+.plan-row__actions .source-link {
+  white-space: nowrap;
+}
+
+.plan-form {
+  max-width: 480px;
+}
