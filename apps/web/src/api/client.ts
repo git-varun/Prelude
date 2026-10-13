@@ -317,6 +317,33 @@ export interface TimelineEvent {
   fallback_level: "exact" | "page" | "document";
 }
 
+export interface SummaryItem {
+  fact_id: string;
+  document_id: string;
+  text: string;
+  as_of_date: string | null;
+  facility: string | null;
+  verification_state: string;
+  provenance: Provenance;
+}
+
+export interface SummaryPrescription {
+  document_id: string;
+  date: string | null;
+  regimen: SummaryItem | null;
+  tests_advised: SummaryItem[];
+  next_review: SummaryItem | null;
+}
+
+export interface PatientSummary {
+  patient: { id: string; name: string | null };
+  documents_count: number;
+  what_happened: SummaryItem[];
+  disease_history: { diagnosis: SummaryItem[]; histology_ihc: SummaryItem[]; stage: SummaryItem[] };
+  procedures: SummaryItem[];
+  prescriptions: SummaryPrescription[];
+}
+
 export interface TimelineResponse {
   patient: { id: string; name: string | null; cancer_type: string | null };
   markers: TimelineMarkerSeries[];
@@ -378,6 +405,8 @@ export const api = {
 
   getMarkerTrend: (patientId: string, trackedMarkerId: string) =>
     request<MarkerTrend>(`/patients/${patientId}/markers/${trackedMarkerId}/trend`),
+
+  getPatientSummary: (patientId: string) => request<PatientSummary>(`/patients/${patientId}/summary`),
 
   getTimeline: (patientId: string) => request<TimelineResponse>(`/patients/${patientId}/timeline`),
 

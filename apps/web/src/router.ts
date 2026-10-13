@@ -33,6 +33,11 @@ export function matchPatientSnapshot(path: string): string | null {
   return m ? m[1]! : null;
 }
 
+export function matchPatientSummary(path: string): string | null {
+  const m = path.match(/^\/patients\/([^/]+)\/summary$/);
+  return m ? m[1]! : null;
+}
+
 export function matchPatientMarkers(path: string): string | null {
   const m = path.match(/^\/patients\/([^/]+)\/markers$/);
   return m ? m[1]! : null;

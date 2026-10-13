@@ -428,6 +428,12 @@ test("per-fact undated fact: sign-off is disabled with a reason until its date i
   await page.close();
 }, 30_000);
 
+// The Snapshot's summary strip fetches /summary; stub it so scenarios don't log a 404.
+const EMPTY_SUMMARY = {
+  patient: { id: "p1", name: "Test" }, documents_count: 0, what_happened: [],
+  disease_history: { diagnosis: [], histology_ihc: [], stage: [] }, procedures: [], prescriptions: [],
+};
+
 // Patient Snapshot screen. One fixture builder shared across tests, overridden per test
 // so each stays focused on the one thing it's checking.
 function provenance(overrides: Record<string, unknown> = {}) {
@@ -479,6 +485,7 @@ async function openSnapshot(
     const json = (b: unknown) => route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify(b) });
     if (path === "/auth/me") return json({ id: "u1", name: "Test", email: "t@opd.local", role });
     if (path === "/patients/p1/snapshot") return json(body);
+    if (path === "/patients/p1/summary") return json(EMPTY_SUMMARY);
     const trendMatch = path.match(/^\/patients\/p1\/markers\/([^/]+)\/trend$/);
     if (trendMatch) return json(trends[trendMatch[1]!] ?? { marker_name: "", points: [] });
     if (extraRoute) {
@@ -812,6 +819,7 @@ async function openConflictScenario(
     if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
     if (path === "/auth/me") return json({ id: role === "oncologist" ? "onc1" : "staff1", name: "Test", email: "t@opd.local", role });
     if (path === "/patients/p1/snapshot") return json(snapshotBody({ current_treatment: currentTreatment() }));
+    if (path === "/patients/p1/summary") return json(EMPTY_SUMMARY);
     if (path === "/conflicts/c1" && req.method() === "GET") return json({ conflict: conflictRecord(), fact_a: factA(), fact_b: factB() });
     if (path === "/conflicts/c1/annotate" && req.method() === "POST") {
       const body = req.postDataJSON() as { annotation_note: string };
@@ -1403,6 +1411,7 @@ async function openHeldScenario(startAt: string, opts: { conflictOnConfirm?: boo
         })),
       });
     }
+    if (path === "/patients/p1/summary") return json(EMPTY_SUMMARY);
     if (path === "/patients/p1/snapshot") {
       // Facts of a confirmed document are live; held and rejected ones are excluded.
       const live = docs.filter((d) => d.status === "confirmed");
@@ -1569,6 +1578,49 @@ test("Held screen: a non-409 failure shows an inline error and the row stays", a
   await page.getByText("Could not save right now.").waitFor();
   expect(await page.getByTestId("held-row").count()).toBe(2);
   expect(await page.getByTestId("held-row").first().getByRole("button", { name: "Confirm" }).isEnabled()).toBe(true);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("summary screen: quoted facts with Source links, placeholders, and load error with Retry", async () => {
+  const page = await browser.newPage();
+  const errors: string[] = [];
+  page.on("pageerror", (err) => errors.push(`pageerror: ${err.message}`));
+  page.on("console", (msg) => {
+    // The deliberately failed first summary request is logged by the browser as a resource error.
+    if (msg.type() === "error" && !msg.text().includes("500")) errors.push(`console: ${msg.text()}`);
+  });
+  const cors = { "Access-Control-Allow-Origin": BASE, "Access-Control-Allow-Credentials": "true" };
+  const item = {
+    fact_id: "f1", document_id: "d1", text: "Lt MRM + ALND", as_of_date: "2026-01-10", facility: "Apollo",
+    verification_state: "staff_corrected",
+    provenance: { document_id: "d1", source_page: 1, source_location: null, source_snippet: "x", fallback_level: "exact" },
+  };
+  let summaryCalls = 0;
+  await page.route(`${API}/**`, (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const json = (body: unknown, status = 200) =>
+      route.fulfill({ status, contentType: "application/json", headers: cors, body: JSON.stringify(body) });
+    if (path === "/auth/me") return json({ id: "u1", name: "Test Staff", email: "s@opd.local", role: "staff" });
+    if (path === "/patients/p1/summary") {
+      if (++summaryCalls === 1) return json({ error: { code: "server", message: "Boom" } }, 500);
+      return json({
+        patient: { id: "p1", name: "Asha Rao" }, documents_count: 2,
+        what_happened: [item],
+        disease_history: { diagnosis: [], histology_ihc: [], stage: [] },
+        procedures: [item], prescriptions: [],
+      });
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", headers: cors, body: "{}" });
+  });
+  await page.goto(`${BASE}/#/patients/p1/summary`);
+  await page.getByRole("button", { name: "Retry" }).click();
+  await page.getByText("Patient summary · compiled from 2 documents").waitFor();
+  await page.getByText("Each line is a fact from a document, quoted as written.").waitFor();
+  expect(await page.getByText("Not extracted yet").count()).toBeGreaterThanOrEqual(7);
+  expect(await page.getByText("Not found in documents").count()).toBeGreaterThan(0);
+  expect(await page.getByText("staff corrected").count()).toBeGreaterThan(0);
+  expect(await page.locator('a[href="#/documents/d1/source?fact=f1"]').count()).toBe(2);
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);

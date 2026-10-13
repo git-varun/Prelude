@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type PatientSnapshot, type ReviewFact, type SnapshotField } from "../api/client";
 import { FactCard } from "../components/FactCard";
 import { MarkerDisclaimerFooter } from "../components/MarkerDisclaimerFooter";
+import { SummaryStrip } from "../components/SummaryStrip";
 import { MarkerTrendChart } from "../components/MarkerTrendChart";
 import { withThyroglobulinAdjacency } from "../lib/markerOrder";
 import { flagForRange } from "../lib/referenceRange";
@@ -288,6 +289,9 @@ export function Snapshot({ patientId }: { patientId: string }) {
             {patient.patient_origin === "referral" && (
               <span className="tag">Referral{patient.referring_physician ? ` · ${patient.referring_physician}` : ""}</span>
             )}
+            <button className="btn btn--ghost" type="button" onClick={() => navigate(`/patients/${patient.id}/summary`)}>
+              Summary
+            </button>
             <button className="btn btn--ghost" type="button" onClick={() => navigate(`/patients/${patient.id}/edit`)}>
               Edit info
             </button>
@@ -320,6 +324,8 @@ export function Snapshot({ patientId }: { patientId: string }) {
           </a>
         </div>
       )}
+
+      <SummaryStrip patientId={patient.id} />
 
       {data.previous_visit.id !== null && (
         <section aria-labelledby="section-since-last-visit" style={{ marginBottom: 32 }}>

@@ -773,3 +773,101 @@ export async function getPatientTimeline(req: Request & { params: { id: string }
     radiology: radiologyRows.map(timelineEventObject),
   });
 }
+
+interface SummaryRow {
+  fact_id: string;
+  document_id: string;
+  document_type: string;
+  field_type: string;
+  value: string;
+  as_of_date: string | null;
+  facility: string | null;
+  verification_state: string;
+  source_page: number | null;
+  source_location: string | null;
+  source_snippet: string | null;
+}
+
+function summaryItem(r: SummaryRow) {
+  return {
+    fact_id: r.fact_id,
+    document_id: r.document_id,
+    text: r.value,
+    as_of_date: r.as_of_date,
+    facility: r.facility,
+    verification_state: r.verification_state,
+    provenance: provenanceFor(r.document_id, r.source_page, r.source_location, r.source_snippet),
+  };
+}
+
+type SummaryItem = ReturnType<typeof summaryItem>;
+
+const WHAT_HAPPENED_TYPES = [
+  "diagnosis", "histology_ihc", "stage", "surgery_procedure", "treatment_regimen", "radiology_impression",
+];
+
+// Patient Summary (M3-02): every line is one live fact quoted verbatim (facts.value), grouped
+// only by field_type / document. Nothing is generated, merged or computed (AM-04/AM-06): no
+// line of therapy, response or cycle count. Null-valued facts are skipped; held/rejected-
+// identity and lost-conflict facts never appear (LIVE_FACT_FILTER).
+export async function getPatientSummary(req: Request & { params: { id: string } }): Promise<Response> {
+  const patientId = req.params.id;
+  if (!isUuid(patientId)) return jsonError(404, "not_found", "Patient not found.");
+
+  const [patient] = await sql`SELECT id, name FROM patients WHERE id = ${patientId}`;
+  if (!patient) return jsonError(404, "not_found", "Patient not found.");
+
+  const [{ n }] = await sql`
+    SELECT count(*)::int AS n FROM documents
+    WHERE patient_id = ${patientId} AND (identity_status IS NULL OR identity_status NOT IN ('mismatch', 'rejected'))
+  `;
+
+  const rows: SummaryRow[] = await sql`
+    SELECT f.id AS fact_id, f.document_id, d.document_type, f.field_type, f.value,
+           to_char(f.as_of_date, 'YYYY-MM-DD') AS as_of_date, f.facility, f.verification_state,
+           f.source_page, f.source_location, f.source_snippet
+    FROM facts f
+    JOIN documents d ON d.id = f.document_id
+    WHERE f.patient_id = ${patientId} AND f.value IS NOT NULL
+      AND f.field_type IN ('diagnosis', 'histology_ihc', 'stage', 'surgery_procedure', 'treatment_regimen',
+                           'radiology_impression', 'tests_advised', 'next_review_date')
+      AND ${LIVE_FACT_FILTER}
+    ORDER BY f.as_of_date ASC NULLS LAST, f.id ASC
+  `;
+
+  const ofType = (t: string) => rows.filter((r) => r.field_type === t).map(summaryItem);
+
+  const byDocument = new Map<string, SummaryRow[]>();
+  for (const r of rows) {
+    if (r.document_type !== "prescription") continue;
+    const list = byDocument.get(r.document_id) ?? [];
+    list.push(r);
+    byDocument.set(r.document_id, list);
+  }
+  const prescriptions = [...byDocument.entries()]
+    .map(([document_id, facts]) => {
+      const dates = facts.map((f) => f.as_of_date).filter((d): d is string => d !== null);
+      const pick = (t: string): SummaryItem[] => facts.filter((f) => f.field_type === t).map(summaryItem);
+      return {
+        document_id,
+        date: dates.length > 0 ? dates.reduce((a, b) => (a > b ? a : b)) : null,
+        regimen: pick("treatment_regimen")[0] ?? null,
+        tests_advised: pick("tests_advised"),
+        next_review: pick("next_review_date")[0] ?? null,
+      };
+    })
+    .sort((a, b) => (a.date === b.date ? 0 : a.date === null ? 1 : b.date === null ? -1 : a.date < b.date ? 1 : -1));
+
+  return Response.json({
+    patient: { id: patient.id, name: patient.name },
+    documents_count: n,
+    what_happened: rows.filter((r) => r.as_of_date !== null && WHAT_HAPPENED_TYPES.includes(r.field_type)).map(summaryItem),
+    disease_history: {
+      diagnosis: ofType("diagnosis"),
+      histology_ihc: ofType("histology_ihc"),
+      stage: ofType("stage"),
+    },
+    procedures: ofType("surgery_procedure"),
+    prescriptions,
+  });
+}

@@ -486,3 +486,104 @@ select {
 .muted {
   color: var(--color-text-muted);
 }
+
+/* Patient Summary (M3-02): quoted facts with a trust-state text line and a Source link.
+   Neutral tones only -- no red/green status colouring. */
+.summary-section {
+  margin-bottom: var(--space-6);
+}
+
+.summary-section > h2 {
+  border-bottom: 2px solid var(--color-border);
+  padding-bottom: var(--space-2);
+}
+
+.summary-columns {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(380px, 1fr));
+  column-gap: var(--space-5);
+}
+
+.summary-row {
+  display: grid;
+  align-items: baseline;
+  gap: var(--space-3);
+  padding: var(--space-3) var(--space-4);
+}
+
+.summary-row + .summary-row {
+  border-top: 1px solid var(--color-border);
+}
+
+.summary-row--dated {
+  grid-template-columns: 110px minmax(0, 1fr) auto;
+}
+
+.summary-row--keyed {
+  grid-template-columns: 120px minmax(0, 1fr) auto;
+}
+
+.summary-row--procedure {
+  grid-template-columns: 110px minmax(0, 1fr) minmax(0, 200px) auto;
+}
+
+.summary-row__key {
+  font-weight: 600;
+}
+
+.summary-row__source {
+  display: block;
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.summary-row .source-link,
+.summary-prescription .source-link {
+  padding: 2px 8px;
+  white-space: nowrap;
+  text-decoration: none;
+}
+
+.summary-prescription {
+  padding: var(--space-3) var(--space-4);
+}
+
+.summary-prescription + .summary-prescription {
+  border-top: 1px solid var(--color-border);
+}
+
+.summary-prescription__head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: var(--space-2);
+}
+
+.summary-prescription__grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-4);
+}
+
+.summary-prescription__grid h6 {
+  margin: 0 0 var(--space-1);
+}
+
+.summary-footnote {
+  font-size: 12px;
+  margin-top: var(--space-2);
+}
+
+.summary-strip {
+  margin-bottom: var(--space-5);
+}
+
+.summary-strip__cells {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: var(--space-4);
+}
+
+.summary-strip__cells h6 {
+  margin: 0 0 var(--space-1);
+}
