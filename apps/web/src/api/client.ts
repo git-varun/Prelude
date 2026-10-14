@@ -285,11 +285,23 @@ export interface SnapshotField {
   imaging_modality: ImagingModality | null;
 }
 
+export interface WatchlistPoint {
+  fact_id: string;
+  document_id: string | null;
+  value: string;
+  unit: string | null;
+  as_of_date: string;
+  verification_state: string;
+}
+
 export interface WatchlistEntry {
   tracked_marker_id: string;
   marker_name: string;
   pinned_by_name: string | null;
   missing: boolean;
+  conflict: boolean;
+  conflict_id: string | null;
+  unit_changed: boolean;
   latest: {
     fact_id: string;
     document_id: string | null;
@@ -298,10 +310,11 @@ export interface WatchlistEntry {
     reference_range: string | null;
     as_of_date: string | null;
     delta_status: DeltaStatus | null;
+    verification_state: string | null;
     was: { value: string | null; unit: string | null } | null;
   } | null;
-  sparkline: { fact_id: string; value: string; unit: string | null; as_of_date: string }[];
-  last_seen: { fact_id: string; value: string; unit: string | null; as_of_date: string } | null;
+  sparkline: WatchlistPoint[];
+  last_seen: WatchlistPoint | null;
 }
 
 export interface SuggestedPin {

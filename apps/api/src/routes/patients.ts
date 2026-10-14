@@ -566,11 +566,12 @@ async function loadPins(
     ORDER BY tm.is_pinned DESC, tm.pinned_at ASC NULLS LAST, tm.marker_name ASC, tm.id
   `;
   const pinned = rows.filter((r: any) => r.is_pinned);
-  const history = new Map<string, { fact_id: string; value: string; unit: string | null; as_of_date: string }[]>();
+  type PinPoint = { fact_id: string; document_id: string | null; value: string; unit: string | null; as_of_date: string; verification_state: string };
+  const history = new Map<string, PinPoint[]>();
   if (pinned.length > 0) {
     const points = await sql`
       SELECT * FROM (
-        SELECT f.tracked_marker_id, f.id AS fact_id, f.value, f.unit, to_char(f.as_of_date, 'YYYY-MM-DD') AS as_of_date,
+        SELECT f.tracked_marker_id, f.id AS fact_id, f.document_id, f.verification_state, f.value, f.unit, to_char(f.as_of_date, 'YYYY-MM-DD') AS as_of_date,
                ROW_NUMBER() OVER (PARTITION BY f.tracked_marker_id ORDER BY f.as_of_date DESC, f.id DESC) AS rn
         FROM facts f
         WHERE f.patient_id = ${patientId} AND f.field_type = 'marker_value' AND f.value IS NOT NULL
@@ -580,28 +581,41 @@ async function loadPins(
     `;
     for (const pt of points) {
       const list = history.get(pt.tracked_marker_id) ?? [];
-      list.push({ fact_id: pt.fact_id, value: pt.value, unit: pt.unit, as_of_date: pt.as_of_date });
+      list.push({ fact_id: pt.fact_id, document_id: pt.document_id, value: pt.value, unit: pt.unit, as_of_date: pt.as_of_date, verification_state: pt.verification_state });
       history.set(pt.tracked_marker_id, list);
     }
   }
   const watchlist = pinned.map((r: any) => {
-    const current = tumorMarkers.find((m) => m.tracked_marker_id === r.id && m.fact_id !== null) ?? null;
+    const rowsForMarker = tumorMarkers.filter((m) => m.tracked_marker_id === r.id && m.fact_id !== null);
+    const current = rowsForMarker[0] ?? null;
     const baseline = baselines.get(deltaKey("marker_value", r.id));
-    const sparkline = history.get(r.id) ?? [];
-    const lastPoint = sparkline[sparkline.length - 1] ?? null;
+    // Open/annotated conflict, as the tumor-marker block detects it. Both sides are left out of the sparkline.
+    const blocking = rowsForMarker.flatMap((m) => m.conflicts.filter((c) => c.status === "open" || c.status === "annotated").map((c) => ({ fact: m.fact_id as string, c })));
+    const conflict = blocking.length > 0;
+    const conflictFacts = new Set(blocking.flatMap((b) => [b.fact, b.c.other_fact_id]));
+    const all = history.get(r.id) ?? [];
+    const lastSeenPoint = all[all.length - 1] ?? null;
+    // No unit conversion: only points in the latest value's unit are plotted.
+    const normUnit = (u: string | null) => (u ?? "").trim().toLowerCase();
+    const plotted = all.filter((p) => !conflictFacts.has(p.fact_id) && (!current || normUnit(p.unit) === normUnit(current.unit)));
+    const unitChanged = current !== null && all.some((p) => !conflictFacts.has(p.fact_id) && normUnit(p.unit) !== normUnit(current.unit));
     return {
       tracked_marker_id: r.id as string,
       marker_name: r.marker_name as string,
       pinned_by_name: (r.pinned_by_name as string | null) ?? null,
       missing: current === null,
+      conflict,
+      conflict_id: (blocking[0]?.c.conflict_id as string | undefined) ?? null,
+      unit_changed: unitChanged,
       latest: current && {
         fact_id: current.fact_id, document_id: current.provenance?.document_id ?? null,
         value: current.value, unit: current.unit, reference_range: current.reference_range,
         as_of_date: current.as_of_date, delta_status: current.delta_status,
+        verification_state: current.verification_state,
         was: baseline ? { value: baseline.value, unit: baseline.unit } : null,
       },
-      sparkline,
-      last_seen: lastPoint && { fact_id: lastPoint.fact_id, value: lastPoint.value, unit: lastPoint.unit, as_of_date: lastPoint.as_of_date },
+      sparkline: plotted,
+      last_seen: lastSeenPoint,
     };
   });
   const suggestedPins = rows

@@ -134,3 +134,18 @@ test("POST /facts/:id/reopen: no session -> 401, staff -> 403 and the fact is un
 
   expect((await post({ cookie: oncologist.cookie })).status).toBe(200);
 });
+
+test("POST /tracked-markers/:id/pin through the real router: no session -> 401, staff -> 403 and the marker is untouched, oncologist passes", async () => {
+  const [marker] = await sql`
+    INSERT INTO tracked_markers (patient_id, marker_name, is_custom, added_by) VALUES (${patientId}, 'AFP', false, ${staff.id}) RETURNING id`;
+  const post = (headers: Record<string, string> = {}) =>
+    fetch(`${BASE}/tracked-markers/${marker.id}/pin`, {
+      method: "POST", headers: { "content-type": "application/json", ...headers }, body: JSON.stringify({ pinned: true }),
+    });
+  expect((await post()).status).toBe(401);
+  expect((await post({ cookie: staff.cookie })).status).toBe(403);
+  const [after] = await sql`SELECT is_pinned FROM tracked_markers WHERE id = ${marker.id}`;
+  expect(after.is_pinned).toBe(false);
+  expect((await post({ cookie: oncologist.cookie })).status).toBe(200);
+  await sql`DELETE FROM audit_log WHERE entity_type = 'tracked_marker' AND entity_id = ${marker.id}`;
+});

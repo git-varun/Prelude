@@ -47,6 +47,8 @@ export async function pinMarker(req: MarkerReq, user: AuthedUser): Promise<Respo
   if (!body || typeof body.pinned !== "boolean") return jsonError(400, "bad_request", "pinned (boolean) is required.");
   const pinned = body.pinned;
   return withMarker(req, async (tx, marker) => {
+    // Already in the requested state: change nothing and write no audit row.
+    if (!!marker.is_pinned === pinned) return Response.json({ id: marker.id, is_pinned: marker.is_pinned });
     const [after] = pinned
       ? await tx`
           UPDATE tracked_markers SET is_pinned = true,
@@ -72,6 +74,13 @@ export async function suggestPin(req: MarkerReq, user: AuthedUser): Promise<Resp
   const note = typeof body.note === "string" && body.note.trim() !== "" ? body.note.trim().slice(0, 500) : null;
   return withMarker(req, async (tx, marker) => {
     if (marker.is_pinned) return jsonError(409, "already_pinned", "This marker is already pinned.");
+    // The first suggestion stands; only its author may revise the note.
+    if (marker.suggested_by && marker.suggested_by !== user.id) {
+      return jsonError(409, "already_suggested", "Someone has already suggested pinning this marker.");
+    }
+    if (marker.suggested_by === user.id && (marker.suggested_note ?? null) === note) {
+      return Response.json({ id: marker.id, suggested: true });
+    }
     const [after] = await tx`
       UPDATE tracked_markers SET suggested_by = ${user.id}, suggested_at = now(), suggested_note = ${note}
       WHERE id = ${marker.id} RETURNING *`;

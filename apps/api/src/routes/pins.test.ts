@@ -178,3 +178,127 @@ test("snapshot watchlist: fixed order, latest + delta + sparkline, missing pin w
   expect(body.pin_options.find((o: any) => o.marker_name === "Hb")).toMatchObject({ is_pinned: false, suggested: true });
   expect(body.pin_options.find((o: any) => o.marker_name === "CEA")).toMatchObject({ is_pinned: true });
 });
+
+// --- review fixes: conflict, trust label, units, no-op pins ---
+// Own patient so the pins above do not interfere.
+async function freshPatient() {
+  const pid = (await createTestPatient(staff.id)).id;
+  const [v1] = await sql`INSERT INTO visits (patient_id, visit_date) VALUES (${pid}, '2026-01-01') RETURNING id`;
+  const [v2] = await sql`INSERT INTO visits (patient_id, visit_date) VALUES (${pid}, '2026-02-01') RETURNING id`;
+  const mk = async (name: string) => (await sql`INSERT INTO tracked_markers (patient_id, marker_name, is_custom, added_by) VALUES (${pid}, ${name}, false, ${staff.id}) RETURNING id`)[0]!.id as string;
+  const doc = async (visit: string) =>
+    (await sql`INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, ocr_status) VALUES (${pid}, ${visit}, 'local://t/x.pdf', 'blood', 'own_hospital', ${staff.id}, 'done') RETURNING id`)[0]!.id as string;
+  const fact = async (visit: string, d: string, marker: string, value: string, unit: string | null, asOf: string) =>
+    (await sql`
+      INSERT INTO facts (patient_id, visit_id, document_id, tracked_marker_id, field_type, value, unit, reference_range, as_of_date, coverage_status, verification_state)
+      VALUES (${pid}, ${visit}, ${d}, ${marker}, 'marker_value', ${value}, ${unit}, '0-5', ${asOf}, 'value_found', 'unverified') RETURNING id`)[0]!.id as string;
+  const snap = async (): Promise<any> => {
+    const req = new Request("http://localhost/s") as R;
+    req.params = { id: pid };
+    return (await getPatientSnapshot(req)).json();
+  };
+  return { pid, v1: v1.id as string, v2: v2.id as string, mk, doc, fact, snap };
+}
+
+test("watchlist: an open-conflict pin is flagged with its conflict id, carries verification_state, and plots neither side", async () => {
+  const p = await freshPatient();
+  try {
+    const m = await p.mk("CEA");
+    const dA = await p.doc(p.v2), dB = await p.doc(p.v2);
+    await p.fact(p.v1, await p.doc(p.v1), m, "2.0", "ng/mL", "2025-12-01");
+    const a = await p.fact(p.v2, dA, m, "4.0", "ng/mL", "2026-02-01");
+    const b = await p.fact(p.v2, dB, m, "9.0", "ng/mL", "2026-02-01");
+    const [{ id: conflictId }] = await sql`INSERT INTO conflicts (fact_id_a, fact_id_b, status) VALUES (${a}, ${b}, 'open') RETURNING id`;
+    await pin(m, true);
+    const [w] = (await p.snap()).watchlist;
+    expect(w.conflict).toBe(true);
+    expect(w.conflict_id).toBe(conflictId);
+    expect(w.latest.verification_state).toBe("unverified");
+    expect(w.sparkline.map((pt: any) => pt.value)).toEqual(["2.0"]);
+    expect(w.sparkline[0].verification_state).toBe("unverified");
+
+    await sql`UPDATE conflicts SET status = 'annotated' WHERE id = ${conflictId}`;
+    expect((await p.snap()).watchlist[0].conflict).toBe(true);
+  } finally {
+    await sql`DELETE FROM audit_log WHERE entity_type = 'tracked_marker' AND entity_id IN (SELECT id FROM tracked_markers WHERE patient_id = ${p.pid})`;
+    await deleteTestPatients(p.pid);
+  }
+});
+
+test("watchlist: a unit change drops earlier points (normalised, no conversion) and says so; a non-numeric latest stays in the payload", async () => {
+  const p = await freshPatient();
+  try {
+    const m = await p.mk("CEA");
+    const m2 = await p.mk("AFP");
+    const d = await p.doc(p.v1);
+    await p.fact(p.v1, d, m, "3000", "pg/mL", "2026-01-01");
+    await p.fact(p.v1, d, m, "3.5", " NG/ML ", "2026-01-10");
+    await p.fact(p.v2, await p.doc(p.v2), m, "4.2", "ng/mL", "2026-02-01");
+    await p.fact(p.v1, d, m2, "2.0", "ng/mL", "2026-01-01");
+    await p.fact(p.v2, await p.doc(p.v2), m2, "<0.5", "ng/mL", "2026-02-01");
+    await pin(m, true);
+    await pin(m2, true);
+    const body = await p.snap();
+    const cea = body.watchlist.find((w: any) => w.marker_name === "CEA");
+    expect(cea.sparkline.map((pt: any) => pt.value)).toEqual(["3.5", "4.2"]);
+    expect(cea.unit_changed).toBe(true);
+    const afp = body.watchlist.find((w: any) => w.marker_name === "AFP");
+    expect(afp.unit_changed).toBe(false);
+    expect(afp.latest.value).toBe("<0.5");
+    expect(afp.sparkline.map((pt: any) => pt.value)).toEqual(["2.0", "<0.5"]);
+  } finally {
+    await sql`DELETE FROM audit_log WHERE entity_type = 'tracked_marker' AND entity_id IN (SELECT id FROM tracked_markers WHERE patient_id = ${p.pid})`;
+    await deleteTestPatients(p.pid);
+  }
+});
+
+test("watchlist: spot-check-excluded and resolved-conflict-loser facts never reach the sparkline or last_seen", async () => {
+  const p = await freshPatient();
+  try {
+    const m = await p.mk("CEA");
+    const d = await p.doc(p.v1);
+    await p.fact(p.v1, d, m, "1.0", "ng/mL", "2026-01-01");
+    const excluded = await p.fact(p.v1, d, m, "50", "ng/mL", "2026-01-05");
+    await sql`UPDATE facts SET error_type = 'not_in_document', excluded_at = now(), check_state = 'incorrect' WHERE id = ${excluded}`;
+    const winner = await p.fact(p.v1, d, m, "1.2", "ng/mL", "2026-01-08");
+    const loser = await p.fact(p.v1, d, m, "77", "ng/mL", "2026-01-09");
+    await sql`INSERT INTO conflicts (fact_id_a, fact_id_b, status, authoritative_fact_id) VALUES (${winner}, ${loser}, 'resolved', ${winner})`;
+    await pin(m, true);
+    // Marker has no fact in the current visit, so it is missing and shows last_seen.
+    const [w] = (await p.snap()).watchlist;
+    expect(w.missing).toBe(true);
+    expect(w.sparkline.map((pt: any) => pt.value)).toEqual(["1.0", "1.2"]);
+    expect(w.last_seen).toMatchObject({ value: "1.2", document_id: d });
+  } finally {
+    await sql`DELETE FROM audit_log WHERE entity_type = 'tracked_marker' AND entity_id IN (SELECT id FROM tracked_markers WHERE patient_id = ${p.pid})`;
+    await deleteTestPatients(p.pid);
+  }
+});
+
+test("no-op pin/unpin writes no audit row and returns the current state; a second suggester gets 409, the first may revise", async () => {
+  const p = await freshPatient();
+  const other = await createTestUser("staff", "pins-staff-2");
+  try {
+    const m = await p.mk("CEA");
+    expect((await pin(m, false)).status).toBe(200);
+    expect(await audits(m)).toEqual([]);
+    expect((await pin(m, true)).status).toBe(200);
+    const res = await pin(m, true);
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ id: m, is_pinned: true });
+    expect(await audits(m)).toEqual(["pin_marker"]);
+    await pin(m, false);
+
+    expect((await suggest(m, "first")).status).toBe(200);
+    const clash = await suggest(m, "second", other);
+    expect(clash.status).toBe(409);
+    const kept = await row(m);
+    expect([kept.suggested_by, kept.suggested_note]).toEqual([staff.id, "first"]);
+    expect((await suggest(m, "revised")).status).toBe(200);
+    expect((await row(m)).suggested_note).toBe("revised");
+  } finally {
+    await sql`DELETE FROM audit_log WHERE entity_type = 'tracked_marker' AND entity_id IN (SELECT id FROM tracked_markers WHERE patient_id = ${p.pid})`;
+    await deleteTestPatients(p.pid);
+    await deleteTestUsers(other.id);
+  }
+});

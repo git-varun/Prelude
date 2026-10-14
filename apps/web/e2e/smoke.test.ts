@@ -2158,12 +2158,13 @@ test("spot-check: an excluded undated fact does not trigger the undated notice, 
 function watchEntry(overrides: Record<string, unknown> = {}) {
   return {
     tracked_marker_id: "m1", marker_name: "CEA", pinned_by_name: "Dr. Rao", missing: false,
-    latest: { fact_id: "f1", document_id: "doc1", value: "7.5", unit: "ng/mL", reference_range: "0-5", as_of_date: "2026-02-01", delta_status: "changed", was: { value: "3.0", unit: "ng/mL" } },
+    conflict: false, conflict_id: null, unit_changed: false,
+    latest: { fact_id: "f1", document_id: "doc1", value: "7.5", unit: "ng/mL", reference_range: "0-5", as_of_date: "2026-02-01", delta_status: "changed", verification_state: "unverified", was: { value: "3.0", unit: "ng/mL" } },
     sparkline: [
-      { fact_id: "f0", value: "3.0", unit: "ng/mL", as_of_date: "2026-01-01" },
-      { fact_id: "f1", value: "7.5", unit: "ng/mL", as_of_date: "2026-02-01" },
+      { fact_id: "f0", document_id: "doc0", value: "3.0", unit: "ng/mL", as_of_date: "2026-01-01", verification_state: "oncologist_signed_off" },
+      { fact_id: "f1", document_id: "doc1", value: "7.5", unit: "ng/mL", as_of_date: "2026-02-01", verification_state: "unverified" },
     ],
-    last_seen: { fact_id: "f1", value: "7.5", unit: "ng/mL", as_of_date: "2026-02-01" },
+    last_seen: { fact_id: "f1", document_id: "doc1", value: "7.5", unit: "ng/mL", as_of_date: "2026-02-01", verification_state: "unverified" },
     ...overrides,
   };
 }
@@ -2173,7 +2174,7 @@ test("Watchlist: pinned cell shows value, text-only out-of-range and 'was', a ho
     watchlist: [
       watchEntry(),
       watchEntry({ tracked_marker_id: "m2", marker_name: "AFP", missing: true, latest: null, sparkline: [],
-        last_seen: { fact_id: "f9", value: "1.5", unit: "ng/mL", as_of_date: "2026-01-05" } }),
+        last_seen: { fact_id: "f9", document_id: "doc9", value: "1.5", unit: "ng/mL", as_of_date: "2026-01-05", verification_state: "unverified" } }),
     ],
     pin_options: [
       { tracked_marker_id: "m1", marker_name: "CEA", is_pinned: true, suggested: false },
@@ -2186,12 +2187,82 @@ test("Watchlist: pinned cell shows value, text-only out-of-range and 'was', a ho
   expect(await cells.count()).toBe(2);
   const cea = cells.nth(0);
   await cea.getByText("7.5", { exact: true }).waitFor();
-  await cea.getByText("ng/mL · ref 0-5 · above reference range · was 3.0 ng/mL").waitFor();
-  expect(await cea.locator("svg circle").getAttribute("fill")).toBe("var(--color-surface)");
+  await cea.getByText("ng/mL · ref 0-5 · above reference range · was 3.0 ng/mL · unverified").waitFor();
+  const dots = cea.locator("svg circle");
+  expect(await dots.nth(0).getAttribute("fill")).toBe("var(--color-chart-line)");
+  expect(await dots.nth(1).getAttribute("fill")).toBe("var(--color-surface)");
   await cells.nth(1).getByText("Not in this visit · last 1.5 ng/mL on 2026-01-05").waitFor();
   expect(await cells.nth(1).getByText("—", { exact: true }).count()).toBe(1);
   expect(await page.getByText("1 suggested pin").count()).toBe(0);
   expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Watchlist: an open-conflict pin shows 'Sources disagree' and a review link, not a confident value or emphasis dot", async () => {
+  const body = snapshotBody({
+    watchlist: [watchEntry({ conflict: true, conflict_id: "c1" })],
+    pin_options: [{ tracked_marker_id: "m1", marker_name: "CEA", is_pinned: true, suggested: false }],
+  });
+  const { page, errors } = await openSnapshot("oncologist", body);
+  const cell = page.getByTestId("watch-cell");
+  await cell.getByText("Sources disagree").waitFor();
+  expect(await cell.getByText("7.5", { exact: true }).count()).toBe(0);
+  expect(await cell.getByText("above reference range", { exact: false }).count()).toBe(0);
+  await cell.getByRole("button", { name: "Conflicting sources — review" }).click();
+  await page.waitForFunction(() => location.hash.startsWith("#/conflicts/c1"));
+  await page.close();
+}, 30_000);
+
+test("Watchlist: unit change note, non-numeric latest keeps the sparkline and hollow marker, empty value is not plotted as 0", async () => {
+  const body = snapshotBody({
+    watchlist: [
+      watchEntry({
+        unit_changed: true,
+        latest: { ...watchEntry().latest, verification_state: "oncologist_signed_off" },
+        sparkline: [
+          { fact_id: "f0", document_id: "doc0", value: "2.0", unit: "ng/mL", as_of_date: "2026-01-01", verification_state: "oncologist_signed_off" },
+          { fact_id: "e", document_id: "doc0", value: "", unit: "ng/mL", as_of_date: "2026-01-15", verification_state: "oncologist_signed_off" },
+          { fact_id: "n", document_id: "doc0", value: "<0.5", unit: "ng/mL", as_of_date: "2026-01-20", verification_state: "oncologist_signed_off" },
+          { fact_id: "f1", document_id: "doc1", value: "7.5", unit: "ng/mL", as_of_date: "2026-02-01", verification_state: "oncologist_signed_off" },
+        ],
+      }),
+    ],
+    pin_options: [{ tracked_marker_id: "m1", marker_name: "CEA", is_pinned: true, suggested: false }],
+  });
+  const { page, errors } = await openSnapshot("staff", body);
+  const cell = page.getByTestId("watch-cell");
+  await cell.getByText("unit changed — earlier values not plotted", { exact: false }).waitFor();
+  await cell.getByText("signed off", { exact: false }).waitFor();
+  // "" and "<0.5" are not plotted; the signed 2.0 is solid and the latest 7.5 (above 0-5) is the hollow emphasis dot.
+  const dots = cell.locator("svg circle");
+  expect(await dots.count()).toBe(2);
+  expect(await dots.nth(0).getAttribute("fill")).toBe("var(--color-chart-line)");
+  expect(await dots.nth(1).getAttribute("fill")).toBe("var(--color-surface)");
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Watchlist: a cell without a document says so and is not a link; Enter on a linked cell opens the source; missing pin links its last value", async () => {
+  const noDoc = watchEntry({ latest: { ...watchEntry().latest, document_id: null } });
+  const missing = watchEntry({
+    tracked_marker_id: "m2", marker_name: "AFP", missing: true, latest: null, sparkline: [],
+    last_seen: { fact_id: "f9", document_id: "doc9", value: "1.5", unit: "ng/mL", as_of_date: "2026-01-05", verification_state: "unverified" },
+  });
+  const body = snapshotBody({
+    watchlist: [noDoc, missing],
+    pin_options: [
+      { tracked_marker_id: "m1", marker_name: "CEA", is_pinned: true, suggested: false },
+      { tracked_marker_id: "m2", marker_name: "AFP", is_pinned: true, suggested: false },
+    ],
+  });
+  const { page } = await openSnapshot("staff", body);
+  const cells = page.getByTestId("watch-cell");
+  await cells.nth(0).getByText("No document available for this value").waitFor();
+  expect(await cells.nth(0).getAttribute("role")).toBeNull();
+  expect(await page.locator("button.watch-cell").count()).toBe(0);
+  await cells.nth(1).focus();
+  await page.keyboard.press("Enter");
+  await page.waitForFunction(() => location.hash.startsWith("#/documents/doc9/source?fact=f9"));
   await page.close();
 }, 30_000);
 

@@ -3,15 +3,22 @@ import { RoleGate } from "../auth/AuthContext";
 import { api, ApiError, type WatchlistEntry, type PatientSnapshot } from "../api/client";
 import { flagForRange, parseReferenceRange } from "../lib/referenceRange";
 import { navigate } from "../router";
+import { trustLabel } from "./SummaryBits";
 
 const W = 120;
 const H = 32;
 const PAD = 4;
 
-// Neutral grey line and band; an out-of-range latest value is a hollow marker, never a colour.
+const numeric = (v: string | null) => (v === null || v.trim() === "" ? NaN : Number(v.trim()));
+
+// Neutral grey line and band; shape carries meaning, never colour: a hollow dot is an unsigned point,
+// and the latest value's out-of-range state is a hollow emphasis dot. In an open conflict nothing is emphasised.
 function Sparkline({ entry, outOfRange }: { entry: WatchlistEntry; outOfRange: boolean }) {
-  const nums = entry.sparkline.map((p) => Number(p.value.trim()));
-  if (nums.length === 0 || nums.some((n) => !Number.isFinite(n))) return null;
+  const pts = entry.sparkline
+    .map((p) => ({ n: numeric(p.value), signed: p.verification_state === "oncologist_signed_off" }))
+    .filter((p) => Number.isFinite(p.n));
+  if (pts.length === 0) return null;
+  const nums = pts.map((p) => p.n);
   const range = parseReferenceRange(entry.latest?.reference_range ?? null);
   const lo = Math.min(...nums);
   const hi = Math.max(...nums);
@@ -21,61 +28,93 @@ function Sparkline({ entry, outOfRange }: { entry: WatchlistEntry; outOfRange: b
   const bandTop = range?.high != null ? y(range.high) : 0;
   const bandBottom = range?.low != null ? y(range.low) : H;
   const last = nums.length - 1;
+  const stroke = "var(--color-chart-line)";
   return (
     <svg width={W} height={H} viewBox={`0 0 ${W} ${H}`} role="img" aria-label={`${entry.marker_name} last ${nums.length} values`}>
       {range && <rect x={0} y={bandTop} width={W} height={Math.max(bandBottom - bandTop, 0)} fill="#ddd9cc" />}
-      {nums.length > 1 && (
-        <polyline fill="none" stroke="var(--color-chart-line)" strokeWidth={1.5} points={nums.map((n, i) => `${x(i)},${y(n)}`).join(" ")} />
-      )}
-      <circle
-        cx={x(last)} cy={y(nums[last]!)} r={3} strokeWidth={1.5} stroke="var(--color-chart-line)"
-        fill={outOfRange ? "var(--color-surface)" : "var(--color-chart-line)"}
-      />
+      {nums.length > 1 && <polyline fill="none" stroke={stroke} strokeWidth={1.5} points={nums.map((n, i) => `${x(i)},${y(n)}`).join(" ")} />}
+      {pts.map((p, i) => {
+        const emphasis = i === last && !entry.conflict;
+        const hollow = !p.signed || (emphasis && outOfRange);
+        return (
+          <circle key={i} cx={x(i)} cy={y(p.n)} r={emphasis ? 3 : 2} strokeWidth={1.5} stroke={stroke}
+            fill={hollow ? "var(--color-surface)" : stroke} />
+        );
+      })}
     </svg>
   );
 }
+
+// A div with role="link" (as Timeline's chart points do), so block children are valid.
+function CellLink({ href, children }: { href: string; children: React.ReactNode }) {
+  return (
+    <div
+      className="watch-cell watch-cell--link" data-testid="watch-cell" role="link" tabIndex={0}
+      onClick={() => navigate(href)}
+      onKeyDown={(e) => { if (e.key === "Enter") navigate(href); }}
+    >
+      {children}
+    </div>
+  );
+}
+
+const NO_DOCUMENT = "No document available for this value";
 
 function Cell({ entry }: { entry: WatchlistEntry }) {
   const latest = entry.latest;
   if (entry.missing || !latest) {
     const seen = entry.last_seen;
-    return (
-      <div className="watch-cell" data-testid="watch-cell">
+    const body = (
+      <>
         <h6>{entry.marker_name}</h6>
         <div className="watch-cell__value watch-cell__value--missing">—</div>
         <div className="muted">
           Not in this visit ·{" "}
           {seen ? `last ${seen.value}${seen.unit ? ` ${seen.unit}` : ""} on ${seen.as_of_date}` : "no earlier value"}
         </div>
-      </div>
+        {seen && !seen.document_id && <div className="muted">{NO_DOCUMENT}</div>}
+      </>
     );
+    return seen?.document_id
+      ? <CellLink href={`/documents/${seen.document_id}/source?fact=${seen.fact_id}`}>{body}</CellLink>
+      : <div className="watch-cell" data-testid="watch-cell">{body}</div>;
   }
-  const flag = flagForRange(latest.value, latest.reference_range);
+  const flag = entry.conflict || !Number.isFinite(numeric(latest.value)) ? null : flagForRange(latest.value, latest.reference_range);
   const meta = [
     latest.unit,
     latest.reference_range ? `ref ${latest.reference_range}` : null,
     flag ? `${flag} reference range` : null,
     latest.was ? `was ${latest.was.value ?? "—"}${latest.was.unit ? ` ${latest.was.unit}` : ""}` : null,
+    latest.verification_state ? trustLabel(latest.verification_state) : null,
+    entry.unit_changed ? "unit changed — earlier values not plotted" : null,
   ].filter(Boolean);
   const body = (
     <>
       <h6>{entry.marker_name}</h6>
-      <div className="watch-cell__value">{latest.value ?? "—"}</div>
+      {entry.conflict ? (
+        <div>
+          <span className="tag tag--range-flag">Sources disagree</span>
+          {entry.conflict_id && (
+            <button
+              className="tag tag--range-flag" type="button" style={{ marginLeft: 8, cursor: "pointer" }}
+              onClick={() => navigate(`/conflicts/${entry.conflict_id}`)}
+            >
+              Conflicting sources — review
+            </button>
+          )}
+        </div>
+      ) : (
+        <div className="watch-cell__value">{latest.value ?? "—"}</div>
+      )}
       <Sparkline entry={entry} outOfRange={flag !== null} />
       <div className="muted">{meta.join(" · ")}</div>
+      {!latest.document_id && !entry.conflict && <div className="muted">{NO_DOCUMENT}</div>}
     </>
   );
-  // Same target as a fact's "View uploaded document" link; no link when the fact has no document.
-  return latest.document_id ? (
-    <button
-      type="button" className="watch-cell watch-cell--link" data-testid="watch-cell"
-      onClick={() => navigate(`/documents/${latest.document_id}/source?fact=${latest.fact_id}`)}
-    >
-      {body}
-    </button>
-  ) : (
-    <div className="watch-cell" data-testid="watch-cell">{body}</div>
-  );
+  // Same target as a fact's "View uploaded document" link. A conflict cell has its own review link instead.
+  return latest.document_id && !entry.conflict
+    ? <CellLink href={`/documents/${latest.document_id}/source?fact=${latest.fact_id}`}>{body}</CellLink>
+    : <div className="watch-cell" data-testid="watch-cell">{body}</div>;
 }
 
 export function Watchlist({ data, onChanged }: { data: PatientSnapshot; onChanged: () => void }) {
