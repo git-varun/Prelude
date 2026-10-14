@@ -234,7 +234,7 @@ export function Plan({ patientId }: { patientId: string }) {
                       Remove match
                     </button>
                   )}
-                  {item.report_request && <span className="tag">Staff asked to find report</span>}
+                  {item.report_request && (item.status === "planned" || item.status === "past_advised") && <span className="tag">Staff asked to find report</span>}
                   {(item.status === "past_advised" || item.status === "planned") && !item.report_request && (
                     <RoleGate roles={["oncologist"]}>
                       <button className="btn btn--secondary" type="button" onClick={() => void requestReport(item.id)}>

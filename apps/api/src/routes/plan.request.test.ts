@@ -1,6 +1,6 @@
 import { test, expect, beforeAll, afterAll } from "bun:test";
 import { sql } from "../db/client";
-import { getPatientPlan, requestPlanItemReport, clearPlanItemReportRequest } from "./plan";
+import { getPatientPlan, requestPlanItemReport, clearPlanItemReportRequest, setPlanItemMatch } from "./plan";
 import { createTestUser, deleteTestUsers, createTestPatient, deleteTestPatients, asAuthedUser, type TestUser } from "../test-helpers";
 
 // M3-09 interim for B7: the oncologist asks staff to find a report; staff clear the request.
@@ -66,4 +66,29 @@ test("an item that already has a confirmed report cannot be asked for; unknown i
   expect((await request(crypto.randomUUID())).status).toBe(404);
   expect((await request("nope")).status).toBe(404);
   expect((await clear("nope")).status).toBe(404);
+});
+
+test("a second request on an already-requested item is refused and writes no second audit row", async () => {
+  expect((await request(pastItem)).status).toBe(200);
+  expect((await request(pastItem, staff)).status).toBe(409);
+  const rows = await sql`SELECT 1 FROM audit_log WHERE entity_type = 'care_plan_item' AND entity_id = ${pastItem} AND action = 'request_report'`;
+  const before = rows.length;
+  expect((await request(pastItem)).status).toBe(409);
+  const after = await sql`SELECT 1 FROM audit_log WHERE entity_type = 'care_plan_item' AND entity_id = ${pastItem} AND action = 'request_report'`;
+  expect(after.length).toBe(before);
+});
+
+test("confirming a report clears the request (audited); a stale request is not shown", async () => {
+  const [{ id: doc }] = await sql`SELECT id FROM documents WHERE patient_id = ${patientId} LIMIT 1`;
+  const match = (id: string, document_id: string) =>
+    setPlanItemMatch(Object.assign(new Request("http://localhost/x", { method: "POST", body: JSON.stringify({ document_id }) }), { params: { id } }), asAuthedUser(staff));
+  expect((await match(pastItem, doc)).status).toBe(200);
+  expect((await planItem(pastItem)).report_request).toBeNull();
+  const [row] = await sql`SELECT report_requested_by FROM care_plan_items WHERE id = ${pastItem}`;
+  expect(row.report_requested_by).toBeNull();
+  const audit = await sql`SELECT after_value FROM audit_log WHERE entity_type = 'care_plan_item' AND entity_id = ${pastItem} AND action = 'clear_report_request' ORDER BY created_at DESC LIMIT 1`;
+  expect(JSON.parse(audit[0].after_value).reason).toBe("report_confirmed");
+
+  await sql`UPDATE care_plan_items SET report_requested_by = ${oncologist.id}, report_requested_at = now() WHERE id = ${seenItem}`;
+  expect((await planItem(seenItem)).report_request).toBeNull();
 });

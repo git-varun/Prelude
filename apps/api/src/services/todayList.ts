@@ -2,6 +2,7 @@ import { sql } from "../db/client";
 import { CONFLICT_SIDES_LIVE, LIVE_FACT_FILTER, deltaForCurrentFact, deltaKey, type DeltaBaseline } from "./delta";
 import { loadCandidateDocumentsFor } from "./carePlan";
 import { planItemStatus } from "./carePlanLogic";
+import { loadPrepChecklistMany } from "../routes/prep";
 
 // M3-09: the per-patient inputs of the Today list, for a whole page of patients at once (a fixed number of queries,
 // whatever the page size). Everything here is read from data; nothing is interpreted or ranked.
@@ -20,6 +21,8 @@ export interface SparklinePoint {
 
 export interface TodayInfo {
   prep_status: "preparing" | "ready" | null;
+  /** Marked ready, but a prep check fails now (same definition as GET /visits/:id/prep). */
+  changed_since_ready: boolean;
   current_visit_document_count: number;
   sign_off_count: number;
   change_summary_items: ChangeSummaryItem[];
@@ -104,6 +107,10 @@ export async function loadTodayInfo(
     `,
   ]);
 
+  // Ready visits whose checklist fails now: one batched query, same checks as GET /visits/:id/prep.
+  const readyVisits = (visits as any[]).filter((v) => v.prep_status === "ready");
+  const readyChecks = await loadPrepChecklistMany(sql, readyVisits.map((v) => ({ id: v.id, patient_id: v.patient_id })));
+
   // Sparkline of the first pinned marker: the last 8 live dated values, in the latest value's unit (units are never converted).
   const firstPinned = new Map<string, { id: string; name: string }>();
   const pinnedIds = new Set<string>();
@@ -137,6 +144,7 @@ export async function loadTodayInfo(
   // Plan items: the same status rule as the Plan screen, from one batched candidate-document query.
   const planPatients = [...new Set((planRows as any[]).map((r) => r.patient_id as string))];
   const candidates = await loadCandidateDocumentsFor(planPatients);
+  // Known limits (accepted): "today" is the server's UTC date, and past-advised items are not bounded by age.
   const horizon = new Date(new Date(`${today}T00:00:00Z`).getTime() + EXPECTED_WITHIN_DAYS * 86_400_000).toISOString().slice(0, 10);
   const planPast = new Map<string, number>();
   const expected = new Set<string>();
@@ -204,7 +212,9 @@ export async function loadTodayInfo(
     const text = (field: string) => ((texts as any[]).find((t) => t.patient_id === p.id && t.field_type === field)?.value as string | undefined) ?? null;
     result.set(p.id, {
       prep_status: visit ? visit.prep_status : null,
-      current_visit_document_count: myDocs.length,
+      changed_since_ready: !!visit && visit.prep_status === "ready" && (readyChecks.get(visit.id) ?? []).some((i) => !i.ok),
+      // Reports counted toward "new today": not held, rejected or awaiting the oncologist, and not 'other'.
+      current_visit_document_count: myDocs.filter((d) => !d.held && d.document_type !== "other").length,
       sign_off_count,
       change_summary_items: items,
       first_pinned_sparkline,

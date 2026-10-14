@@ -5,33 +5,52 @@ import { LIVE_FACT_FILTER } from "../services/delta";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-export type PrepKey = "uploaded" | "facts_checked" | "dates_entered" | "held_reviewed";
+export type PrepKey = "uploaded" | "extraction_finished" | "facts_checked" | "dates_entered" | "held_reviewed";
 export interface PrepItem { key: PrepKey; label: string; ok: boolean; count: number }
 
 const plural = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
 
-// M3-09: the four prep checks for one visit. Open conflicts are not a check: they do not block "ready".
-// Held reports are a patient-level check (a held report may sit on any visit).
-export async function loadPrepChecklist(tx: typeof sql, visitId: string, patientId: string): Promise<PrepItem[]> {
-  const [row] = await tx`
-    SELECT
+// M3-09: the five prep checks, for several visits at once (one query). Open conflicts are not a check: they do not
+// block "ready". Held reports are a patient-level check (a held report may sit on any visit). Extraction is finished
+// when every report of the visit has OCR done and extraction done or partial ('other' documents are never extracted).
+export async function loadPrepChecklistMany(
+  tx: typeof sql,
+  visits: { id: string; patient_id: string }[],
+): Promise<Map<string, PrepItem[]>> {
+  const out = new Map<string, PrepItem[]>();
+  if (visits.length === 0) return out;
+  const rows = await tx`
+    SELECT v.id,
       (SELECT count(*)::int FROM documents d
-        WHERE d.visit_id = ${visitId} AND d.document_type != 'other' AND COALESCE(d.identity_status::text, '') != 'rejected') AS documents,
-      (SELECT count(*)::int FROM facts f WHERE f.visit_id = ${visitId} AND ${LIVE_FACT_FILTER} AND f.check_state = 'unchecked') AS unchecked,
-      (SELECT count(*)::int FROM facts f WHERE f.visit_id = ${visitId} AND ${LIVE_FACT_FILTER} AND f.needs_manual_date) AS undated,
-      (SELECT count(*)::int FROM documents d WHERE d.patient_id = ${patientId} AND d.identity_status IN ('mismatch', 'awaiting_oncologist')) AS held
+        WHERE d.visit_id = v.id AND d.document_type != 'other' AND COALESCE(d.identity_status::text, '') != 'rejected') AS documents,
+      (SELECT count(*)::int FROM documents d
+        WHERE d.visit_id = v.id AND d.document_type != 'other' AND COALESCE(d.identity_status::text, '') != 'rejected'
+          AND (d.extraction_status::text NOT IN ('done', 'partial') OR d.ocr_status::text != 'done')) AS unfinished,
+      (SELECT count(*)::int FROM facts f WHERE f.visit_id = v.id AND ${LIVE_FACT_FILTER} AND f.check_state = 'unchecked') AS unchecked,
+      (SELECT count(*)::int FROM facts f WHERE f.visit_id = v.id AND ${LIVE_FACT_FILTER} AND f.needs_manual_date) AS undated,
+      (SELECT count(*)::int FROM documents d WHERE d.patient_id = v.patient_id AND d.identity_status IN ('mismatch', 'awaiting_oncologist')) AS held
+    FROM visits v WHERE v.id IN ${tx(visits.map((v) => v.id))}
   `;
-  return [
-    { key: "uploaded", label: "Reports uploaded", ok: row.documents > 0, count: row.documents },
-    { key: "facts_checked", label: "All facts checked", ok: row.unchecked === 0, count: row.unchecked },
-    { key: "dates_entered", label: "Dates entered", ok: row.undated === 0, count: row.undated },
-    { key: "held_reviewed", label: "Held reports reviewed", ok: row.held === 0, count: row.held },
-  ];
+  for (const row of rows as any[]) {
+    out.set(row.id, [
+      { key: "uploaded", label: "Reports uploaded", ok: row.documents > 0, count: row.documents },
+      { key: "extraction_finished", label: "Extraction finished", ok: row.unfinished === 0, count: row.unfinished },
+      { key: "facts_checked", label: "All facts checked", ok: row.unchecked === 0, count: row.unchecked },
+      { key: "dates_entered", label: "Dates entered", ok: row.undated === 0, count: row.undated },
+      { key: "held_reviewed", label: "Held reports reviewed", ok: row.held === 0, count: row.held },
+    ]);
+  }
+  return out;
+}
+
+export async function loadPrepChecklist(tx: typeof sql, visitId: string, patientId: string): Promise<PrepItem[]> {
+  return (await loadPrepChecklistMany(tx, [{ id: visitId, patient_id: patientId }])).get(visitId)!;
 }
 
 export function prepItemReason(i: PrepItem): string {
   switch (i.key) {
     case "uploaded": return "No report uploaded for this visit yet";
+    case "extraction_finished": return `Extraction still running or failed for ${i.count} document(s)`;
     case "facts_checked": return `${plural(i.count, "fact is", "facts are")} not checked yet`;
     case "dates_entered": return `${plural(i.count, "fact needs", "facts need")} a date`;
     case "held_reviewed": return `${plural(i.count, "report is", "reports are")} still held for an identity check`;
@@ -82,7 +101,11 @@ export async function setVisitPrep(req: Request & { params: { id: string } }, us
     const tx = rawTx as unknown as typeof sql;
     const [visit] = await tx`SELECT id, patient_id, prep_status FROM visits WHERE id = ${id} FOR UPDATE`;
     if (!visit) return jsonError(404, "not_found", "Visit not found.");
+    // Already ready: repeating the request changes nothing, even if a check fails now (that shows as "changed since").
+    if (body.ready && visit.prep_status === "ready") return Response.json(await prepState(tx, id));
     if (body.ready) {
+      const [latest] = await tx`SELECT id FROM visits WHERE patient_id = ${visit.patient_id} ORDER BY visit_date DESC, id DESC LIMIT 1`;
+      if (latest.id !== id) return jsonError(409, "conflict", "Only the current visit can be marked ready.");
       const failing = (await loadPrepChecklist(tx, visit.id, visit.patient_id)).filter((i) => !i.ok);
       if (failing.length > 0) {
         return Response.json(

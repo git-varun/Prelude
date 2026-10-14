@@ -57,7 +57,8 @@ export async function getPatientPlan(req: Request & { params: { id: string } }):
       source_fact_id: (r.source_fact_id as string | null) ?? null,
       source_document_id: (r.source_document_id as string | null) ?? null,
       outside_encounter: outsideRefOf(r),
-      report_request: r.report_requested_by
+      // Only an item still waiting for its report shows a request (a stale one is hidden, and cleared on confirm).
+      report_request: r.report_requested_by && (status === "planned" || status === "past_advised")
         ? { by_id: r.report_requested_by as string, by_name: (r.report_requested_by_name as string | null) ?? null, at: new Date(r.report_requested_at).toISOString() }
         : null,
     };
@@ -108,7 +109,7 @@ export async function setPlanItemMatch(req: Request & { params: { id: string } }
   const documentId = body?.document_id;
   if (documentId !== null && !isUuid(documentId)) return jsonError(400, "bad_request", "document_id must be a UUID or null.");
 
-  const [item] = await sql`SELECT id, patient_id FROM care_plan_items WHERE id = ${itemId}`;
+  const [item] = await sql`SELECT id, patient_id, report_requested_by, report_requested_at FROM care_plan_items WHERE id = ${itemId}`;
   if (!item) return jsonError(404, "not_found", "Plan item not found.");
 
   if (documentId === null) {
@@ -127,11 +128,23 @@ export async function setPlanItemMatch(req: Request & { params: { id: string } }
   if (isHeldIdentityStatus(doc.identity_status)) {
     return jsonError(409, "conflict", "This document is held for an identity check and cannot be matched.");
   }
-  await sql`
-    UPDATE care_plan_items
-    SET matched_document_id = ${documentId}, match_confirmed_by = ${user.id}, match_confirmed_at = now()
-    WHERE id = ${itemId}
-  `;
+  // Confirming a report answers any open "find this report" request: cleared in the same transaction, audited.
+  await sql.begin(async (rawTx) => {
+    const tx = rawTx as unknown as typeof sql;
+    await tx`
+      UPDATE care_plan_items
+      SET matched_document_id = ${documentId}, match_confirmed_by = ${user.id}, match_confirmed_at = now(),
+          report_requested_by = NULL, report_requested_at = NULL
+      WHERE id = ${itemId}
+    `;
+    if (item.report_requested_by) {
+      await tx`
+        INSERT INTO audit_log (actor_id, action, entity_type, entity_id, before_value, after_value)
+        VALUES (${user.id}, 'clear_report_request', 'care_plan_item', ${itemId}, ${JSON.stringify(requestState(item))}::jsonb,
+                ${JSON.stringify({ report_requested_by: null, report_requested_at: null, reason: "report_confirmed", document_id: documentId })}::jsonb)
+      `;
+    }
+  });
   return Response.json({ id: itemId, matched_document_id: documentId });
 }
 
@@ -155,6 +168,7 @@ const requestState = (i: any) => ({ report_requested_by: i.report_requested_by, 
 
 export async function requestPlanItemReport(req: Request & { params: { id: string } }, user: AuthedUser): Promise<Response> {
   return withPlanItem(req, async (tx, item) => {
+    if (item.report_requested_by) return jsonError(409, "conflict", "A report has already been requested for this item.");
     const itemRow = { ...item, advised_at: item.advised_text as string };
     const candidates = await loadCandidateDocuments(item.patient_id);
     const { status } = planItemStatus(itemRow, candidates, new Date().toISOString().slice(0, 10));

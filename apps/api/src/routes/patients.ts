@@ -203,7 +203,7 @@ export async function listPatients(req: Request): Promise<Response> {
                ${elsewhereSubquery}
         FROM patients p
         WHERE p.name ILIKE ${"%" + search + "%"}
-        ORDER BY last_visit_date DESC NULLS LAST
+        ORDER BY last_visit_date DESC NULLS LAST, p.id
         LIMIT ${limit} OFFSET ${offset}
       `
     : await sql`
@@ -215,7 +215,7 @@ export async function listPatients(req: Request): Promise<Response> {
                ${heldDocumentSubquery},
                ${elsewhereSubquery}
         FROM patients p
-        ORDER BY last_visit_date DESC NULLS LAST
+        ORDER BY last_visit_date DESC NULLS LAST, p.id
         LIMIT ${limit} OFFSET ${offset}
       `;
 

@@ -106,6 +106,7 @@ export interface PatientSummary {
   regimen_text: string | null;
   /** M3-09. null when the patient has no visit. */
   prep_status: PrepStatus | null;
+  changed_since_ready: boolean;
   current_visit_document_count: number;
   /** Facts the oncologist can sign off now in the current visit. */
   sign_off_count: number;
@@ -125,7 +126,7 @@ export type ChangeSummaryItem =
   | { kind: "plan_past"; count: number }
   | { kind: "elsewhere"; facility: string; date: string };
 
-export type PrepKey = "uploaded" | "facts_checked" | "dates_entered" | "held_reviewed";
+export type PrepKey = "uploaded" | "extraction_finished" | "facts_checked" | "dates_entered" | "held_reviewed";
 
 export interface VisitPrep {
   visit_id: string;
@@ -597,8 +598,10 @@ export const api = {
 
   me: () => request<SessionUser>("/auth/me"),
 
-  listPatients: (search?: string) =>
-    request<PatientSummary[]>(`/patients${search ? `?search=${encodeURIComponent(search)}` : ""}`),
+  listPatients: (search?: string, limit?: number) => {
+    const q = [search ? `search=${encodeURIComponent(search)}` : "", limit ? `limit=${limit}` : ""].filter(Boolean).join("&");
+    return request<PatientSummary[]>(`/patients${q ? `?${q}` : ""}`);
+  },
 
   getPatient: (id: string) => request<PatientDetail>(`/patients/${id}`),
 

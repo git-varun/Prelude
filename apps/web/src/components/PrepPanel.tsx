@@ -7,15 +7,19 @@ export function PrepPanel({ visitId, refreshKey }: { visitId: string; refreshKey
   const [prep, setPrep] = useState<VisitPrep | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [loadFailed, setLoadFailed] = useState(false);
   const seq = useRef(0);
 
   const load = useCallback(async () => {
     const mine = ++seq.current;
     try {
       const result = await api.getVisitPrep(visitId);
-      if (mine === seq.current) setPrep(result);
+      if (mine === seq.current) {
+        setPrep(result);
+        setLoadFailed(false);
+      }
     } catch {
-      if (mine === seq.current) setPrep(null);
+      if (mine === seq.current) setLoadFailed(true);
     }
   }, [visitId]);
 
@@ -37,8 +41,21 @@ export function PrepPanel({ visitId, refreshKey }: { visitId: string; refreshKey
     }
   }
 
-  // A failed load shows no panel: the snapshot itself must never depend on it.
-  if (!prep) return null;
+  // The snapshot itself never depends on this panel; a failed load says so and offers a retry.
+  if (!prep) {
+    return (
+      <section className="card prep-panel" aria-label="Visit preparation" data-testid="prep-panel">
+        {loadFailed ? (
+          <>
+            <span>Checklist could not be loaded.</span>{" "}
+            <button className="btn btn--secondary" type="button" onClick={() => void load()}>Retry</button>
+          </>
+        ) : (
+          <span className="muted">Loading checklist…</span>
+        )}
+      </section>
+    );
+  }
   const ready = prep.prep_status === "ready";
   const blocked = prep.items.filter((i) => !i.ok);
 

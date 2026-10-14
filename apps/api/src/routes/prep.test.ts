@@ -20,10 +20,10 @@ const get = async (): Promise<any> => (await getVisitPrep(withId("http://localho
 const setReady = (ready: unknown, user = staff) => setVisitPrep(withId("http://localhost/prep", visitId, { ready }), asAuthedUser(user));
 const item = (state: any, key: string) => state.items.find((i: any) => i.key === key);
 
-async function newDoc(o: { type?: string; identity?: string | null } = {}) {
+async function newDoc(o: { type?: string; identity?: string | null; ocr?: string; extraction?: string } = {}) {
   const [d] = await sql`
-    INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, ocr_status, identity_status)
-    VALUES (${patientId}, ${visitId}, 'local://t/x.pdf', ${o.type ?? "blood"}::document_type, 'own_hospital', ${staff.id}, 'done', ${o.identity ?? null}::identity_status)
+    INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, ocr_status, extraction_status, identity_status)
+    VALUES (${patientId}, ${visitId}, 'local://t/x.pdf', ${o.type ?? "blood"}::document_type, 'own_hospital', ${staff.id}, ${o.ocr ?? "done"}::ocr_status, ${o.extraction ?? "done"}::extraction_status, ${o.identity ?? null}::identity_status)
     RETURNING id`;
   return d.id as string;
 }
@@ -171,4 +171,45 @@ test("a new report on a ready visit returns it to preparing, said so in the audi
   expect(s.prep_set_by).toBe(staff.id);
   const rows = await sql`SELECT after_value FROM audit_log WHERE entity_type = 'visit' AND entity_id = ${visitId} ORDER BY created_at DESC LIMIT 1`;
   expect(JSON.parse(rows[0].after_value)).toMatchObject({ prep_status: "preparing", reason: "document_uploaded" });
+});
+
+test("extraction must be finished: pending or failed blocks, done and partial pass, 'other' is ignored", async () => {
+  await reset();
+  await newDoc({ type: "other", extraction: "not_extracted", ocr: "pending" });
+  const pending = await newDoc({ extraction: "pending" });
+  const s = await get();
+  expect(item(s, "extraction_finished")).toMatchObject({ ok: false, count: 1, reason: "Extraction still running or failed for 1 document(s)" });
+  const res = await setReady(true);
+  expect(res.status).toBe(409);
+  expect(((await res.json()) as any).failing.map((f: any) => f.key)).toEqual(["extraction_finished"]);
+
+  await sql`UPDATE documents SET extraction_status = 'failed' WHERE id = ${pending}`;
+  expect(item(await get(), "extraction_finished").ok).toBe(false);
+  await sql`UPDATE documents SET extraction_status = 'done', ocr_status = 'failed' WHERE id = ${pending}`;
+  expect(item(await get(), "extraction_finished").ok).toBe(false);
+
+  await sql`UPDATE documents SET extraction_status = 'partial', ocr_status = 'done' WHERE id = ${pending}`;
+  expect(item(await get(), "extraction_finished").ok).toBe(true);
+  await sql`UPDATE documents SET extraction_status = 'done' WHERE id = ${pending}`;
+  expect((await setReady(true)).status).toBe(200);
+});
+
+test("ready on an already-ready visit returns the state (no audit) even if checks fail now; only the current visit can be marked ready", async () => {
+  await reset();
+  await newDoc();
+  expect((await setReady(true)).status).toBe(200);
+  await newDoc({ extraction: "pending" });
+  const again = await setReady(true);
+  expect(again.status).toBe(200);
+  expect(((await again.json()) as any).prep_status).toBe("ready");
+  const audit = await sql`SELECT 1 FROM audit_log WHERE entity_type = 'visit' AND entity_id = ${visitId}`;
+  expect(audit).toHaveLength(1);
+
+  await reset();
+  await newDoc();
+  const [{ id: newer }] = await sql`INSERT INTO visits (patient_id, visit_date) VALUES (${patientId}, '2026-04-01') RETURNING id`;
+  const res = await setReady(true);
+  expect(res.status).toBe(409);
+  expect(((await res.json()) as any).message).toContain("Only the current visit can be marked ready");
+  await sql`DELETE FROM visits WHERE id = ${newer}`;
 });

@@ -169,6 +169,8 @@ export async function uploadDocument(req: Request & { params: { id: string } }, 
       `;
       // M3-09: a new report on a visit already marked ready sends it back to preparing (the only automatic change).
       if (documentType !== "other") {
+        // Lock the visit first so a concurrent "Mark ready" (which also locks it) cannot slip between.
+        await tx`SELECT id FROM visits WHERE id = ${visitId} FOR UPDATE`;
         const [back] = await tx`
           UPDATE visits SET prep_status = 'preparing', prep_set_by = ${user.id}, prep_set_at = now()
           WHERE id = ${visitId} AND prep_status = 'ready' RETURNING id

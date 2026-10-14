@@ -30,8 +30,8 @@ beforeAll(async () => {
   const [{ id: oldVisit }] = await sql`INSERT INTO visits (patient_id, visit_date) VALUES (${rich}, '2026-04-01') RETURNING id`;
   const [{ id: curVisit }] = await sql`INSERT INTO visits (patient_id, visit_date, prep_status, prep_set_by, prep_set_at) VALUES (${rich}, '2026-05-01', 'ready', ${staff.id}, now()) RETURNING id`;
   const doc = async (visit: string, type: string, modality: string | null, identity: string | null = null) => (await sql`
-    INSERT INTO documents (patient_id, visit_id, file_ref, document_type, imaging_modality, source_origin, uploaded_by, ocr_status, identity_status)
-    VALUES (${rich}, ${visit}, 'local://t/x.pdf', ${type}::document_type, ${modality}, 'own_hospital', ${staff.id}, 'done', ${identity}::identity_status)
+    INSERT INTO documents (patient_id, visit_id, file_ref, document_type, imaging_modality, source_origin, uploaded_by, ocr_status, extraction_status, identity_status)
+    VALUES (${rich}, ${visit}, 'local://t/x.pdf', ${type}::document_type, ${modality}, 'own_hospital', ${staff.id}, 'done', 'done', ${identity}::identity_status)
     RETURNING id`)[0].id as string;
   const oldDoc = await doc(oldVisit, "blood", null);
   const blood = await doc(curVisit, "blood", null);
@@ -76,7 +76,8 @@ afterAll(async () => {
 test("prep status, document count, sign-off count and the group inputs", async () => {
   const r = find(await listAll(), rich);
   expect(r.prep_status).toBe("ready");
-  expect(r.current_visit_document_count).toBe(4); // all documents of the current visit, held and 'other' included
+  expect(r.current_visit_document_count).toBe(2); // the blood and CT reports: held and 'other' documents are not counted
+  expect(r.changed_since_ready).toBe(true); // marked ready, but unchecked facts and a held report remain
   expect(r.sign_off_count).toBe(1); // only CA 15-3 412: CEA is in a conflict, the regimen is unchecked, the impression is undated
   expect(r.sex).toBe("female");
   expect(r.diagnosis_text).toBe("Invasive ductal carcinoma");
@@ -109,7 +110,7 @@ test("the sparkline is the first pinned marker's live dated values, never a held
 test("a patient with no visit has no prep status, nothing to sign off and no items; a not-yet-past plan item is still expected", async () => {
   const rows = await listAll();
   expect(find(rows, empty)).toMatchObject({
-    prep_status: null, current_visit_document_count: 0, sign_off_count: 0, change_summary_items: [],
+    prep_status: null, changed_since_ready: false, current_visit_document_count: 0, sign_off_count: 0, change_summary_items: [],
     first_pinned_sparkline: null, has_plan_items_expected: false, diagnosis_text: null, regimen_text: null,
   });
   expect(find(rows, soon)).toMatchObject({ has_plan_items_expected: true, change_summary_items: [] });
@@ -125,4 +126,19 @@ test("a signed-off or reopened winner changes the sign-off count; a plan item wi
   const r = find(await listAll(), rich);
   expect(r.has_plan_items_expected).toBe(false);
   expect(r.change_summary_items.some((i: any) => i.kind === "plan_past")).toBe(false);
+});
+
+test("a ready visit whose checks all pass is not changed since ready", async () => {
+  const calm = (await createTestPatient(staff.id)).id;
+  try {
+    await sql`UPDATE patients SET name = ${`${NAME} calm`} WHERE id = ${calm}`;
+    const [{ id: v }] = await sql`INSERT INTO visits (patient_id, visit_date, prep_status, prep_set_by, prep_set_at) VALUES (${calm}, '2026-05-01', 'ready', ${staff.id}, now()) RETURNING id`;
+    await sql`INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, ocr_status, extraction_status)
+              VALUES (${calm}, ${v}, 'local://t/x.pdf', 'blood', 'own_hospital', ${staff.id}, 'done', 'done')`;
+    expect(find(await listAll(), calm)).toMatchObject({ prep_status: "ready", changed_since_ready: false });
+    await sql`UPDATE documents SET extraction_status = 'pending' WHERE patient_id = ${calm}`;
+    expect(find(await listAll(), calm).changed_since_ready).toBe(true);
+  } finally {
+    await deleteTestPatients(calm);
+  }
 });

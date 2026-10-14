@@ -7,7 +7,7 @@ const withTitle = (name: string | null) => (name ? (/^dr\b\.?/i.test(name) ? nam
 // M3-09 interim for the B7 work queues: staff see what the oncologist asked them to find, per patient, and clear it.
 export function ReportRequestBanner({ items, onChanged }: { items: PlanItem[]; onChanged: () => void }) {
   const [error, setError] = useState<string | null>(null);
-  const requested = items.filter((i) => i.report_request);
+  const requested = items.filter((i) => i.report_request && (i.status === "planned" || i.status === "past_advised"));
   if (requested.length === 0) return null;
 
   async function clear(id: string) {

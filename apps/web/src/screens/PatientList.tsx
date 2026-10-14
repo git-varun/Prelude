@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { api, ApiError, type PatientSummary } from "../api/client";
 import { navigate } from "../router";
 import { Sparkline } from "../components/Watchlist";
-import { ageOn, changeSummaryLine, groupPatients, localToday, TODAY_GROUPS, type TodayGroup } from "../lib/todayGroups";
+import { ageOn, changeSummaryLine, groupPatients, localToday, PATIENT_FETCH_LIMIT, TODAY_GROUPS, truncationNote, type TodayGroup } from "../lib/todayGroups";
 
 const SEX_LETTER: Record<string, string> = { male: "M", female: "F", other: "O" };
 
@@ -11,6 +11,7 @@ function withToday(p: PatientSummary): PatientSummary {
   return {
     ...p,
     prep_status: p.prep_status ?? null,
+    changed_since_ready: p.changed_since_ready ?? false,
     current_visit_document_count: p.current_visit_document_count ?? 0,
     sign_off_count: p.sign_off_count ?? 0,
     change_summary_items: p.change_summary_items ?? [],
@@ -22,6 +23,7 @@ function withToday(p: PatientSummary): PatientSummary {
 // "N to sign off", else the prep state. Never a rank.
 function rowTag(p: PatientSummary, group: TodayGroup): string | null {
   if (group === "expected") return p.change_summary_items.some((i) => i.kind === "plan_past") ? "Past advised date" : "Planned";
+  if (group === "preparing" && p.prep_status === "ready" && p.changed_since_ready) return "Changed since marked ready";
   if (p.sign_off_count > 0) return `${p.sign_off_count} to sign off`;
   if (group === "ready") return "Ready";
   if (group === "preparing") return "Preparing";
@@ -127,7 +129,7 @@ export function PatientList() {
   useEffect(() => {
     const handle = setTimeout(() => {
       api
-        .listPatients(search || undefined)
+        .listPatients(search || undefined, PATIENT_FETCH_LIMIT)
         .then((list) => setPatients(list.map(withToday)))
         .catch((err) => setError(err instanceof ApiError ? err.message : "Failed to load patients."));
     }, 200);
@@ -155,6 +157,7 @@ export function PatientList() {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+      {patients && truncationNote(patients.length) && <p className="muted" role="status">{truncationNote(patients.length)}</p>}
 
       {patients === null && <p className="muted">Loading...</p>}
       {patients?.length === 0 && (

@@ -1,9 +1,9 @@
 import { expect, test } from "bun:test";
-import { ageOn, changeItemText, changeSummaryLine, groupPatients, localToday, todayGroupOf, type GroupInput } from "./todayGroups";
+import { ageOn, changeItemText, changeSummaryLine, groupPatients, localToday, todayGroupOf, truncationNote, PATIENT_FETCH_LIMIT, type GroupInput } from "./todayGroups";
 
 const TODAY = "2026-10-15";
 const p = (id: string, o: Partial<GroupInput> = {}): GroupInput => ({
-  id, name: id, last_visit_date: TODAY, prep_status: "preparing", current_visit_document_count: 0, sign_off_count: 0,
+  id, name: id, last_visit_date: TODAY, prep_status: "preparing", changed_since_ready: false, current_visit_document_count: 0, sign_off_count: 0,
   change_summary_items: [], has_plan_items_expected: false, ...o,
 });
 
@@ -15,7 +15,20 @@ test("ready: a visit today marked ready, whatever else is true", () => {
 test("staff preparing: preparing with documents, or something to sign off, or a change", () => {
   expect(todayGroupOf(p("a", { current_visit_document_count: 2 }), TODAY)).toBe("preparing");
   expect(todayGroupOf(p("a", { sign_off_count: 1 }), TODAY)).toBe("preparing");
-  expect(todayGroupOf(p("a", { change_summary_items: [{ kind: "plan_past", count: 1 }] }), TODAY)).toBe("preparing");
+  expect(todayGroupOf(p("a", { change_summary_items: [{ kind: "sources_disagree", name: "CEA" }] }), TODAY)).toBe("preparing");
+});
+
+test("a visit opened today with only plan or elsewhere items is nothing new", () => {
+  expect(todayGroupOf(p("a", { change_summary_items: [{ kind: "plan_past", count: 1 }, { kind: "elsewhere", facility: "Apollo", date: "2026-09-22" }] }), TODAY)).toBe("nothing_new");
+});
+
+test("ready but changed since marked ready goes back to staff preparing", () => {
+  expect(todayGroupOf(p("a", { prep_status: "ready", changed_since_ready: true }), TODAY)).toBe("preparing");
+});
+
+test("a truncated list says so; a complete one does not", () => {
+  expect(truncationNote(PATIENT_FETCH_LIMIT - 1)).toBeNull();
+  expect(truncationNote(PATIENT_FETCH_LIMIT)).toContain("first 500 patients");
 });
 
 test("nothing new: a visit today with no documents, changes or sign-off; or a patient with no visit today and nothing expected", () => {

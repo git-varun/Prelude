@@ -16,6 +16,8 @@ export interface GroupInput {
   name: string | null;
   last_visit_date: string | null;
   prep_status: PrepStatus | null;
+  /** Marked ready, but a prep check fails now. */
+  changed_since_ready: boolean;
   current_visit_document_count: number;
   sign_off_count: number;
   change_summary_items: ChangeSummaryItem[];
@@ -25,8 +27,11 @@ export interface GroupInput {
 export function todayGroupOf(p: GroupInput, today: string): TodayGroup {
   // Only a visit opened today counts for the three visit groups; an older visit is history.
   if (p.last_visit_date !== today) return p.has_plan_items_expected ? "expected" : "nothing_new";
-  if (p.prep_status === "ready") return "ready";
-  const hasSomething = p.current_visit_document_count > 0 || p.sign_off_count > 0 || p.change_summary_items.length > 0;
+  // A ready visit whose checks fail now is not shown as ready: staff are preparing it again.
+  if (p.prep_status === "ready") return p.changed_since_ready ? "preparing" : "ready";
+  // Plan-date and visit-elsewhere items only appear in the change line; they do not make a visit "in preparation".
+  const hasSomething = p.current_visit_document_count > 0 || p.sign_off_count > 0 ||
+    p.change_summary_items.some((i) => i.kind !== "plan_past" && i.kind !== "elsewhere");
   return hasSomething ? "preparing" : "nothing_new";
 }
 
@@ -78,3 +83,8 @@ export function ageOn(dob: string | null, today: string): number | null {
 export function localToday(now = new Date()): string {
   return `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, "0")}-${String(now.getDate()).padStart(2, "0")}`;
 }
+
+// The patient list is fetched up to a fixed number of rows; when it fills up, say so rather than show wrong group counts.
+export const PATIENT_FETCH_LIMIT = 500;
+export const truncationNote = (shown: number): string | null =>
+  shown >= PATIENT_FETCH_LIMIT ? `Showing the first ${shown} patients; group counts cover only these. Search by name to find others.` : null;
