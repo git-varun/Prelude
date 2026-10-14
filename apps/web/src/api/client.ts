@@ -168,6 +168,8 @@ export interface DocumentRecord {
   patient_name_on_report: string | null;
   lab_name: string | null;
   outside_encounter_id: string | null;
+  /** Set by the single-document endpoints (source view, review). */
+  outside_encounter?: OutsideEncounterRef | null;
 }
 
 export type CheckState = "unchecked" | "correct" | "incorrect";
@@ -202,6 +204,7 @@ export interface ReviewFact {
   excluded_at: string | null;
   printed_flag: string | null;
   parse_checks: { failed?: string[] } | null;
+  outside_encounter: OutsideEncounterRef | null;
 }
 
 export interface CheckSummary {
@@ -312,6 +315,7 @@ export interface WatchlistPoint {
   unit: string | null;
   as_of_date: string;
   verification_state: string;
+  outside_encounter: OutsideEncounterRef | null;
 }
 
 export interface WatchlistEntry {
@@ -388,6 +392,7 @@ export interface MarkerTrendPoint {
   reference_range: string | null;
   as_of_date: string;
   visit_id: string;
+  outside_encounter: OutsideEncounterRef | null;
 }
 
 export interface MarkerTrend {
@@ -406,6 +411,7 @@ export interface TimelineMarkerPoint {
   source_location: string | null;
   source_snippet: string | null;
   fallback_level: "exact" | "page" | "document";
+  outside_encounter: OutsideEncounterRef | null;
 }
 
 export interface TimelineMarkerSeries {
@@ -424,6 +430,7 @@ export interface TimelineEvent {
   source_location: string | null;
   source_snippet: string | null;
   fallback_level: "exact" | "page" | "document";
+  outside_encounter: OutsideEncounterRef | null;
 }
 
 export interface SummaryItem {
@@ -470,6 +477,7 @@ export interface PlanItem {
   suggested_document: { id: string; label: string } | null;
   source_fact_id: string | null;
   source_document_id: string | null;
+  outside_encounter: OutsideEncounterRef | null;
 }
 
 export interface PatientPlan {
@@ -513,6 +521,7 @@ export interface ConflictFact {
   source_page: number | null;
   source_location: string | null;
   source_snippet: string | null;
+  outside_encounter: OutsideEncounterRef | null;
 }
 
 export interface ConflictDetail {

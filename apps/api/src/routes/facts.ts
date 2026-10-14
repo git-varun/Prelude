@@ -2,7 +2,7 @@ import { sql } from "../db/client";
 import { jsonError } from "../middleware/auth";
 import type { AuthedUser } from "../middleware/auth";
 import { applyCorrection, isUuid, parseCorrection } from "../services/corrections";
-import { provenanceFor } from "../services/provenance";
+import { provenanceFor, outsideRefOf, outsideRefForDocument } from "../services/provenance";
 import {
   MAX_BATCH, SIGN_OFF_REASONS, reopenOne, signOffBatch, signOffOne, undoSignOffBatch, type BatchResult,
 } from "../services/signOff";
@@ -27,15 +27,18 @@ async function queryFacts(exec: Exec, filter: { documentId?: string; factId?: st
              SELECT c.id FROM conflicts c
              WHERE (c.fact_id_a = f.id OR c.fact_id_b = f.id) AND c.status IN ('open', 'annotated') AND ${CONFLICT_SIDES_LIVE}
              LIMIT 1
-           ) AS blocking_conflict_id
+           ) AS blocking_conflict_id,
+           oe.id AS oe_id, oe.facility AS oe_facility, to_char(oe.encounter_date, 'YYYY-MM-DD') AS oe_date
     FROM facts f
+    LEFT JOIN outside_encounters oe ON oe.id = f.outside_encounter_id
     LEFT JOIN tracked_markers tm ON tm.id = f.tracked_marker_id
     WHERE (${filter.documentId ?? null}::uuid IS NULL OR f.document_id = ${filter.documentId ?? null}::uuid)
       AND (${filter.factId ?? null}::uuid IS NULL OR f.id = ${filter.factId ?? null}::uuid)
     ORDER BY f.source_page NULLS LAST, tm.marker_name NULLS LAST, f.field_type, f.id
   `;
-  return rows.map((row: any) => ({
+  return rows.map(({ oe_id, oe_facility, oe_date, ...row }: any) => ({
     ...row,
+    outside_encounter: outsideRefOf({ oe_id, oe_facility, oe_date }),
     fallback_level: provenanceFor(row.document_id, row.source_page, row.source_location, row.source_snippet).fallback_level,
   }));
 }
@@ -55,7 +58,7 @@ export async function getDocumentFacts(req: Request & { params: { id: string } }
   // Every fact of the document counts; an excluded fact is check_state 'incorrect'.
   const check_summary = { total: facts.length, correct: 0, incorrect: 0, unchecked: 0 };
   for (const f of facts as any[]) check_summary[f.check_state as "correct" | "incorrect" | "unchecked"]++;
-  return Response.json({ document, facts, tracked_markers: trackedMarkers, check_summary });
+  return Response.json({ document: { ...document, outside_encounter: await outsideRefForDocument(document.outside_encounter_id) }, facts, tracked_markers: trackedMarkers, check_summary });
 }
 
 export async function patchFact(req: Request & { params: { id: string } }, user: AuthedUser): Promise<Response> {

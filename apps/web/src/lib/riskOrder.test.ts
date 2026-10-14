@@ -9,7 +9,7 @@ function fact(over: Partial<ReviewFact>): ReviewFact {
     as_of_date: "2026-01-01", needs_manual_date: false, coverage_status: "value_found", verification_state: "unverified",
     has_blocking_conflict: false, blocking_conflict_id: null, source_page: 1, source_location: null, source_snippet: null,
     fallback_level: "exact", check_state: "unchecked", checked_by: null, checked_at: null, error_type: null,
-    excluded_at: null, printed_flag: null, parse_checks: null, ...over,
+    excluded_at: null, printed_flag: null, parse_checks: null, outside_encounter: null, ...over,
   };
 }
 

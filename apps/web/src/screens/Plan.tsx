@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { api, type PatientPlan, type PlanItem, type PlanItemType } from "../api/client";
 import { navigate } from "../router";
+import { ElsewhereTag } from "../components/SummaryBits";
 
 const TYPE_LABELS: Record<PlanItemType, string> = { test: "Test", procedure: "Procedure", review: "Review" };
 
@@ -35,16 +36,19 @@ function SourceLink({ item }: { item: PlanItem }) {
   if (!item.source_fact_id || !item.source_document_id) return null;
   const href = `/documents/${item.source_document_id}/source?fact=${item.source_fact_id}`;
   return (
-    <a
-      className="source-link"
-      href={`#${href}`}
-      onClick={(e) => {
-        e.preventDefault();
-        navigate(href);
-      }}
-    >
-      Source
-    </a>
+    <>
+      <ElsewhereTag encounter={item.outside_encounter} />{" "}
+      <a
+        className="source-link"
+        href={`#${href}`}
+        onClick={(e) => {
+          e.preventDefault();
+          navigate(href);
+        }}
+      >
+        Source
+      </a>
+    </>
   );
 }
 

@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { api, type PatientSummary, type SummaryItem } from "../api/client";
-import { NOT_EXTRACTED_TEXT, NOT_FOUND_TEXT, SourceLink, sourceLine } from "../components/SummaryBits";
+import { ElsewhereTag, NOT_EXTRACTED_TEXT, NOT_FOUND_TEXT, SourceLink, sourceLine } from "../components/SummaryBits";
 import { navigate } from "../router";
 
 function Section({ title, children }: { title: string; children: ReactNode }) {
@@ -177,7 +177,10 @@ export function Summary({ patientId }: { patientId: string }) {
               <div className={`summary-row summary-row--procedure${item.outside_encounter ? " is-elsewhere" : ""}`} key={item.fact_id}>
                 <span className="muted">{item.as_of_date ?? "No date"}</span>
                 <span>{item.text}</span>
-                <span className="muted">{item.outside_encounter ? `${item.outside_encounter.facility} · elsewhere` : (item.facility ?? NOT_FOUND_TEXT)}</span>
+                <span className="muted">
+                  {item.outside_encounter ? item.outside_encounter.facility : (item.facility ?? NOT_FOUND_TEXT)}{" "}
+                  <ElsewhereTag encounter={item.outside_encounter} />
+                </span>
                 <span>
                   <span className="summary-row__source" style={{ marginRight: 8 }}>
                     {sourceLine(item)}

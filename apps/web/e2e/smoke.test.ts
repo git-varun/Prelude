@@ -2380,7 +2380,7 @@ test("Snapshot: 'For this visit' follows the 7 rules in order, tags each row, fo
   expect(await page.getByRole("heading", { name: "CA-125" }).count()).toBe(0);
   await page.getByRole("checkbox", { name: "Select CEA for sign-off" }).check();
   await page.getByRole("button", { name: "Sign off 1 reviewed" }).waitFor();
-  await page.getByRole("button", { name: "Unchanged since last signed-off value · 1 ▸" }).click();
+  await page.getByRole("button", { name: "Unchanged since last signed-off value here · 1 ▸" }).click();
   await page.getByRole("heading", { name: "CA-125" }).waitFor();
 
   // The rule list is hidden until asked for.
@@ -2418,13 +2418,52 @@ test("Snapshot: compare defaults to 'Last visit here', switching reloads with ?c
   await page.getByText(/was 3\.0 ng\/mL/).waitFor();
   expect(await page.getByTestId("elsewhere-tag").count()).toBe(0);
   expect(seen).toEqual([null]);
+  await page.getByRole("heading", { name: "Since last visit here" }).waitFor();
+  expect(await page.getByTestId("compare-baseline").textContent()).toBe("Compared with: last visit here 2026-01-01");
 
   await any.click();
   await page.getByText(/was 8\.0 ng\/mL/).waitFor();
   expect(await any.getAttribute("aria-pressed")).toBe("true");
   expect(seen.at(-1)).toBe("any");
+  await page.getByRole("heading", { name: "Since latest visit anywhere" }).waitFor();
+  expect(await page.getByTestId("compare-baseline").textContent()).toBe("Compared with: Max Hospital 2026-01-20");
   await page.getByTestId("elsewhere-tag").first().waitFor();
   expect(await page.getByTestId("elsewhere-tag").first().textContent()).toBe("visit elsewhere · Max Hospital");
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Snapshot: with no previous visit here, 'Latest anywhere' still shows the since-last-visit section with its baseline", async () => {
+  const bodyFor = (param: string | null) =>
+    snapshotBody({
+      previous_visit: { id: null, visit_date: null },
+      compare: { mode: param === "any" ? "any" : "here", last_here: null, latest_any: { facility: "Max Hospital", date: "2026-01-20" } },
+    });
+  const { page, errors } = await openSnapshot("staff", bodyFor);
+  await page.getByRole("button", { name: "Latest anywhere · Max Hospital 2026-01-20" }).click();
+  await page.getByRole("heading", { name: "Since latest visit anywhere" }).waitFor();
+  expect(await page.getByTestId("compare-baseline").textContent()).toBe("Compared with: Max Hospital 2026-01-20");
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Conflict screen: a side from a visit elsewhere is labelled, the other side is not", async () => {
+  const side = (id: string, outside: unknown) => ({
+    id, patient_id: "p1", visit_id: "v1", document_id: `doc-${id}`, tracked_marker_id: null, tracked_marker_name: null,
+    field_type: "treatment_regimen", value: id === "fa" ? "FOLFOX" : "FOLFIRI", unit: null, reference_range: null,
+    as_of_date: "2026-01-20", coverage_status: "value_found", verification_state: "unverified",
+    source_page: 1, source_location: null, source_snippet: null, outside_encounter: outside,
+  });
+  const { page, errors } = await openRoutedPage("/conflicts/c1", (path) =>
+    path === "/conflicts/c1"
+      ? {
+          conflict: { id: "c1", fact_id_a: "fa", fact_id_b: "fb", status: "open", authoritative_fact_id: null, annotation_note: null, resolution_note: null, resolved_by: null, resolved_at: null },
+          fact_a: side("fa", MAX), fact_b: side("fb", null),
+        }
+      : undefined);
+  await page.getByRole("heading", { name: "Conflict" }).waitFor();
+  const tags = await page.getByTestId("elsewhere-tag").allTextContents();
+  expect(tags).toEqual(["visit elsewhere · Max Hospital"]);
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);

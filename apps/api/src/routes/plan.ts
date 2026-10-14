@@ -2,6 +2,7 @@ import { sql } from "../db/client";
 import { jsonError } from "../middleware/auth";
 import type { AuthedUser } from "../middleware/auth";
 import { LIVE_FACT_FILTER } from "../services/delta";
+import { outsideRefOf } from "../services/provenance";
 import { loadCandidateDocuments } from "../services/carePlan";
 import { approximateDate, derivePlanStatus, statedDate, suggestMatches, type PlanItemType } from "../services/carePlanLogic";
 
@@ -17,7 +18,8 @@ function isRealDate(s: unknown): s is string {
 
 const ITEM_COLUMNS = sql`
   i.id, i.type, i.text, to_char(i.advised_at, 'YYYY-MM-DD') AS advised_at, i.source_fact_id,
-  i.matched_document_id, i.match_confirmed_at, f.document_id AS source_document_id
+  i.matched_document_id, i.match_confirmed_at, f.document_id AS source_document_id,
+  oe.id AS oe_id, oe.facility AS oe_facility, to_char(oe.encounter_date, 'YYYY-MM-DD') AS oe_date
 `;
 
 export async function getPatientPlan(req: Request & { params: { id: string } }): Promise<Response> {
@@ -29,6 +31,7 @@ export async function getPatientPlan(req: Request & { params: { id: string } }):
   const rows = await sql`
     SELECT ${ITEM_COLUMNS} FROM care_plan_items i
     LEFT JOIN facts f ON f.id = i.source_fact_id
+    LEFT JOIN outside_encounters oe ON oe.id = f.outside_encounter_id
     WHERE i.patient_id = ${patientId}
       AND (i.source_fact_id IS NULL OR (f.verification_state = 'oncologist_signed_off' AND ${LIVE_FACT_FILTER}))
     ORDER BY i.advised_at DESC, i.created_at DESC, i.id
@@ -59,6 +62,7 @@ export async function getPatientPlan(req: Request & { params: { id: string } }):
       suggested_document: suggested ? { id: suggested.id, label: suggested.label } : null,
       source_fact_id: (r.source_fact_id as string | null) ?? null,
       source_document_id: (r.source_document_id as string | null) ?? null,
+      outside_encounter: outsideRefOf(r),
     };
   });
   // The most recently advised review is "the next review".

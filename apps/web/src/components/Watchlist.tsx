@@ -3,7 +3,7 @@ import { RoleGate } from "../auth/AuthContext";
 import { api, ApiError, type WatchlistEntry, type PatientSnapshot } from "../api/client";
 import { flagForRange, parseReferenceRange } from "../lib/referenceRange";
 import { navigate } from "../router";
-import { elsewhereLabel, trustLabel } from "./SummaryBits";
+import { ElsewhereTag, elsewhereMark, elsewhereSuffix, trustLabel } from "./SummaryBits";
 
 const W = 120;
 const H = 32;
@@ -15,7 +15,7 @@ const numeric = (v: string | null) => (v === null || v.trim() === "" ? NaN : Num
 // and the latest value's out-of-range state is a hollow emphasis dot. In an open conflict nothing is emphasised.
 function Sparkline({ entry, outOfRange }: { entry: WatchlistEntry; outOfRange: boolean }) {
   const pts = entry.sparkline
-    .map((p) => ({ n: numeric(p.value), signed: p.verification_state === "oncologist_signed_off" }))
+    .map((p) => ({ n: numeric(p.value), signed: p.verification_state === "oncologist_signed_off", date: p.as_of_date, enc: p.outside_encounter }))
     .filter((p) => Number.isFinite(p.n));
   if (pts.length === 0) return null;
   const nums = pts.map((p) => p.n);
@@ -38,7 +38,9 @@ function Sparkline({ entry, outOfRange }: { entry: WatchlistEntry; outOfRange: b
         const hollow = !p.signed || (emphasis && outOfRange);
         return (
           <circle key={i} cx={x(i)} cy={y(p.n)} r={emphasis ? 3 : 2} strokeWidth={1.5} stroke={stroke}
-            fill={hollow ? "var(--color-surface)" : stroke} />
+            fill={hollow ? "var(--color-surface)" : stroke} {...(p.enc ? elsewhereMark(p.enc, stroke) : {})}>
+            <title>{`${p.date}: ${p.n}${elsewhereSuffix(p.enc)}`}</title>
+          </circle>
         );
       })}
     </svg>
@@ -72,6 +74,7 @@ function Cell({ entry }: { entry: WatchlistEntry }) {
           Not in this visit ·{" "}
           {seen ? `last ${seen.value}${seen.unit ? ` ${seen.unit}` : ""} on ${seen.as_of_date}` : "no earlier value"}
         </div>
+        {seen?.outside_encounter && <div><ElsewhereTag encounter={seen.outside_encounter} /></div>}
         {seen && !seen.document_id && <div className="muted">{NO_DOCUMENT}</div>}
       </>
     );
@@ -86,7 +89,6 @@ function Cell({ entry }: { entry: WatchlistEntry }) {
     flag ? `${flag} reference range` : null,
     latest.was ? `was ${latest.was.value ?? "—"}${latest.was.unit ? ` ${latest.was.unit}` : ""}` : null,
     latest.verification_state ? trustLabel(latest.verification_state) : null,
-    latest.outside_encounter ? elsewhereLabel(latest.outside_encounter.facility) : null,
     entry.unit_changed ? "unit changed — earlier values not plotted" : null,
   ].filter(Boolean);
   const body = (
@@ -109,6 +111,7 @@ function Cell({ entry }: { entry: WatchlistEntry }) {
       )}
       <Sparkline entry={entry} outOfRange={flag !== null} />
       <div className="muted">{meta.join(" · ")}</div>
+      {latest.outside_encounter && <div><ElsewhereTag encounter={latest.outside_encounter} /></div>}
       {!latest.document_id && !entry.conflict && <div className="muted">{NO_DOCUMENT}</div>}
     </>
   );

@@ -98,6 +98,7 @@ function toReviewFact(field: SnapshotField, patientId: string, visitId: string):
     excluded_at: null,
     printed_flag: null,
     parse_checks: null,
+    outside_encounter: field.outside_encounter,
   };
 }
 
@@ -203,12 +204,7 @@ function FieldEntry({
         trackedMarkers={[]}
         onChanged={onChanged}
         onSignedOff={batch.onSignedOff}
-        badge={
-          <>
-            <ElsewhereTag encounter={field.outside_encounter} />
-            {field.imaging_modality && <span className="tag">{field.imaging_modality.replace(/_/g, " ")}</span>}
-          </>
-        }
+        badge={field.imaging_modality && <span className="tag">{field.imaging_modality.replace(/_/g, " ")}</span>}
       />
       {showTrend && field.tracked_marker_id && (
         <div className="snapshot-field__trend">
@@ -283,12 +279,22 @@ function CompareControl({ data, mode, onChange }: { data: PatientSnapshot; mode:
   );
 }
 
+// What "Since last visit" is measured against: the newest of the last visit here and (in any-mode) the latest visit elsewhere.
+function baselineText(data: PatientSnapshot): string {
+  const { mode, last_here, latest_any } = data.compare;
+  if (mode === "any" && latest_any && (!last_here || latest_any.date >= last_here.date)) return `${latest_any.facility} ${latest_any.date}`;
+  return last_here ? `last visit here ${last_here.date}` : "no earlier visit";
+}
+
 export function Snapshot({ patientId }: { patientId: string }) {
   const [data, setData] = useState<PatientSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
-  // Local state only: not persisted, always starts on "Last visit here" for a patient.
-  const [compare, setCompare] = useState<CompareMode>("here");
+  // Local state only: not persisted. Keyed by patient, so a patient change reads "here" on the very first load
+  // (never the previous patient's mode) without an effect that resets it afterwards.
+  const [compareChoice, setCompareChoice] = useState<{ patientId: string; mode: CompareMode }>({ patientId, mode: "here" });
+  const compare: CompareMode = compareChoice.patientId === patientId ? compareChoice.mode : "here";
+  const setCompare = (mode: CompareMode) => setCompareChoice({ patientId, mode });
 
   const [heldCount, setHeldCount] = useState(0);
   const [planItems, setPlanItems] = useState<PlanItem[]>([]);
@@ -311,7 +317,6 @@ export function Snapshot({ patientId }: { patientId: string }) {
   useEffect(() => {
     let current = true;
     setHeldCount(0);
-    setCompare("here");
     setPlanItems([]);
     setPlanError(false);
     setFoldChoice(null);
@@ -505,9 +510,10 @@ export function Snapshot({ patientId }: { patientId: string }) {
         <CompareControl data={data} mode={compare} onChange={setCompare} />
       </div>
 
-      {data.previous_visit.id !== null && (
+      {(data.previous_visit.id !== null || (compare === "any" && data.compare.latest_any !== null)) && (
         <section aria-labelledby="section-since-last-visit" style={{ marginBottom: 32 }}>
-          <h2 id="section-since-last-visit">Since last visit</h2>
+          <h2 id="section-since-last-visit">{compare === "any" ? "Since latest visit anywhere" : "Since last visit here"}</h2>
+          <p className="muted" data-testid="compare-baseline" style={{ marginTop: 0 }}>Compared with: {baselineText(data)}</p>
           <DeltaSummary fields={data.since_last_visit} rank={rank} />
         </section>
       )}
@@ -577,7 +583,7 @@ export function Snapshot({ patientId }: { patientId: string }) {
         {foldedCount + placeholders.length > 0 && (
           <div style={{ marginTop: 16 }}>
             <button className="btn btn--ghost" type="button" aria-expanded={showFolded} onClick={() => setFoldChoice(!showFolded)}>
-              Unchanged since last signed-off value · {foldedCount}{checkCount > 0 && ` · ${checkCount} need a check`} {showFolded ? "▾" : "▸"}
+              Unchanged since last signed-off value {compare === "any" ? "anywhere" : "here"} · {foldedCount}{checkCount > 0 && ` · ${checkCount} need a check`} {showFolded ? "▾" : "▸"}
             </button>
             {showFolded && (
               <div>

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, type PatientSummary } from "../api/client";
 import { navigate } from "../router";
+import { ElsewhereTag } from "../components/SummaryBits";
 
 export function PatientList() {
   const [patients, setPatients] = useState<PatientSummary[] | null>(null);
@@ -87,8 +88,8 @@ export function PatientList() {
                 {" · "}
                 {p.last_visit_date ? `last visit ${p.last_visit_date}` : "no visits yet"}
                 {p.latest_elsewhere && (
-                  <span className="tag tag--elsewhere" style={{ marginLeft: 8 }} data-testid="elsewhere-note">
-                    visit elsewhere: {p.latest_elsewhere.facility} {p.latest_elsewhere.date}
+                  <span style={{ marginLeft: 8 }} data-testid="elsewhere-note">
+                    <ElsewhereTag encounter={{ id: "", ...p.latest_elsewhere }} /> {p.latest_elsewhere.date}
                   </span>
                 )}
               </span>

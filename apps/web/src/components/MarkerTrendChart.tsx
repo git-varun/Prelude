@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, type MarkerTrendPoint } from "../api/client";
 import { buildTrendChartModel, bandRangeForPoints } from "../lib/trendChart";
+import { elsewhereMark, elsewhereSuffix } from "./SummaryBits";
 
 const WIDTH = 240;
 const HEIGHT = 80;
@@ -88,11 +89,12 @@ export function MarkerTrendChart({
         stroke="var(--color-chart-line)"
         strokeWidth={2}
       />
-      {model.points.map((p) => (
-        <circle key={p.date} cx={x(new Date(p.date).getTime())} cy={y(p.value)} r={3} fill="var(--color-chart-line)">
+      {model.points.map((p, i) => (
+        <circle key={p.date} cx={x(new Date(p.date).getTime())} cy={y(p.value)} r={3} {...elsewhereMark(points[i]!.outside_encounter, "var(--color-chart-line)")}>
           <title>
             {p.date}: {p.value}
             {unitSuffix}
+            {elsewhereSuffix(points[i]!.outside_encounter)}
           </title>
         </circle>
       ))}

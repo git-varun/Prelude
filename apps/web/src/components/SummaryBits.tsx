@@ -22,6 +22,15 @@ export function ElsewhereTag({ encounter }: { encounter: OutsideEncounterRef | n
   return <span className="tag tag--elsewhere" data-testid="elsewhere-tag">{elsewhereLabel(encounter.facility)}</span>;
 }
 
+// Chart points: a dashed hollow circle (shape, never colour) marks a value from a visit elsewhere; the tooltip carries the label.
+export function elsewhereMark(encounter: OutsideEncounterRef | null | undefined, color: string) {
+  return encounter
+    ? { fill: "var(--color-surface)", stroke: color, strokeWidth: 1.5, strokeDasharray: "2 1.5" }
+    : { fill: color };
+}
+export const elsewhereSuffix = (encounter: OutsideEncounterRef | null | undefined) =>
+  encounter ? ` — ${elsewhereLabel(encounter.facility)}` : "";
+
 export function sourceHref(item: SummaryItem): string {
   return `/documents/${item.document_id}/source?fact=${item.fact_id}`;
 }

@@ -6,7 +6,7 @@ import {
   deltaKey, deltaForCurrentFact, deltaForAbsentField, loadDeltaBaselines, LIVE_FACT_FILTER, type CompareMode, CONFLICT_SIDES_LIVE,
   type DeltaBaseline, type DeltaStatus,
 } from "../services/delta";
-import { provenanceFor, type Provenance } from "../services/provenance";
+import { provenanceFor, outsideRefOf, type Provenance } from "../services/provenance";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (s: unknown): s is string => typeof s === "string" && UUID.test(s);
@@ -597,14 +597,16 @@ async function loadPins(
     ORDER BY tm.is_pinned DESC, tm.pinned_at ASC NULLS LAST, tm.marker_name ASC, tm.id
   `;
   const pinned = rows.filter((r: any) => r.is_pinned);
-  type PinPoint = { fact_id: string; document_id: string | null; value: string; unit: string | null; as_of_date: string; verification_state: string };
+  type PinPoint = { fact_id: string; document_id: string | null; value: string; unit: string | null; as_of_date: string; verification_state: string; outside_encounter: OutsideRef | null };
   const history = new Map<string, PinPoint[]>();
   if (pinned.length > 0) {
     const points = await sql`
       SELECT * FROM (
         SELECT f.tracked_marker_id, f.id AS fact_id, f.document_id, f.verification_state, f.value, f.unit, to_char(f.as_of_date, 'YYYY-MM-DD') AS as_of_date,
+               oe.id AS oe_id, oe.facility AS oe_facility, to_char(oe.encounter_date, 'YYYY-MM-DD') AS oe_date,
                ROW_NUMBER() OVER (PARTITION BY f.tracked_marker_id ORDER BY f.as_of_date DESC, f.id DESC) AS rn
         FROM facts f
+        LEFT JOIN outside_encounters oe ON oe.id = f.outside_encounter_id
         WHERE f.patient_id = ${patientId} AND f.field_type = 'marker_value' AND f.value IS NOT NULL
           AND f.as_of_date IS NOT NULL AND f.tracked_marker_id IN ${sql(pinned.map((r: any) => r.id))}
           AND ${LIVE_FACT_FILTER}
@@ -612,7 +614,8 @@ async function loadPins(
     `;
     for (const pt of points) {
       const list = history.get(pt.tracked_marker_id) ?? [];
-      list.push({ fact_id: pt.fact_id, document_id: pt.document_id, value: pt.value, unit: pt.unit, as_of_date: pt.as_of_date, verification_state: pt.verification_state });
+      list.push({ fact_id: pt.fact_id, document_id: pt.document_id, value: pt.value, unit: pt.unit, as_of_date: pt.as_of_date, verification_state: pt.verification_state,
+        outside_encounter: pt.oe_id ? { id: pt.oe_id, facility: pt.oe_facility, date: pt.oe_date } : null });
       history.set(pt.tracked_marker_id, list);
     }
   }
@@ -769,14 +772,19 @@ export async function getMarkerTrend(
   `;
   if (!marker) return jsonError(404, "not_found", "Marker not found.");
 
-  const points = await sql`
-    SELECT f.id AS fact_id, f.value, f.unit, f.reference_range, to_char(f.as_of_date, 'YYYY-MM-DD') AS as_of_date, f.visit_id
+  const rawPoints = await sql`
+    SELECT f.id AS fact_id, f.value, f.unit, f.reference_range, to_char(f.as_of_date, 'YYYY-MM-DD') AS as_of_date, f.visit_id,
+           oe.id AS oe_id, oe.facility AS oe_facility, to_char(oe.encounter_date, 'YYYY-MM-DD') AS oe_date
     FROM facts f
+    LEFT JOIN outside_encounters oe ON oe.id = f.outside_encounter_id
     WHERE f.tracked_marker_id = ${trackedMarkerId} AND f.verification_state = 'oncologist_signed_off'
       AND ${LIVE_FACT_FILTER}
     ORDER BY f.as_of_date ASC
   `;
 
+  const points = rawPoints.map(({ oe_id, oe_facility, oe_date, ...p }: any) => ({
+    ...p, outside_encounter: oe_id ? { id: oe_id, facility: oe_facility, date: oe_date } : null,
+  }));
   return Response.json({ marker_name: marker.marker_name, points });
 }
 
@@ -792,6 +800,9 @@ interface TimelineMarkerRow {
   source_page: number | null;
   source_location: string | null;
   source_snippet: string | null;
+  oe_id: string | null;
+  oe_facility: string | null;
+  oe_date: string | null;
 }
 
 // Full patient history (every visit), not scoped to the current visit like Snapshot --
@@ -806,9 +817,11 @@ async function loadTimelineMarkers(patientId: string): Promise<TimelineMarkerRow
   return sql`
     SELECT tm.id AS tracked_marker_id, tm.marker_name,
            f.id AS fact_id, f.value, f.unit, to_char(f.as_of_date, 'YYYY-MM-DD') AS as_of_date, f.visit_id,
-           f.document_id, f.source_page, f.source_location, f.source_snippet
+           f.document_id, f.source_page, f.source_location, f.source_snippet,
+           oe.id AS oe_id, oe.facility AS oe_facility, to_char(oe.encounter_date, 'YYYY-MM-DD') AS oe_date
     FROM tracked_markers tm
     JOIN facts f ON f.tracked_marker_id = tm.id
+    LEFT JOIN outside_encounters oe ON oe.id = f.outside_encounter_id
     WHERE tm.patient_id = ${patientId}
       AND f.field_type = 'marker_value'
       AND f.verification_state = 'oncologist_signed_off'
@@ -834,7 +847,7 @@ function groupTimelineMarkers(rows: TimelineMarkerRow[]) {
       points: {
         fact_id: string; value: string; unit: string | null; as_of_date: string; visit_id: string;
         document_id: string; source_page: number | null; source_location: string | null;
-        source_snippet: string | null; fallback_level: "exact" | "page" | "document";
+        source_snippet: string | null; fallback_level: "exact" | "page" | "document"; outside_encounter: OutsideRef | null;
       }[];
     }
   >();
@@ -848,7 +861,7 @@ function groupTimelineMarkers(rows: TimelineMarkerRow[]) {
     entry.points.push({
       fact_id: r.fact_id, value: r.value, unit: r.unit, as_of_date: r.as_of_date, visit_id: r.visit_id,
       document_id: p.document_id, source_page: p.source_page, source_location: p.source_location,
-      source_snippet: p.source_snippet, fallback_level: p.fallback_level,
+      source_snippet: p.source_snippet, fallback_level: p.fallback_level, outside_encounter: outsideRefOf(r),
     });
   }
   return [...byMarker.values()];
@@ -863,6 +876,9 @@ interface TimelineEventRow {
   source_page: number | null;
   source_location: string | null;
   source_snippet: string | null;
+  oe_id: string | null;
+  oe_facility: string | null;
+  oe_date: string | null;
 }
 
 // Same signed-off + LIVE_FACT_FILTER + full-history rules as loadTimelineMarkers, for
@@ -873,8 +889,10 @@ async function loadTimelineEvents(
 ): Promise<TimelineEventRow[]> {
   return sql`
     SELECT f.id AS fact_id, f.value, to_char(f.as_of_date, 'YYYY-MM-DD') AS as_of_date, f.visit_id,
-           f.document_id, f.source_page, f.source_location, f.source_snippet
+           f.document_id, f.source_page, f.source_location, f.source_snippet,
+           oe.id AS oe_id, oe.facility AS oe_facility, to_char(oe.encounter_date, 'YYYY-MM-DD') AS oe_date
     FROM facts f
+    LEFT JOIN outside_encounters oe ON oe.id = f.outside_encounter_id
     WHERE f.patient_id = ${patientId} AND f.field_type = ${fieldType}
       AND f.verification_state = 'oncologist_signed_off'
       AND f.as_of_date IS NOT NULL
@@ -897,6 +915,7 @@ function timelineEventObject(r: TimelineEventRow) {
     source_location: p.source_location,
     source_snippet: p.source_snippet,
     fallback_level: p.fallback_level,
+    outside_encounter: outsideRefOf(r),
   };
 }
 

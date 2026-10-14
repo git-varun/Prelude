@@ -4,6 +4,7 @@ import { api, ApiError, type ReviewFact, type TrackedMarker } from "../api/clien
 import { flagForRange } from "../lib/referenceRange";
 import { navigate } from "../router";
 import { FactCheck } from "./FactCheck";
+import { ElsewhereTag } from "./SummaryBits";
 
 const RANGE_FLAG_LABEL: Record<"above" | "below", string> = {
   above: "Above laboratory reference interval",
@@ -98,6 +99,7 @@ export function FactCard({ fact, trackedMarkers, onChanged, badge, check, onSign
         <h2 style={{ margin: 0 }}>{heading}</h2>
         <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
           <span className={`tag ${needsReview ? "tag--pending" : ""}`}>{COVERAGE_LABELS[fact.coverage_status] ?? fact.coverage_status}</span>
+          <ElsewhereTag encounter={fact.outside_encounter} />
           {badge}
         </span>
         {fact.has_blocking_conflict && fact.blocking_conflict_id && (

@@ -4,6 +4,7 @@ import type { AuthedUser } from "../middleware/auth";
 import { deleteDocumentFile, documentFile, readOcrResult, saveDocumentFile, saveOcrResult } from "../services/storage";
 import { getExtractionProvider, getLlmExtractionProvider, getOcrProvider } from "../services/providerFactory";
 import { persistExtractedFacts } from "../services/facts";
+import { outsideRefForDocument } from "../services/provenance";
 import { detectConflicts } from "../services/rules";
 import { matchIdentity } from "../services/extraction/deterministic/identity";
 import { IMAGING_MODALITY_OPTIONS } from "@prelude/shared";
@@ -75,12 +76,21 @@ export async function uploadDocument(req: Request & { params: { id: string } }, 
     const rawDate = form.get("outside_date");
     const rawFacility = form.get("outside_facility");
     const date = typeof rawDate === "string" ? rawDate.trim() : "";
-    const facility = typeof rawFacility === "string" ? rawFacility.trim() : "";
-    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`)) || new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date) {
+    // Collapse inner whitespace so two spellings of one facility share an encounter.
+    const facility = typeof rawFacility === "string" ? rawFacility.replace(/\s+/g, " ").trim() : "";
+    const parsed = new Date(`${date}T00:00:00Z`);
+    const real = /^\d{4}-\d{2}-\d{2}$/.test(date) && !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === date;
+    if (!real) {
       return jsonError(400, "bad_request", "A document from another facility needs the date of that visit (YYYY-MM-DD).");
+    }
+    if (date < "1900-01-01" || date > new Date().toISOString().slice(0, 10)) {
+      return jsonError(400, "bad_request", "Date must be a real date not in the future");
     }
     if (!facility) {
       return jsonError(400, "bad_request", "A document from another facility needs the facility name.");
+    }
+    if (facility.length > 120) {
+      return jsonError(400, "bad_request", "Facility name must be 120 characters or fewer.");
     }
     outside = { date, facility };
   }
@@ -370,7 +380,7 @@ export async function getDocument(req: Request & { params: { id: string } }): Pr
     }
   }
 
-  return Response.json({ document, ocr });
+  return Response.json({ document: { ...document, outside_encounter: await outsideRefForDocument(document.outside_encounter_id) }, ocr });
 }
 
 // Streams the original uploaded file back, for the Source view to render (or probe for

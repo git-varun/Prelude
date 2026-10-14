@@ -45,7 +45,7 @@ export const CONFLICT_SIDES_LIVE = sql`
 
 // Most recent prior oncologist_signed_off fact per (field_type, tracked_marker_id), searched across the patient's whole visit history, not just the visit immediately before currentVisitDate.
 // AM-03: compare 'here' (default) uses only facts from visits here (outside_encounter_id null); 'any' also takes facts from
-// visits elsewhere, dated by the encounter's own date. 'any' never takes the current visit's own facts as a baseline.
+// visits elsewhere, dated by the encounter's own date. 'any' never takes the current visit's own here-facts as a baseline; outside facts uploaded under the current visit (the real upload flow) can be.
 export type CompareMode = "here" | "any";
 
 export async function loadDeltaBaselines(
@@ -67,7 +67,7 @@ export async function loadDeltaBaselines(
       WHERE f.patient_id = ${patientId} AND f.verification_state = 'oncologist_signed_off'
         AND COALESCE(oe.encounter_date, v.visit_date) < ${currentVisitDate}::date
         AND (${compare === "any"} OR f.outside_encounter_id IS NULL)
-        AND (${currentVisitId}::uuid IS NULL OR f.visit_id != ${currentVisitId}::uuid)
+        AND (${currentVisitId}::uuid IS NULL OR NOT (f.visit_id = ${currentVisitId}::uuid AND f.outside_encounter_id IS NULL))
         AND ${LIVE_FACT_FILTER}
     )
     SELECT field_type, tracked_marker_id, value, unit FROM prior WHERE rnk = 1

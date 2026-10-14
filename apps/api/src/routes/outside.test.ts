@@ -125,10 +125,11 @@ function snapReq(query = "") {
   return req;
 }
 
-test("compare=here ignores signed-off facts from visits elsewhere; compare=any uses the latest anywhere", async () => {
+test("compare=here ignores signed-off facts from visits elsewhere; compare=any uses the latest anywhere, even when uploaded under the current visit", async () => {
   [{ id: outsideEncId }] = await sql`INSERT INTO outside_encounters (patient_id, encounter_date, facility, confirmed_by) VALUES (${patientId}, '2026-02-20', 'Max Hospital', ${staff.id}) RETURNING id`;
   await seedFact(hereVisitId, "3.0", "2026-02-01", { signed: true });
-  await seedFact(hereVisitId, "8.0", "2026-02-20", { signed: true, encId: outsideEncId });
+  // The real flow: the outside report is uploaded under TODAY'S visit, so its facts carry the current visit_id.
+  await seedFact(currentVisitId, "8.0", "2026-02-20", { signed: true, encId: outsideEncId });
   currentFactId = await seedFact(currentVisitId, "9.0", "2026-03-01");
 
   const here = await loadDeltaBaselines(patientId, "2026-03-01");
@@ -211,4 +212,37 @@ test("the patient list reports a visit elsewhere only when it is newer than the 
   expect((await find()).latest_elsewhere).toBeNull(); // newest outside is 2026-02-26, latest visit here is 2026-03-01
   await sql`INSERT INTO outside_encounters (patient_id, encounter_date, facility, confirmed_by) VALUES (${patientId}, '2026-04-02', 'Newer Clinic', ${staff.id})`;
   expect((await find()).latest_elsewhere).toEqual({ facility: "Newer Clinic", date: "2026-04-02" });
+});
+
+test("compare=any: signed-off here-facts of the current visit are never their own baseline", async () => {
+  const own = await seedFact(currentVisitId, "55", "2026-03-02", { signed: true });
+  // A later "current" date lets the date rule alone admit the visit's own fact; only the visit/origin exclusion keeps it out.
+  const any = await loadDeltaBaselines(patientId, "2026-03-05", "any", currentVisitId);
+  expect(any.get(deltaKey("marker_value", markerId))?.value).toBe("8.0");
+  await sql`DELETE FROM facts WHERE id = ${own}`;
+});
+
+test("outside upload validation: impossible, ancient and future dates are 400 not 500; facility is capped", async () => {
+  const before = await encounterCount();
+  const tomorrow = new Date(Date.now() + 86_400_000).toISOString().slice(0, 10);
+  for (const outside_date of ["0000-01-01", "1899-12-31", tomorrow, "2999-01-01"]) {
+    const res = await uploadDocument(uploadReq({ outside: "true", outside_date, outside_facility: "Apollo" }), asAuthedUser(staff));
+    expect(res.status).toBe(400);
+  }
+  const future = await uploadDocument(uploadReq({ outside: "true", outside_date: tomorrow, outside_facility: "Apollo" }), asAuthedUser(staff));
+  expect(((await future.json()) as any).message).toBe("Date must be a real date not in the future");
+  const long = await uploadDocument(uploadReq({ outside: "true", outside_date: "2026-02-10", outside_facility: "x".repeat(121) }), asAuthedUser(staff));
+  expect(long.status).toBe(400);
+  const ok = await uploadDocument(uploadReq({ outside: "true", outside_date: "2026-02-10", outside_facility: "y".repeat(120) }), asAuthedUser(staff));
+  expect(ok.status).toBe(201);
+  expect(await encounterCount()).toBe(before + 1);
+});
+
+test("two spellings of a facility differing only in inner whitespace share one encounter", async () => {
+  const a = (await (await uploadDocument(uploadReq({ outside: "true", outside_date: "2026-01-05", outside_facility: "City  General   Hospital" }), asAuthedUser(staff))).json()) as any;
+  const b = (await (await uploadDocument(uploadReq({ outside: "true", outside_date: "2026-01-05", outside_facility: " city general hospital " }), asAuthedUser(staff))).json()) as any;
+  expect(a.outside_encounter_id).toBeTruthy();
+  expect(b.outside_encounter_id).toBe(a.outside_encounter_id);
+  const [enc] = await sql`SELECT facility FROM outside_encounters WHERE id = ${a.outside_encounter_id}`;
+  expect(enc!.facility).toBe("City General Hospital");
 });

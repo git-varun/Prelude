@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { api, ApiError, type OutsideEncounterEntry, type VisitHistoryEntry } from "../api/client";
 import { navigate } from "../router";
+import { ElsewhereTag } from "../components/SummaryBits";
 
 export function VisitHistory({ patientId }: { patientId: string }) {
   const [visits, setVisits] = useState<VisitHistoryEntry[] | null>(null);
@@ -67,7 +68,7 @@ export function VisitHistory({ patientId }: { patientId: string }) {
                   <span className="delta-row__name">{row.date}</span>
                   <span>{row.o.facility} · elsewhere</span>
                   <span className="delta-row__meta">
-                    <span className="tag tag--elsewhere">visit elsewhere · {row.o.facility}</span>
+                    <ElsewhereTag encounter={{ id: row.o.id, facility: row.o.facility, date: row.o.encounter_date }} />
                     <span className="tag">
                       {row.o.document_count} document{row.o.document_count === 1 ? "" : "s"}
                     </span>

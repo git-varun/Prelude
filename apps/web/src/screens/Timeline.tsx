@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type TimelineEvent, type TimelineResponse } from "../api/client";
 import { buildMultiSeriesModel, type MultiSeriesLine } from "../lib/trendChart";
 import { navigate } from "../router";
+import { elsewhereMark, elsewhereSuffix } from "../components/SummaryBits";
 
 const WIDTH = 760;
 const HEIGHT = 260;
@@ -40,7 +41,7 @@ function EventTicks({
           cx={x(new Date(e.as_of_date).getTime())}
           cy={y}
           r={4}
-          fill="var(--color-text-muted)"
+          {...elsewhereMark(e.outside_encounter, "var(--color-text-muted)")}
           role="button"
           tabIndex={0}
           aria-label={`${label} ${e.as_of_date}: ${e.value}`}
@@ -49,6 +50,7 @@ function EventTicks({
         >
           <title>
             {e.as_of_date}: {e.value}
+            {elsewhereSuffix(e.outside_encounter)}
           </title>
         </circle>
       ))}
@@ -99,6 +101,7 @@ export function Timeline({ patientId }: { patientId: string }) {
       ...p,
       fact_id: data.markers[i]!.points[j]!.fact_id,
       document_id: data.markers[i]!.points[j]!.document_id,
+      outside_encounter: data.markers[i]!.points[j]!.outside_encounter,
     })),
   }));
 
@@ -160,7 +163,7 @@ export function Timeline({ patientId }: { patientId: string }) {
                       cx={x(new Date(p.date).getTime())}
                       cy={yFromPct(p.pct)}
                       r={3}
-                      fill={MARKER_COLORS[i % MARKER_COLORS.length]}
+                      {...elsewhereMark(p.outside_encounter, MARKER_COLORS[i % MARKER_COLORS.length]!)}
                       role="button"
                       tabIndex={0}
                       aria-label={`${series.marker_name} ${p.date}: ${p.raw}${p.unit ? ` ${p.unit}` : ""}`}
@@ -170,6 +173,7 @@ export function Timeline({ patientId }: { patientId: string }) {
                       <title>
                         {series.marker_name} — {p.date}: {p.raw}
                         {p.unit ? ` ${p.unit}` : ""}
+                        {elsewhereSuffix(p.outside_encounter)}
                       </title>
                     </circle>
                   ))}

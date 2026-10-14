@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type DocumentFileCheck, type DocumentOcr, type DocumentRecord, type ReviewFact } from "../api/client";
 import { navigate } from "../router";
+import { ElsewhereTag } from "../components/SummaryBits";
 
 function pageText(ocr: DocumentOcr | null, pageNumber: number | null): string | null {
   if (!ocr) return null;
@@ -99,6 +100,7 @@ export function SourceView({ documentId, factId }: { documentId: string; factId:
           {document.imaging_modality && (
             <p className="muted" style={{ margin: 0 }}>{document.imaging_modality.replace(/_/g, " ")}</p>
           )}
+          <ElsewhereTag encounter={document.outside_encounter} />
         </div>
         <button className="btn btn--ghost" onClick={() => navigate(`/documents/${document.id}/review`)}>
           Back to review

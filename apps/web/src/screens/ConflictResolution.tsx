@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type ConflictDetail, type ConflictFact } from "../api/client";
 import { RoleGate } from "../auth/AuthContext";
 import { navigate } from "../router";
+import { ElsewhereTag } from "../components/SummaryBits";
 
 const FIELD_LABELS: Record<string, string> = {
   marker_value: "Marker value",
@@ -27,7 +28,10 @@ function FactPane({ fact, label, authoritative }: { fact: ConflictFact; label: s
     <div className="card">
       <div className="page-heading" style={{ marginBottom: 8 }}>
         <h3 style={{ margin: 0 }}>{label}</h3>
-        {authoritative && <span className="tag">Authoritative</span>}
+        <span style={{ display: "flex", gap: 8 }}>
+          <ElsewhereTag encounter={fact.outside_encounter} />
+          {authoritative && <span className="tag">Authoritative</span>}
+        </span>
       </div>
       <p className="muted" style={{ marginTop: 0 }}>
         {heading} · {fact.as_of_date ? `as of ${fact.as_of_date}` : "no as-of date"}

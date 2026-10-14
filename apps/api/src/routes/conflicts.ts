@@ -1,6 +1,7 @@
 import { sql } from "../db/client";
 import { jsonError } from "../middleware/auth";
 import type { AuthedUser } from "../middleware/auth";
+import { outsideRefOf } from "../services/provenance";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (s: unknown): s is string => typeof s === "string" && UUID.test(s);
@@ -10,12 +11,16 @@ async function factWithProvenance(id: string) {
     SELECT f.id, f.patient_id, f.visit_id, f.document_id, f.tracked_marker_id, tm.marker_name AS tracked_marker_name,
            f.field_type, f.value, f.unit, f.reference_range, to_char(f.as_of_date, 'YYYY-MM-DD') AS as_of_date,
            f.coverage_status, f.verification_state, f.source_page, f.source_location, f.source_snippet,
-           (f.excluded_at IS NOT NULL) AS excluded
+           (f.excluded_at IS NOT NULL) AS excluded,
+           oe.id AS oe_id, oe.facility AS oe_facility, to_char(oe.encounter_date, 'YYYY-MM-DD') AS oe_date
     FROM facts f
+    LEFT JOIN outside_encounters oe ON oe.id = f.outside_encounter_id
     LEFT JOIN tracked_markers tm ON tm.id = f.tracked_marker_id
     WHERE f.id = ${id}
   `;
-  return row;
+  if (!row) return row;
+  const { oe_id, oe_facility, oe_date, ...fact } = row;
+  return { ...fact, outside_encounter: outsideRefOf({ oe_id, oe_facility, oe_date }) };
 }
 
 export async function getConflict(req: Request & { params: { id: string } }, _user: AuthedUser): Promise<Response> {

@@ -206,6 +206,11 @@ export function Upload({ patientId }: { patientId: string }) {
               This document is from another facility
             </label>
           </div>
+          {!fromElsewhere && sourceOrigin.startsWith("outside_") && (
+            <p className="muted" data-testid="outside-origin-note">
+              This document is marked as from outside but will be filed as a visit here. Tick 'from another facility' to record it as a visit elsewhere.
+            </p>
+          )}
           {fromElsewhere && (
             <>
               <div className="field">
