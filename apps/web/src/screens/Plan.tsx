@@ -2,6 +2,8 @@ import { useCallback, useEffect, useRef, useState, type FormEvent } from "react"
 import { api, type PatientPlan, type PlanItem, type PlanItemType } from "../api/client";
 import { navigate } from "../router";
 import { ElsewhereTag } from "../components/SummaryBits";
+import { RoleGate } from "../auth/AuthContext";
+import { ReportRequestBanner } from "../components/ReportRequestBanner";
 
 const TYPE_LABELS: Record<PlanItemType, string> = { test: "Test", procedure: "Procedure", review: "Review" };
 
@@ -120,6 +122,7 @@ export function Plan({ patientId }: { patientId: string }) {
   const [loading, setLoading] = useState(true);
   const [actionError, setActionError] = useState<string | null>(null);
   const latest = useRef(0);
+  const [toast, setToast] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     const token = ++latest.current;
@@ -152,6 +155,18 @@ export function Plan({ patientId }: { patientId: string }) {
       await load();
     } catch {
       setActionError("We couldn't save that match. Please try again.");
+    }
+  };
+
+  const requestReport = async (itemId: string) => {
+    setActionError(null);
+    try {
+      await api.requestPlanItemReport(itemId);
+      setToast("Request sent to staff");
+      setTimeout(() => setToast(null), 4000);
+      await load();
+    } catch {
+      setActionError("We couldn't send that request. Please try again.");
     }
   };
 
@@ -192,6 +207,8 @@ export function Plan({ patientId }: { patientId: string }) {
 
       {actionError && <div className="error-banner">{actionError}</div>}
 
+      <ReportRequestBanner items={data.items} onChanged={() => void load()} />
+
       <section className="summary-section" aria-label="Plan items">
         <h2>Plan items</h2>
         {data.items.length === 0 ? (
@@ -217,6 +234,14 @@ export function Plan({ patientId }: { patientId: string }) {
                       Remove match
                     </button>
                   )}
+                  {item.report_request && <span className="tag">Staff asked to find report</span>}
+                  {(item.status === "past_advised" || item.status === "planned") && !item.report_request && (
+                    <RoleGate roles={["oncologist"]}>
+                      <button className="btn btn--secondary" type="button" onClick={() => void requestReport(item.id)}>
+                        Ask staff to find report
+                      </button>
+                    </RoleGate>
+                  )}
                   <SourceLink item={item} />
                 </span>
               </div>
@@ -226,6 +251,12 @@ export function Plan({ patientId }: { patientId: string }) {
       </section>
 
       <AddForm patientId={patientId} onAdded={() => void load()} />
+
+      {toast && (
+        <div className="toast" role="status">
+          <span>{toast}</span>
+        </div>
+      )}
     </div>
   );
 }

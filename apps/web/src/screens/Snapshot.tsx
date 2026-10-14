@@ -7,6 +7,8 @@ import { MarkerDisclaimerFooter } from "../components/MarkerDisclaimerFooter";
 import { Watchlist } from "../components/Watchlist";
 import { SummaryStrip } from "../components/SummaryStrip";
 import { HeldReportBanner } from "../components/HeldReport";
+import { PrepPanel } from "../components/PrepPanel";
+import { ReportRequestBanner } from "../components/ReportRequestBanner";
 import { MarkerTrendChart } from "../components/MarkerTrendChart";
 import { withThyroglobulinAdjacency } from "../lib/markerOrder";
 import { dueLabel } from "./Plan";
@@ -493,6 +495,10 @@ export function Snapshot({ patientId }: { patientId: string }) {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+
+      <PrepPanel visitId={data.current_visit.id} refreshKey={data} />
+
+      <ReportRequestBanner items={planItems} onChanged={() => void load()} />
 
       <HeldReportBanner
         patientId={patient.id}

@@ -6,6 +6,7 @@ import {
   deltaKey, deltaForCurrentFact, deltaForAbsentField, loadDeltaBaselines, LIVE_FACT_FILTER, type CompareMode, CONFLICT_SIDES_LIVE,
   type DeltaBaseline, type DeltaStatus,
 } from "../services/delta";
+import { loadTodayInfo } from "../services/todayList";
 import { provenanceFor, outsideRefOf, type Provenance } from "../services/provenance";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -194,7 +195,7 @@ export async function listPatients(req: Request): Promise<Response> {
   const rows = search
     ? await sql`
         SELECT p.id, p.name, p.cancer_type, p.created_at, p.created_by, p.mrn, p.patient_origin,
-               to_char(p.date_of_birth, 'YYYY-MM-DD') AS date_of_birth, p.stage,
+               to_char(p.date_of_birth, 'YYYY-MM-DD') AS date_of_birth, p.stage, p.sex,
                (SELECT to_char(MAX(v.visit_date), 'YYYY-MM-DD') FROM visits v WHERE v.patient_id = p.id) AS last_visit_date,
                ${needsAttentionSubquery},
                ${uncheckedSubquery},
@@ -207,7 +208,7 @@ export async function listPatients(req: Request): Promise<Response> {
       `
     : await sql`
         SELECT p.id, p.name, p.cancer_type, p.created_at, p.created_by, p.mrn, p.patient_origin,
-               to_char(p.date_of_birth, 'YYYY-MM-DD') AS date_of_birth, p.stage,
+               to_char(p.date_of_birth, 'YYYY-MM-DD') AS date_of_birth, p.stage, p.sex,
                (SELECT to_char(MAX(v.visit_date), 'YYYY-MM-DD') FROM visits v WHERE v.patient_id = p.id) AS last_visit_date,
                ${needsAttentionSubquery},
                ${uncheckedSubquery},
@@ -218,7 +219,9 @@ export async function listPatients(req: Request): Promise<Response> {
         LIMIT ${limit} OFFSET ${offset}
       `;
 
-  return Response.json(rows);
+  // M3-09: Today list inputs, batched for the whole page.
+  const today = await loadTodayInfo(rows as any);
+  return Response.json(rows.map((r: any) => ({ ...r, ...today.get(r.id) })));
 }
 
 // Documents with an identity decision for one patient: held (mismatch, awaiting_oncologist), partial, and

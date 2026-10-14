@@ -176,3 +176,35 @@ test("held-document identity routes through the real router: staff may flag but 
   expect((await send("POST", "identity", { cookie: oncologist.cookie }, { action: "confirm" })).status).toBe(200);
   expect((await sql`SELECT identity_status FROM documents WHERE id = ${doc.id}`)[0].identity_status).toBe("confirmed");
 });
+
+test("prep and report-request routes through the real router: roles, and 409 while the checklist fails", async () => {
+  const [visit] = await sql`SELECT id FROM visits WHERE patient_id = ${patientId} LIMIT 1`;
+  const [item] = await sql`
+    INSERT INTO care_plan_items (patient_id, type, text, advised_at, created_by) VALUES (${patientId}, 'test', 'Bone scan in 2 weeks', '2026-01-01', ${staff.id}) RETURNING id`;
+  const send = (method: string, path: string, headers: Record<string, string>, body?: unknown) =>
+    fetch(`${BASE}${path}`, { method, headers: { "content-type": "application/json", ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
+
+  // prep: both roles read and set; no session is 401
+  expect((await send("GET", `/visits/${visit.id}/prep`, {})).status).toBe(401);
+  expect((await send("GET", `/visits/${visit.id}/prep`, { cookie: staff.cookie })).status).toBe(200);
+  expect((await send("POST", `/visits/${visit.id}/prep`, {}, { ready: false })).status).toBe(401);
+  expect((await send("POST", `/visits/${visit.id}/prep`, { cookie: staff.cookie }, { ready: false })).status).toBe(200);
+  expect((await send("POST", `/visits/${visit.id}/prep`, { cookie: oncologist.cookie }, { ready: false })).status).toBe(200);
+  // A held document from an earlier test may still be on the patient: either way a failing item is a 409 with reasons.
+  const marked = await send("POST", `/visits/${visit.id}/prep`, { cookie: staff.cookie }, { ready: true });
+  expect([200, 409]).toContain(marked.status);
+  if (marked.status === 409) expect(((await marked.json()) as any).failing.length).toBeGreaterThan(0);
+  await sql`UPDATE visits SET prep_status = 'preparing' WHERE id = ${visit.id}`;
+  await sql`DELETE FROM audit_log WHERE entity_type = 'visit' AND entity_id = ${visit.id}`;
+
+  // request-report is oncologist-only; clearing is open to both
+  expect((await send("POST", `/plan-items/${item.id}/request-report`, {})).status).toBe(401);
+  expect((await send("POST", `/plan-items/${item.id}/request-report`, { cookie: staff.cookie })).status).toBe(403);
+  expect((await sql`SELECT report_requested_by FROM care_plan_items WHERE id = ${item.id}`)[0].report_requested_by).toBeNull();
+  expect((await send("POST", `/plan-items/${item.id}/request-report`, { cookie: oncologist.cookie })).status).toBe(200);
+  expect((await sql`SELECT report_requested_by FROM care_plan_items WHERE id = ${item.id}`)[0].report_requested_by).toBe(oncologist.id);
+  expect((await send("POST", `/plan-items/${item.id}/clear-report-request`, { cookie: staff.cookie })).status).toBe(200);
+  expect((await sql`SELECT report_requested_by FROM care_plan_items WHERE id = ${item.id}`)[0].report_requested_by).toBeNull();
+  await sql`DELETE FROM audit_log WHERE entity_type = 'care_plan_item' AND entity_id = ${item.id}`;
+  await sql`DELETE FROM care_plan_items WHERE id = ${item.id}`;
+});

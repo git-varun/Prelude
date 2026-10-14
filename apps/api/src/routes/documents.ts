@@ -167,6 +167,20 @@ export async function uploadDocument(req: Request & { params: { id: string } }, 
         INSERT INTO audit_log (actor_id, action, entity_type, entity_id, after_value)
         VALUES (${user.id}, 'upload', 'document', ${doc.id}, ${JSON.stringify(doc)}::jsonb)
       `;
+      // M3-09: a new report on a visit already marked ready sends it back to preparing (the only automatic change).
+      if (documentType !== "other") {
+        const [back] = await tx`
+          UPDATE visits SET prep_status = 'preparing', prep_set_by = ${user.id}, prep_set_at = now()
+          WHERE id = ${visitId} AND prep_status = 'ready' RETURNING id
+        `;
+        if (back) {
+          await tx`
+            INSERT INTO audit_log (actor_id, action, entity_type, entity_id, before_value, after_value)
+            VALUES (${user.id}, 'set_prep_status', 'visit', ${visitId}, '{"prep_status":"ready"}'::jsonb,
+                    ${JSON.stringify({ prep_status: "preparing", reason: "document_uploaded", document_id: doc.id })}::jsonb)
+          `;
+        }
+      }
       return doc;
     });
   } catch (err) {

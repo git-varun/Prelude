@@ -456,6 +456,88 @@ select {
   color: var(--color-text-muted);
 }
 
+/* Today (M3-09): groups by state, rows are name + change summary | sparkline | tag. */
+.today {
+  max-width: 1200px;
+}
+
+.today-group {
+  margin-top: var(--space-5);
+}
+
+.today-group__title {
+  margin: 0;
+  padding-bottom: var(--space-2);
+  border-bottom: 2px solid var(--color-text);
+}
+
+.today-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 140px 150px;
+  align-items: center;
+  gap: var(--space-3);
+  padding: 16px 0;
+  border-bottom: 1px solid var(--color-border);
+  text-decoration: none;
+  color: inherit;
+}
+
+.today-row:hover {
+  background: color-mix(in srgb, var(--color-text) 5%, transparent);
+}
+
+.today-row__main {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-1);
+  min-width: 0;
+}
+
+.today-row__who {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-2);
+}
+
+.today-row__name {
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.today-row__meta {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.today-row__summary {
+  font-size: 14px;
+}
+
+.today-row__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--space-1);
+}
+
+.today-row__actions .btn {
+  white-space: nowrap;
+}
+
+.today-row__spark {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+}
+
+.today-row__tag {
+  justify-self: end;
+}
+
+.today-row__tag .tag {
+  white-space: nowrap;
+}
+
 .empty-state {
   text-align: center;
   padding: var(--space-7) var(--space-4);
@@ -735,4 +817,37 @@ select {
 .compare-toggle .btn[aria-pressed="true"] {
   border-color: var(--color-accent);
   color: var(--color-accent);
+}
+
+/* Prep panel and report-request banner (M3-09). */
+.prep-panel {
+  margin-bottom: var(--space-4);
+}
+
+.prep-panel__list {
+  list-style: none;
+  margin: var(--space-2) 0;
+  padding: 0;
+}
+
+.prep-panel__actions {
+  display: flex;
+  align-items: center;
+  gap: var(--space-3);
+}
+
+.prep-panel__actions .btn {
+  white-space: nowrap;
+}
+
+.report-request {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-3);
+  margin-bottom: var(--space-3);
+}
+
+.report-request .btn {
+  white-space: nowrap;
 }

@@ -13,7 +13,11 @@ const numeric = (v: string | null) => (v === null || v.trim() === "" ? NaN : Num
 
 // Neutral grey line and band; shape carries meaning, never colour: a hollow dot is an unsigned point,
 // and the latest value's out-of-range state is a hollow emphasis dot. In an open conflict nothing is emphasised.
-function Sparkline({ entry, outOfRange }: { entry: WatchlistEntry; outOfRange: boolean }) {
+// The Today list reuses it with just the marker name, its points and the latest reference range.
+export type SparklineEntry = Pick<WatchlistEntry, "marker_name" | "sparkline" | "conflict"> & {
+  latest: { reference_range: string | null } | null;
+};
+export function Sparkline({ entry, outOfRange }: { entry: SparklineEntry; outOfRange: boolean }) {
   const pts = entry.sparkline
     .map((p) => ({ n: numeric(p.value), signed: p.verification_state === "oncologist_signed_off", date: p.as_of_date, enc: p.outside_encounter }))
     .filter((p) => Number.isFinite(p.n));

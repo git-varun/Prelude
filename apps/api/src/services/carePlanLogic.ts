@@ -118,3 +118,18 @@ export function derivePlanStatus(args: {
   if (args.hasSuggestion) return "report_suggested";
   return args.due_date !== null && args.due_date < args.today ? "past_advised" : "planned";
 }
+
+// Date and status of one plan item row, shared by the Plan screen and the Today list so they cannot drift.
+// A confirmed match to a document that has since been held or rejected no longer counts.
+export function planItemStatus(
+  r: { type: string; text: string; advised_at: string; matched_document_id: string | null; match_confirmed_at: unknown },
+  candidates: CandidateDocument[],
+  today: string,
+) {
+  const stated = statedDate(r.text);
+  const approx = stated ? null : approximateDate(r.text, r.advised_at);
+  const matched = r.matched_document_id && r.match_confirmed_at ? candidates.find((c) => c.id === r.matched_document_id) ?? null : null;
+  const suggested = matched ? null : suggestMatches({ type: r.type as PlanItemType, text: r.text, advised_at: r.advised_at }, candidates)[0] ?? null;
+  const status = derivePlanStatus({ due_date: stated ?? approx, hasConfirmedMatch: !!matched, hasSuggestion: !!suggested, today });
+  return { stated, approx, matched, suggested, status };
+}

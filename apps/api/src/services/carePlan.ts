@@ -38,8 +38,15 @@ const TYPE_LABELS: Record<string, string> = {
 // Documents of the patient that could be a report for a plan item: not held or rejected for identity, with a
 // date (reported_on, else collected_on, else the latest as_of_date of their live facts).
 export async function loadCandidateDocuments(patientId: string): Promise<CandidateDocument[]> {
+  return (await loadCandidateDocumentsFor([patientId])).get(patientId) ?? [];
+}
+
+// The same, batched for many patients in one query (the Today list).
+export async function loadCandidateDocumentsFor(patientIds: string[]): Promise<Map<string, CandidateDocument[]>> {
+  const byPatient = new Map<string, CandidateDocument[]>();
+  if (patientIds.length === 0) return byPatient;
   const rows = await sql`
-    SELECT d.id, d.document_type, d.imaging_modality,
+    SELECT d.patient_id, d.id, d.document_type, d.imaging_modality,
            to_char(COALESCE(d.reported_on, d.collected_on, (
              SELECT max(f.as_of_date) FROM facts f WHERE f.document_id = d.id AND ${LIVE_FACT_FILTER}
            )), 'YYYY-MM-DD') AS date,
@@ -55,15 +62,20 @@ export async function loadCandidateDocuments(patientId: string): Promise<Candida
                AND f.raw_marker_label IS NOT NULL
            ), '{}') AS raw_labels
     FROM documents d
-    WHERE d.patient_id = ${patientId} AND d.document_type != 'other' AND COALESCE(d.identity_status::text, '') NOT IN ('mismatch', 'awaiting_oncologist', 'rejected')
+    WHERE d.patient_id IN ${sql(patientIds)} AND d.document_type != 'other' AND COALESCE(d.identity_status::text, '') NOT IN ('mismatch', 'awaiting_oncologist', 'rejected')
   `;
-  return rows.map((r: any) => ({
-    id: r.id as string,
-    label: [r.imaging_modality ? MODALITY_LABELS[r.imaging_modality] : TYPE_LABELS[r.document_type] ?? r.document_type, r.date]
-      .filter(Boolean).join(" · "),
-    imaging_modality: r.imaging_modality as string | null,
-    // Tracked names, plus raw labels only when they map to a canonical marker.
-    markers: [...new Set([...(r.markers as string[]), ...(r.raw_labels as string[]).map((l) => matchMarker(l)).filter((m): m is string => m !== null)])],
-    date: r.date as string | null,
-  }));
+  for (const r of rows as any[]) {
+    const list = byPatient.get(r.patient_id) ?? [];
+    list.push({
+      id: r.id as string,
+      label: [r.imaging_modality ? MODALITY_LABELS[r.imaging_modality] : TYPE_LABELS[r.document_type] ?? r.document_type, r.date]
+        .filter(Boolean).join(" · "),
+      imaging_modality: r.imaging_modality as string | null,
+      // Tracked names, plus raw labels only when they map to a canonical marker.
+      markers: [...new Set([...(r.markers as string[]), ...(r.raw_labels as string[]).map((l) => matchMarker(l)).filter((m): m is string => m !== null)])],
+      date: r.date as string | null,
+    });
+    byPatient.set(r.patient_id, list);
+  }
+  return byPatient;
 }

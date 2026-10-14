@@ -478,6 +478,19 @@ const EMPTY_SUMMARY = {
   disease_history: { diagnosis: [], histology_ihc: [], stage: [] }, procedures: [], prescriptions: [],
 };
 
+// The Snapshot's prep panel asks for /visits/:id/prep; every Snapshot stub answers it (all four checks met by default).
+const PREP_ITEMS = [
+  { key: "uploaded", label: "Reports uploaded", ok: true, count: 1, reason: null },
+  { key: "facts_checked", label: "All facts checked", ok: true, count: 0, reason: null },
+  { key: "dates_entered", label: "Dates entered", ok: true, count: 0, reason: null },
+  { key: "held_reviewed", label: "Held reports reviewed", ok: true, count: 0, reason: null },
+];
+const prepBody = (o: Record<string, unknown> = {}) => ({
+  visit_id: "v2", visit_date: "2026-02-01", prep_status: "preparing", prep_set_by: null, prep_set_by_name: null, prep_set_at: null,
+  items: PREP_ITEMS, can_mark_ready: true, changed_since_ready: [], ...o,
+});
+const isPrepPath = (path: string) => /^\/visits\/[^/]+\/prep$/.test(path);
+
 // Patient Snapshot screen. One fixture builder shared across tests, overridden per test
 // so each stays focused on the one thing it's checking.
 function provenance(overrides: Record<string, unknown> = {}) {
@@ -537,6 +550,10 @@ async function openSnapshot(
       return route.fulfill({ status: 204, headers: { ...cors, "Access-Control-Allow-Headers": "content-type", "Access-Control-Allow-Methods": "GET,POST,OPTIONS" } });
     }
     if (path === "/auth/me") return json({ id: "u1", name: "Test", email: "t@opd.local", role });
+    if (isPrepPath(path)) {
+      const custom = extraRoute?.(path, req.method());
+      return json(custom !== undefined ? custom : prepBody());
+    }
     if (path === "/patients/p1/snapshot") {
       // A function body lets a test answer per ?compare=.
       return json(typeof body === "function" ? body(new URL(req.url()).searchParams.get("compare")) : body);
@@ -884,6 +901,7 @@ async function openConflictScenario(
     const json = (b: unknown) => route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify(b) });
     if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
     if (path === "/auth/me") return json({ id: role === "oncologist" ? "onc1" : "staff1", name: "Test", email: "t@opd.local", role });
+    if (isPrepPath(path)) return json(prepBody());
     if (path === "/patients/p1/snapshot") return json(snapshotBody({ current_treatment: currentTreatment() }));
     if (path === "/patients/p1/summary") return json(EMPTY_SUMMARY);
     if (path === "/patients/p1/plan") return json({ next_review: null, items: [] });
@@ -1491,6 +1509,7 @@ async function openHeldScenario(
     }
     if (path === "/patients/p1/summary") return json(EMPTY_SUMMARY);
     if (path === "/patients/p1/plan") return json({ next_review: null, items: [] });
+    if (isPrepPath(path)) return json(prepBody());
     if (path === "/patients/p1/snapshot") {
       // Facts of a confirmed document are live; held and rejected ones are excluded.
       const live = docs.filter((d) => d.status === "confirmed");
@@ -2753,3 +2772,214 @@ for (const ocrStatus of ["failed", "pending"]) {
     await page.close();
   }, 30_000);
 }
+
+// ---- M3-09: Today groups, Mark ready, request-report banner ----
+
+test("Today: four groups by state, each ordered by name, with the change summary line, sparkline and tag", async () => {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  const errors: string[] = [];
+  page.on("pageerror", (err) => errors.push(`pageerror: ${err.message}`));
+  page.on("console", (msg) => {
+    if (msg.type() === "error") errors.push(`console: ${msg.text()}`);
+  });
+  const cors = { "Access-Control-Allow-Origin": BASE, "Access-Control-Allow-Credentials": "true" };
+  // The app uses the browser's local day; ask the browser rather than assume it shares this process's time zone.
+  const today = await page.evaluate(() => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  });
+  const base = {
+    cancer_type: "Breast", created_at: "2026-01-01", created_by: "u1", mrn: null, patient_origin: "own_hospital", date_of_birth: null, stage: null,
+    sex: null, needs_attention_count: 0, held_document_count: 0, unchecked_fact_count: 0, latest_elsewhere: null, diagnosis_text: null, regimen_text: null,
+    last_visit_date: today, prep_status: "preparing", current_visit_document_count: 0, sign_off_count: 0, change_summary_items: [],
+    first_pinned_sparkline: null, has_plan_items_expected: false,
+  };
+  const point = (id: string, value: string, date: string) => ({ fact_id: id, document_id: null, value, unit: "U/mL", as_of_date: date, verification_state: "oncologist_signed_off", outside_encounter: null });
+  await page.route(`${API}/**`, (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const json = (b: unknown) => route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify(b) });
+    if (path === "/auth/me") return json({ id: "u1", name: "Test", email: "t@opd.local", role: "oncologist" });
+    if (path === "/patients") {
+      return json([
+        { ...base, id: "p9", name: "Zara Ready", prep_status: "ready" },
+        {
+          ...base, id: "p1", name: "Asha Ready", prep_status: "ready", sign_off_count: 2, date_of_birth: "1972-01-01", sex: "female",
+          diagnosis_text: "Invasive ductal carcinoma", regimen_text: "FEC x 6", current_visit_document_count: 2,
+          change_summary_items: [
+            { kind: "marker_changed", name: "CA-125", from: "188", to: "412" },
+            { kind: "new_report", type: "radiology", modality: "ct" },
+            { kind: "sources_disagree", name: "CEA" },
+            { kind: "plan_past", count: 1 },
+            { kind: "elsewhere", facility: "Apollo", date: "2026-09-22" },
+          ],
+          first_pinned_sparkline: { marker_name: "CA-125", reference_range: "0-35", points: [point("a", "188", "2026-08-01"), point("b", "412", "2026-09-01")] },
+        },
+        { ...base, id: "p2", name: "Bina Preparing", current_visit_document_count: 1 },
+        { ...base, id: "p3", name: "Chitra Nothing" },
+        { ...base, id: "p4", name: "Dev Expected", last_visit_date: "2026-01-05", prep_status: "preparing", has_plan_items_expected: true },
+      ]);
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", headers: cors, body: "{}" });
+  });
+  await page.goto(`${BASE}/#/patients`);
+  for (const title of ["Ready for you · 2", "Staff preparing · 1", "Nothing new · 1", "Expected from plan, no visit opened · 1"]) {
+    await page.getByRole("heading", { name: title }).waitFor();
+  }
+  const ready = page.getByRole("region", { name: "Ready for you" }).getByTestId("today-row");
+  expect(await ready.locator(".today-row__name").allTextContents()).toEqual(["Asha Ready", "Zara Ready"]);
+  const asha = ready.first();
+  await asha.getByText('54F · "Invasive ductal carcinoma" · "FEC x 6"').waitFor();
+  expect(await asha.getByTestId("change-summary").textContent()).toBe(
+    "CA-125 changed 188 → 412 · new CT · CEA sources disagree · 1 plan item past advised date · visit elsewhere: Apollo 22 Sep",
+  );
+  expect(await asha.getByRole("img", { name: "CA-125 last 2 values" }).count()).toBe(1);
+  expect(await asha.getByText("2 to sign off").count()).toBe(1);
+  expect(await ready.nth(1).getByText("Ready", { exact: true }).count()).toBe(1);
+  expect(await page.getByRole("region", { name: "Staff preparing" }).getByText("Preparing", { exact: true }).count()).toBe(1);
+  expect(await page.getByRole("region", { name: "Expected from plan, no visit opened" }).getByText("Planned", { exact: true }).count()).toBe(1);
+  // Row actions keep working.
+  await asha.getByRole("button", { name: "Plan" }).click();
+  await page.waitForURL(/#\/patients\/p1\/plan/);
+  expect(errors.filter((e) => !e.includes("404"))).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Mark ready: blocked with the reasons while a check fails, then ready and back to preparing", async () => {
+  let prep = prepBody({
+    can_mark_ready: false,
+    items: PREP_ITEMS.map((i) => (i.key === "facts_checked" ? { ...i, ok: false, count: 2, reason: "2 facts are not checked yet" } : i)),
+  });
+  const { page, errors } = await openSnapshot("staff", snapshotBody(), {}, (path) => {
+    if (!isPrepPath(path)) return undefined;
+    return prep;
+  });
+  const panel = page.getByTestId("prep-panel");
+  await panel.getByText("Preparing this visit").waitFor();
+  await panel.getByText("2 facts are not checked yet").waitFor();
+  expect(await panel.getByTestId("prep-item-facts_checked").getAttribute("data-ok")).toBe("false");
+  expect(await panel.getByTestId("prep-item-uploaded").getAttribute("data-ok")).toBe("true");
+  expect(await panel.getByRole("button", { name: "Mark ready" }).isDisabled()).toBe(true);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Mark ready: Mark ready posts, shows who marked it, Back to preparing posts false; a refusal shows its message", async () => {
+  let prep: any = prepBody();
+  const posts: unknown[] = [];
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  const errors: string[] = [];
+  page.on("pageerror", (err) => errors.push(`pageerror: ${err.message}`));
+  page.on("console", (msg) => {
+    if (msg.type() === "error" && !msg.text().includes("409")) errors.push(`console: ${msg.text()}`);
+  });
+  const cors = { "Access-Control-Allow-Origin": BASE, "Access-Control-Allow-Credentials": "true", "Access-Control-Allow-Headers": "content-type", "Access-Control-Allow-Methods": "GET,POST,OPTIONS" };
+  let refuse = true;
+  await page.route(`${API}/**`, (route) => {
+    const req = route.request();
+    const path = new URL(req.url()).pathname;
+    const json = (b: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", headers: cors, body: JSON.stringify(b) });
+    if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
+    if (path === "/auth/me") return json({ id: "u1", name: "Priya", email: "t@opd.local", role: "staff" });
+    if (isPrepPath(path) && req.method() === "POST") {
+      const body = req.postDataJSON() as { ready: boolean };
+      posts.push(body);
+      if (body.ready && refuse) {
+        refuse = false;
+        return json({ error: "conflict", message: "Not ready yet: 1 fact is not checked yet.", failing: [] }, 409);
+      }
+      prep = prepBody({ prep_status: body.ready ? "ready" : "preparing", prep_set_by: "u1", prep_set_by_name: "Priya", prep_set_at: "2026-02-01T09:00:00Z" });
+      return json(prep);
+    }
+    if (isPrepPath(path)) return json(prep);
+    if (path === "/patients/p1/snapshot") return json(snapshotBody());
+    if (path === "/patients/p1/summary") return json(EMPTY_SUMMARY);
+    if (path === "/patients/p1/plan") return json({ next_review: null, items: [] });
+    if (path === "/patients/p1/documents/identity") return json({ patient_name: "Test Patient", documents: [] });
+    return json({}, 404);
+  });
+  await page.goto(`${BASE}/#/patients/p1/snapshot`);
+  const panel = page.getByTestId("prep-panel");
+  await panel.getByRole("button", { name: "Mark ready" }).click();
+  await panel.getByText("Not ready yet: 1 fact is not checked yet.").waitFor();
+  await panel.getByRole("button", { name: "Mark ready" }).click();
+  await panel.getByText("Ready for the oncologist").waitFor();
+  await panel.getByText("marked by Priya").waitFor();
+  expect(await panel.getByRole("button", { name: "Mark ready" }).count()).toBe(0);
+  await panel.getByRole("button", { name: "Back to preparing" }).click();
+  await panel.getByText("Preparing this visit").waitFor();
+  expect(posts).toEqual([{ ready: true }, { ready: true }, { ready: false }]);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Mark ready: a visit marked ready shows what has changed since, without flipping it", async () => {
+  const { page, errors } = await openSnapshot("oncologist", snapshotBody(), {}, (path) =>
+    isPrepPath(path)
+      ? prepBody({
+          prep_status: "ready", prep_set_by_name: "Priya", changed_since_ready: ["facts_checked"], can_mark_ready: false,
+          items: PREP_ITEMS.map((i) => (i.key === "facts_checked" ? { ...i, ok: false, count: 1, reason: "1 fact is not checked yet" } : i)),
+        })
+      : undefined);
+  await page.getByText("Ready for the oncologist").waitFor();
+  await page.getByTestId("prep-changed").getByText(/1 fact is not checked yet/).waitFor();
+  await page.getByRole("button", { name: "Back to preparing" }).waitFor();
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+const requestedItem = (over: Record<string, unknown> = {}) => ({
+  id: "i1", type: "test", text: "Bone scan in 2 weeks", advised_at: "2026-01-01", approx_date: "2026-01-15", stated_date: null, status: "past_advised",
+  past_advised: true, matched_document: null, suggested_document: null, source_fact_id: null, source_document_id: null, outside_encounter: null,
+  report_request: null, ...over,
+});
+
+test("Ask staff to find report: the oncologist asks once and sees 'Request sent to staff'; staff see the banner and clear it", async () => {
+  const plan = { next_review: null, items: [requestedItem(), requestedItem({ id: "i2", text: "Blood tests", status: "report_seen", past_advised: false })] };
+  const posts: string[] = [];
+  const { page, errors } = await openSnapshot("oncologist", snapshotBody(), {}, (path, method) => {
+    if (method === "POST" && path === "/plan-items/i1/request-report") {
+      posts.push(path);
+      plan.items[0] = requestedItem({ report_request: { by_id: "u1", by_name: "Rao", at: "2026-02-01T09:00:00Z" } });
+      return { id: "i1", requested: true };
+    }
+    return undefined;
+  }, EMPTY_SUMMARY, plan);
+  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("heading", { name: "Plan items" }).waitFor();
+  // Only the item without a report gets the button.
+  expect(await page.getByRole("button", { name: "Ask staff to find report" }).count()).toBe(1);
+  await page.getByRole("button", { name: "Ask staff to find report" }).click();
+  await page.getByText("Request sent to staff").waitFor();
+  await page.getByText("Staff asked to find report").waitFor();
+  expect(await page.getByRole("button", { name: "Ask staff to find report" }).count()).toBe(0);
+  expect(posts).toEqual(["/plan-items/i1/request-report"]);
+  // The oncologist is not shown the staff banner.
+  expect(await page.getByTestId("report-request-banner").count()).toBe(0);
+  expect(errors).toEqual([]);
+  await page.close();
+
+  const clearPosts: string[] = [];
+  const staffPlan = { next_review: null, items: [requestedItem({ report_request: { by_id: "u2", by_name: "Rao", at: "2026-02-01T09:00:00Z" } })] };
+  const staffView = await openSnapshot("staff", snapshotBody(), {}, (path, method) => {
+    if (method === "POST" && path === "/plan-items/i1/clear-report-request") {
+      clearPosts.push(path);
+      staffPlan.items[0] = requestedItem();
+      return { id: "i1", requested: false };
+    }
+    return undefined;
+  }, EMPTY_SUMMARY, staffPlan);
+  const banner = staffView.page.getByTestId("report-request-banner");
+  await banner.getByText('Requested by Dr. Rao: find report for "Bone scan in 2 weeks"').waitFor();
+  expect(await staffView.page.getByRole("button", { name: "Ask staff to find report" }).count()).toBe(0);
+  await banner.getByRole("button", { name: "Mark found / clear" }).click();
+  await banner.waitFor({ state: "detached" });
+  expect(clearPosts).toEqual(["/plan-items/i1/clear-report-request"]);
+  // The same banner shows on the Plan screen.
+  staffPlan.items[0] = requestedItem({ report_request: { by_id: "u2", by_name: "Rao", at: "2026-02-01T09:00:00Z" } });
+  await staffView.page.getByRole("button", { name: "Plan", exact: true }).click();
+  await staffView.page.getByTestId("report-request-banner").waitFor();
+  expect(staffView.errors).toEqual([]);
+  await staffView.page.close();
+}, 30_000);

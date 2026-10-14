@@ -6,7 +6,8 @@ import { uploadDocument, getDocument, getDocumentFile, setDocumentIdentityStatus
 import { getDocumentFacts, patchFact, checkFactRoute, signOffFact, reopenFact, signOffFactsBatch, undoSignOffFactsBatch } from "./routes/facts";
 import { getDocumentCheckSummary, getLabCheckSummary } from "./routes/checks";
 import { getConflict, annotateConflict, resolveConflict } from "./routes/conflicts";
-import { getPatientPlan, addPlanItem, setPlanItemMatch } from "./routes/plan";
+import { getPatientPlan, addPlanItem, setPlanItemMatch, requestPlanItemReport, clearPlanItemReportRequest } from "./routes/plan";
+import { getVisitPrep, setVisitPrep } from "./routes/prep";
 import { pinMarker, suggestPin, dismissPinSuggestion } from "./routes/pins";
 import { requireRole } from "./middleware/roles";
 import { cors } from "./middleware/cors";
@@ -56,6 +57,16 @@ const server = Bun.serve({
     }),
     "/plan-items/:id/match": cors({
       POST: requireRole(["staff", "oncologist"], setPlanItemMatch),
+    }),
+    "/plan-items/:id/request-report": cors({
+      POST: requireRole(["oncologist"], requestPlanItemReport),
+    }),
+    "/plan-items/:id/clear-report-request": cors({
+      POST: requireRole(["staff", "oncologist"], clearPlanItemReportRequest),
+    }),
+    "/visits/:id/prep": cors({
+      GET: requireRole(["staff", "oncologist"], getVisitPrep),
+      POST: requireRole(["staff", "oncologist"], setVisitPrep),
     }),
     "/patients/:id/summary": cors({
       GET: requireRole(["staff", "oncologist"], getPatientSummary),

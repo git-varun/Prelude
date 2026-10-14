@@ -100,6 +100,44 @@ export interface PatientSummary {
   unchecked_fact_count: number;
   /** Latest visit elsewhere, only when newer than the latest visit here. */
   latest_elsewhere: { facility: string; date: string } | null;
+  sex: Sex | null;
+  /** Latest diagnosis and regimen facts, as written. */
+  diagnosis_text: string | null;
+  regimen_text: string | null;
+  /** M3-09. null when the patient has no visit. */
+  prep_status: PrepStatus | null;
+  current_visit_document_count: number;
+  /** Facts the oncologist can sign off now in the current visit. */
+  sign_off_count: number;
+  /** Structured, from data only; the screen words each item. */
+  change_summary_items: ChangeSummaryItem[];
+  first_pinned_sparkline: { marker_name: string; reference_range: string | null; points: WatchlistPoint[] } | null;
+  /** A plan item with no report yet, dated within the next 7 days or already past. */
+  has_plan_items_expected: boolean;
+}
+
+export type PrepStatus = "preparing" | "ready";
+
+export type ChangeSummaryItem =
+  | { kind: "marker_changed"; name: string; from: string; to: string }
+  | { kind: "new_report"; type: string; modality: string | null }
+  | { kind: "sources_disagree"; name: string }
+  | { kind: "plan_past"; count: number }
+  | { kind: "elsewhere"; facility: string; date: string };
+
+export type PrepKey = "uploaded" | "facts_checked" | "dates_entered" | "held_reviewed";
+
+export interface VisitPrep {
+  visit_id: string;
+  visit_date: string;
+  prep_status: PrepStatus;
+  prep_set_by: string | null;
+  prep_set_by_name: string | null;
+  prep_set_at: string | null;
+  items: { key: PrepKey; label: string; ok: boolean; count: number; reason: string | null }[];
+  can_mark_ready: boolean;
+  /** Checks that fail now on a visit that was marked ready earlier. */
+  changed_since_ready: PrepKey[];
 }
 
 export interface TrackedMarker {
@@ -497,6 +535,8 @@ export interface PlanItem {
   source_fact_id: string | null;
   source_document_id: string | null;
   outside_encounter: OutsideEncounterRef | null;
+  /** M3-09 interim: the oncologist asked staff to find the report. */
+  report_request: { by_id: string; by_name: string | null; at: string } | null;
 }
 
 export interface PatientPlan {
@@ -577,6 +617,17 @@ export const api = {
 
   setPlanItemMatch: (itemId: string, documentId: string | null) =>
     request<{ id: string }>(`/plan-items/${itemId}/match`, { method: "POST", body: JSON.stringify({ document_id: documentId }) }),
+
+  requestPlanItemReport: (itemId: string) =>
+    request<{ id: string; requested: boolean }>(`/plan-items/${itemId}/request-report`, { method: "POST" }),
+
+  clearPlanItemReportRequest: (itemId: string) =>
+    request<{ id: string; requested: boolean }>(`/plan-items/${itemId}/clear-report-request`, { method: "POST" }),
+
+  getVisitPrep: (visitId: string) => request<VisitPrep>(`/visits/${visitId}/prep`),
+
+  setVisitPrep: (visitId: string, ready: boolean) =>
+    request<VisitPrep>(`/visits/${visitId}/prep`, { method: "POST", body: JSON.stringify({ ready }) }),
 
   setMarkerPin: (trackedMarkerId: string, pinned: boolean) =>
     request<{ id: string; is_pinned: boolean }>(`/tracked-markers/${trackedMarkerId}/pin`, { method: "POST", body: JSON.stringify({ pinned }) }),

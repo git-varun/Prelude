@@ -4,7 +4,7 @@ import type { AuthedUser } from "../middleware/auth";
 import { LIVE_FACT_FILTER, isHeldIdentityStatus } from "../services/delta";
 import { outsideRefOf } from "../services/provenance";
 import { loadCandidateDocuments } from "../services/carePlan";
-import { approximateDate, derivePlanStatus, statedDate, suggestMatches, type PlanItemType } from "../services/carePlanLogic";
+import { planItemStatus, type PlanItemType } from "../services/carePlanLogic";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (s: unknown): s is string => typeof s === "string" && UUID.test(s);
@@ -19,7 +19,8 @@ function isRealDate(s: unknown): s is string {
 const ITEM_COLUMNS = sql`
   i.id, i.type, i.text, to_char(i.advised_at, 'YYYY-MM-DD') AS advised_at, i.source_fact_id,
   i.matched_document_id, i.match_confirmed_at, f.document_id AS source_document_id,
-  oe.id AS oe_id, oe.facility AS oe_facility, to_char(oe.encounter_date, 'YYYY-MM-DD') AS oe_date
+  oe.id AS oe_id, oe.facility AS oe_facility, to_char(oe.encounter_date, 'YYYY-MM-DD') AS oe_date,
+  i.report_requested_by, i.report_requested_at, ru.name AS report_requested_by_name
 `;
 
 export async function getPatientPlan(req: Request & { params: { id: string } }): Promise<Response> {
@@ -32,23 +33,16 @@ export async function getPatientPlan(req: Request & { params: { id: string } }):
     SELECT ${ITEM_COLUMNS} FROM care_plan_items i
     LEFT JOIN facts f ON f.id = i.source_fact_id
     LEFT JOIN outside_encounters oe ON oe.id = f.outside_encounter_id
+    LEFT JOIN users ru ON ru.id = i.report_requested_by
     WHERE i.patient_id = ${patientId}
       AND (i.source_fact_id IS NULL OR (f.verification_state = 'oncologist_signed_off' AND ${LIVE_FACT_FILTER}))
     ORDER BY i.advised_at DESC, i.created_at DESC, i.id
   `;
   const candidates = await loadCandidateDocuments(patientId);
-  const byId = new Map(candidates.map((c) => [c.id, c]));
   const today = new Date().toISOString().slice(0, 10);
 
   const items = rows.map((r: any) => {
-    const stated = statedDate(r.text);
-    const approx = stated ? null : approximateDate(r.text, r.advised_at);
-    // A confirmed match to a document that has since been held or rejected no longer counts.
-    const matched = r.matched_document_id && r.match_confirmed_at ? byId.get(r.matched_document_id) ?? null : null;
-    const suggested = matched ? null : suggestMatches({ type: r.type as PlanItemType, text: r.text, advised_at: r.advised_at }, candidates)[0] ?? null;
-    const status = derivePlanStatus({
-      due_date: stated ?? approx, hasConfirmedMatch: !!matched, hasSuggestion: !!suggested, today,
-    });
+    const { stated, approx, matched, suggested, status } = planItemStatus(r, candidates, today);
     return {
       id: r.id as string,
       type: r.type as PlanItemType,
@@ -63,6 +57,9 @@ export async function getPatientPlan(req: Request & { params: { id: string } }):
       source_fact_id: (r.source_fact_id as string | null) ?? null,
       source_document_id: (r.source_document_id as string | null) ?? null,
       outside_encounter: outsideRefOf(r),
+      report_request: r.report_requested_by
+        ? { by_id: r.report_requested_by as string, by_name: (r.report_requested_by_name as string | null) ?? null, at: new Date(r.report_requested_at).toISOString() }
+        : null,
     };
   });
   // The most recently advised review is "the next review".
@@ -136,4 +133,54 @@ export async function setPlanItemMatch(req: Request & { params: { id: string } }
     WHERE id = ${itemId}
   `;
   return Response.json({ id: itemId, matched_document_id: documentId });
+}
+
+// M3-09 interim for B7: the oncologist asks staff to find the report for a plan item; staff clear the request.
+// Only an item with no report yet (planned or past advised date) can be asked for.
+async function withPlanItem(
+  req: Request & { params: { id: string } },
+  change: (tx: typeof sql, item: any) => Promise<Response>,
+): Promise<Response> {
+  const itemId = req.params.id;
+  if (!isUuid(itemId)) return jsonError(404, "not_found", "Plan item not found.");
+  return sql.begin(async (rawTx) => {
+    const tx = rawTx as unknown as typeof sql;
+    const [item] = await tx`SELECT *, to_char(advised_at, 'YYYY-MM-DD') AS advised_text FROM care_plan_items WHERE id = ${itemId} FOR UPDATE`;
+    if (!item) return jsonError(404, "not_found", "Plan item not found.");
+    return change(tx, item);
+  });
+}
+
+const requestState = (i: any) => ({ report_requested_by: i.report_requested_by, report_requested_at: i.report_requested_at });
+
+export async function requestPlanItemReport(req: Request & { params: { id: string } }, user: AuthedUser): Promise<Response> {
+  return withPlanItem(req, async (tx, item) => {
+    const itemRow = { ...item, advised_at: item.advised_text as string };
+    const candidates = await loadCandidateDocuments(item.patient_id);
+    const { status } = planItemStatus(itemRow, candidates, new Date().toISOString().slice(0, 10));
+    if (status !== "planned" && status !== "past_advised") {
+      return jsonError(409, "conflict", "A report has already been found for this item.");
+    }
+    const [after] = await tx`
+      UPDATE care_plan_items SET report_requested_by = ${user.id}, report_requested_at = now() WHERE id = ${item.id}
+      RETURNING report_requested_by, report_requested_at
+    `;
+    await tx`
+      INSERT INTO audit_log (actor_id, action, entity_type, entity_id, before_value, after_value)
+      VALUES (${user.id}, 'request_report', 'care_plan_item', ${item.id}, ${JSON.stringify(requestState(item))}::jsonb, ${JSON.stringify(requestState(after))}::jsonb)
+    `;
+    return Response.json({ id: item.id, requested: true });
+  });
+}
+
+export async function clearPlanItemReportRequest(req: Request & { params: { id: string } }, user: AuthedUser): Promise<Response> {
+  return withPlanItem(req, async (tx, item) => {
+    if (!item.report_requested_by) return Response.json({ id: item.id, requested: false });
+    await tx`UPDATE care_plan_items SET report_requested_by = NULL, report_requested_at = NULL WHERE id = ${item.id}`;
+    await tx`
+      INSERT INTO audit_log (actor_id, action, entity_type, entity_id, before_value, after_value)
+      VALUES (${user.id}, 'clear_report_request', 'care_plan_item', ${item.id}, ${JSON.stringify(requestState(item))}::jsonb, ${JSON.stringify({ report_requested_by: null, report_requested_at: null })}::jsonb)
+    `;
+    return Response.json({ id: item.id, requested: false });
+  });
 }
