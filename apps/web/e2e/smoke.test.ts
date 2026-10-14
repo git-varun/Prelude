@@ -518,6 +518,7 @@ async function openSnapshot(
   trends: Record<string, unknown> = {},
   extraRoute?: (path: string, method: string) => unknown | undefined,
   summaryBody: unknown = EMPTY_SUMMARY,
+  planBody: unknown = { next_review: null, items: [] },
 ) {
   const page = await browser.newPage();
   page.setDefaultTimeout(5000);
@@ -537,6 +538,7 @@ async function openSnapshot(
     if (path === "/auth/me") return json({ id: "u1", name: "Test", email: "t@opd.local", role });
     if (path === "/patients/p1/snapshot") return json(body);
     if (path === "/patients/p1/summary") return json(summaryBody);
+    if (path === "/patients/p1/plan" && planBody !== undefined) return json(planBody);
     const trendMatch = path.match(/^\/patients\/p1\/markers\/([^/]+)\/trend$/);
     if (trendMatch) return json(trends[trendMatch[1]!] ?? { marker_name: "", points: [] });
     if (extraRoute) {
@@ -552,6 +554,11 @@ async function openSnapshot(
   return { page, errors };
 }
 
+// Unchanged items are folded under "Unchanged and signed off · N"; open the fold to reach them.
+async function openFold(page: import("playwright").Page) {
+  await page.getByRole("button", { name: /Unchanged and signed off/ }).click();
+}
+
 test("Snapshot: 'Since last visit' shows only the changed marker, not the unchanged one, while Tumor markers shows both", async () => {
   const body = snapshotBody({
     tumor_markers: [
@@ -562,7 +569,8 @@ test("Snapshot: 'Since last visit' shows only the changed marker, not the unchan
   });
   const { page, errors } = await openSnapshot("staff", body);
   const sinceSection = page.locator("section", { has: page.getByRole("heading", { name: "Since last visit" }) });
-  const markersSection = page.locator("section", { has: page.getByRole("heading", { name: "Tumor markers" }) });
+  const markersSection = page.locator("section", { has: page.getByRole("heading", { name: /For this visit/ }) });
+  await openFold(page);
   // Since Last Visit is a compact delta-summary row (not a full FactCard), so its
   // marker names aren't headings -- just text within the row.
   await sinceSection.getByText("CEA", { exact: true }).waitFor();
@@ -583,6 +591,7 @@ test("Snapshot: a not_found_in_document_set marker renders as a placeholder row,
     ],
   });
   const { page, errors } = await openSnapshot("oncologist", body);
+  await openFold(page);
   const card = page.locator(".card", { has: page.getByRole("heading", { name: "AFP" }) });
   await card.getByText("Not found in this document set").waitFor();
   expect(await card.getByRole("button", { name: "Sign off", exact: true }).count()).toBe(0);
@@ -644,7 +653,7 @@ test("Snapshot: a new patient (previous_visit.id null) omits 'Since last visit' 
     tumor_markers: [snapshotField({ fact_id: "f1", marker_name: "CEA" })],
   });
   const { page, errors } = await openSnapshot("staff", body);
-  await page.getByRole("heading", { name: "Tumor markers" }).waitFor();
+  await page.getByRole("heading", { name: /For this visit/ }).waitFor();
   expect(await page.getByRole("heading", { name: "Since last visit" }).count()).toBe(0);
   expect(errors).toEqual([]);
   await page.close();
@@ -772,14 +781,16 @@ test("Snapshot: mixed-unit trend points show a 'units differ' note instead of a 
 test("Snapshot: Thyroglobulin always renders adjacent to Anti-Tg, even when the API returns them apart", async () => {
   const body = snapshotBody({
     tumor_markers: [
-      snapshotField({ fact_id: "f1", marker_name: "Anti-Tg (TgAb)" }),
-      snapshotField({ fact_id: "f2", marker_name: "CEA" }),
-      snapshotField({ fact_id: "f3", marker_name: "Thyroglobulin (Tg)" }),
-      snapshotField({ fact_id: "f4", marker_name: "Calcitonin" }),
+      snapshotField({ fact_id: "f1", marker_name: "Anti-Tg (TgAb)", delta_status: "unchanged" }),
+      snapshotField({ fact_id: "f2", marker_name: "CEA", delta_status: "unchanged" }),
+      snapshotField({ fact_id: "f3", marker_name: "Thyroglobulin (Tg)", delta_status: "unchanged" }),
+      snapshotField({ fact_id: "f4", marker_name: "Calcitonin", delta_status: "unchanged" }),
     ],
   });
   const { page, errors } = await openSnapshot("staff", body);
-  const markersSection = page.locator("section", { has: page.getByRole("heading", { name: "Tumor markers" }) });
+  const markersSection = page.locator("section", { has: page.getByRole("heading", { name: /For this visit/ }) });
+  await openFold(page);
+  await markersSection.getByRole("heading", { name: "CEA" }).waitFor();
   const headings = await markersSection.getByRole("heading", { level: 2 }).allTextContents();
   const tgIndex = headings.indexOf("Thyroglobulin (Tg)");
   expect(tgIndex).toBeGreaterThan(-1);
@@ -871,6 +882,7 @@ async function openConflictScenario(
     if (path === "/auth/me") return json({ id: role === "oncologist" ? "onc1" : "staff1", name: "Test", email: "t@opd.local", role });
     if (path === "/patients/p1/snapshot") return json(snapshotBody({ current_treatment: currentTreatment() }));
     if (path === "/patients/p1/summary") return json(EMPTY_SUMMARY);
+    if (path === "/patients/p1/plan") return json({ next_review: null, items: [] });
     if (path === "/conflicts/c1" && req.method() === "GET") return json({ conflict: conflictRecord(), fact_a: factA(), fact_b: factB() });
     if (path === "/conflicts/c1/annotate" && req.method() === "POST") {
       const body = req.postDataJSON() as { annotation_note: string };
@@ -1464,6 +1476,7 @@ async function openHeldScenario(startAt: string, opts: { conflictOnConfirm?: boo
       });
     }
     if (path === "/patients/p1/summary") return json(EMPTY_SUMMARY);
+    if (path === "/patients/p1/plan") return json({ next_review: null, items: [] });
     if (path === "/patients/p1/snapshot") {
       // Facts of a confirmed document are live; held and rejected ones are excluded.
       const live = docs.filter((d) => d.status === "confirmed");
@@ -2097,6 +2110,7 @@ test("Snapshot: switching patient clears the sign-off toast", async () => {
     const json = (b: unknown) => route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify(b) });
     if (path === "/patients/p2/snapshot") return json({ ...snapshotBody(), patient: { id: "p2", name: "Other Patient", cancer_type: "Breast" } });
     if (path === "/patients/p2/summary") return json(EMPTY_SUMMARY);
+    if (path === "/patients/p2/plan") return json({ next_review: null, items: [] });
     if (path === "/patients/p2/documents/identity") return json({ patient_name: "Other Patient", documents: [] });
     return route.fallback();
   });
@@ -2326,6 +2340,54 @@ test("Watchlist: staff see the suggestion text but no Accept/Dismiss, and can Su
   for (let i = 0; i < 100 && posts.length === 0; i++) await Bun.sleep(20);
   expect(posts.length).toBe(1);
   expect(posts[0]).toEqual({ path: "/tracked-markers/m4/suggest-pin", body: JSON.stringify({ note: "check trend" }) });
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Snapshot: 'For this visit' follows the 7 rules in order, tags each row, folds unchanged items, and explains itself", async () => {
+  const conflicted = { conflict_id: "c1", status: "open", other_fact_id: "f9", other_value: "9.0", other_source: provenance(), authoritative_fact_id: null, historical: false };
+  const body = snapshotBody({
+    current_treatment: [snapshotField({ fact_id: "t1", field_type: "treatment_regimen", tracked_marker_id: null, marker_name: null, value: "FOLFOX", unit: null, reference_range: null, delta_status: "changed" })],
+    tumor_markers: [
+      snapshotField({ fact_id: "f7", marker_name: "CA-125", tracked_marker_id: "m7", delta_status: "unchanged" }),
+      snapshotField({ fact_id: "f4", marker_name: "PSA", tracked_marker_id: "m4", value: "9.0", delta_status: "changed" }),
+      snapshotField({ fact_id: "f2", marker_name: "CEA", tracked_marker_id: "m1", value: "7.5", delta_status: "changed" }),
+      snapshotField({ fact_id: "f1", marker_name: "AFP", tracked_marker_id: "m5", conflicts: [conflicted], delta_status: "unchanged" }),
+    ],
+    radiology: [snapshotField({ fact_id: "r1", field_type: "radiology_impression", tracked_marker_id: null, marker_name: null, value: "Stable lesion", unit: null, reference_range: null, delta_status: "new" })],
+    watchlist: [
+      watchEntry(),
+      watchEntry({ tracked_marker_id: "m2", marker_name: "HER2", missing: true, latest: null, sparkline: [],
+        last_seen: { fact_id: "f9", document_id: null, value: "1.5", unit: "ng/mL", as_of_date: "2026-01-05", verification_state: "unverified" } }),
+    ],
+  });
+  const plan = { next_review: null, items: [{ id: "pl1", type: "test", text: "Bone scan", advised_at: "2025-01-01", approx_date: null, stated_date: null, status: "past_advised", past_advised: true, matched_document: null, suggested_document: null, source_fact_id: null, source_document_id: null }] };
+  const { page, errors } = await openSnapshot("oncologist", body, {}, undefined, EMPTY_SUMMARY, plan);
+  await page.getByRole("heading", { name: "For this visit · 7" }).waitFor();
+  await page.getByText("Bone scan").waitFor();
+
+  const tags = await page.getByTestId("rule-tag").allTextContents();
+  expect(tags).toEqual([
+    "Conflict between sources", "Pinned · changed", "New radiology report", "Outside range",
+    "Plan item past advised date", "Pinned · not in this visit", "Changed or new",
+  ]);
+
+  // Unchanged items are folded away until opened; the checkbox on a reordered row still works.
+  expect(await page.getByRole("heading", { name: "CA-125" }).count()).toBe(0);
+  await page.getByRole("checkbox", { name: "Select CEA for sign-off" }).check();
+  await page.getByRole("button", { name: "Sign off 1 reviewed" }).waitFor();
+  await page.getByRole("button", { name: "Unchanged and signed off · 1 ▸" }).click();
+  await page.getByRole("heading", { name: "CA-125" }).waitFor();
+
+  // The rule list is hidden until asked for.
+  expect(await page.getByTestId("how-ordered").count()).toBe(0);
+  await page.getByRole("button", { name: "How this is ordered" }).click();
+  const how = page.getByTestId("how-ordered");
+  expect(await how.locator("li").allTextContents()).toEqual([
+    "Conflict between sources", "Pinned marker, changed or new", "New radiology report", "Changed or new, outside lab range",
+    "Plan item past advised date", "Pinned marker not in this visit", "Other changed or new",
+  ]);
+  await how.getByText("Same order for every patient. No score or weighting.").waitFor();
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);

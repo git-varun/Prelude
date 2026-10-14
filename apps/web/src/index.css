@@ -702,3 +702,16 @@ select {
   flex-wrap: wrap;
   padding: var(--space-2) 0;
 }
+
+/* Priority order (AM-05): the rule that placed an item, shown on the item. */
+.priority-row {
+  margin-bottom: var(--space-4);
+}
+
+.rule-tag {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--color-text-muted, inherit);
+  margin-bottom: var(--space-1, 4px);
+}

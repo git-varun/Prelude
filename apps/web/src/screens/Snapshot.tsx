@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RoleGate } from "../auth/AuthContext";
-import { api, ApiError, type BatchFailure, type PatientSnapshot, type ReviewFact, type SnapshotField } from "../api/client";
+import { api, ApiError, type BatchFailure, type PatientSnapshot, type PlanItem, type ReviewFact, type SnapshotField } from "../api/client";
 import { FactCard } from "../components/FactCard";
 import { MarkerDisclaimerFooter } from "../components/MarkerDisclaimerFooter";
 import { Watchlist } from "../components/Watchlist";
 import { SummaryStrip } from "../components/SummaryStrip";
 import { MarkerTrendChart } from "../components/MarkerTrendChart";
 import { withThyroglobulinAdjacency } from "../lib/markerOrder";
-import { flagForRange } from "../lib/referenceRange";
+import { deltaPriority, RULES, type PriorityItem } from "../lib/priorityOrder";
 import { navigate } from "../router";
 
 const FIELD_LABELS: Record<string, string> = {
@@ -101,26 +101,14 @@ function toReviewFact(field: SnapshotField, patientId: string, visitId: string):
 
 // "Since last visit" is a terse delta summary across every block (docs/01 Screen
 // Inventory), not a second copy of each block's full correction-capable fact card --
-// a compact row per field, read-only, distinct in both purpose and appearance from
-// the full sections below where the same facts live for actual review/sign-off.
-// Highest priority first: an out-of-range changed/new value outranks a
-// plain changed/new value, which outranks unchanged -- a doctor scanning
-// this list should see what actually needs a decision before the inert
-// "nothing moved" entries. Stable otherwise (no secondary sort key), so
-// equal-priority rows keep the API's own order.
-function deltaPriority(f: SnapshotField): number {
-  const outOfRange = flagForRange(f.value, f.reference_range) !== null;
-  const changed = f.delta_status === "changed" || f.delta_status === "new";
-  if (changed && outOfRange) return 0;
-  if (changed) return 1;
-  return 2;
-}
-
-function DeltaSummary({ fields }: { fields: SnapshotField[] }) {
+// a compact row per field, read-only. Rows follow the same AM-05 order as "For this visit"
+// (rank comes from deltaPriority); rows with no rank keep the API's own order after the ranked ones.
+function DeltaSummary({ fields, rank }: { fields: SnapshotField[]; rank: Map<string, number> }) {
   if (fields.length === 0) {
     return <p className="muted">No data recorded for this visit.</p>;
   }
-  const sorted = [...fields].sort((a, b) => deltaPriority(a) - deltaPriority(b));
+  const rankOf = (f: SnapshotField) => (f.fact_id !== null ? rank.get(f.fact_id) : undefined) ?? Infinity;
+  const sorted = [...fields].sort((a, b) => (rankOf(a) === rankOf(b) ? 0 : rankOf(a) < rankOf(b) ? -1 : 1));
   return (
     <div className="card" style={{ padding: 0 }}>
       {sorted.map((f, i) => {
@@ -223,42 +211,47 @@ function FieldEntry({
   );
 }
 
-function Section({
-  title,
-  fields,
-  patientId,
-  visitId,
-  onChanged,
-  showTrend,
-  batch,
-}: {
-  title: string;
-  fields: SnapshotField[];
-  patientId: string;
-  visitId: string;
-  onChanged: () => void;
-  showTrend?: boolean;
-  batch: Batch;
-}) {
+const tagFor = (rule: number) => RULES.find((r) => r.rule === rule)!.tag;
+
+function PriorityRow({ item, ...rest }: { item: PriorityItem; patientId: string; visitId: string; onChanged: () => void; batch: Batch }) {
+  const tag = item.rule !== null && (
+    <div className="rule-tag" data-testid="rule-tag">{tagFor(item.rule)}</div>
+  );
+  if (item.kind === "plan") {
+    return (
+      <div className="priority-row">
+        {tag}
+        <div className="card">
+          <div className="page-heading" style={{ marginBottom: 0 }}>
+            <div>
+              <strong>{item.plan.text}</strong>
+              <div className="muted">Advised {item.plan.advised_at} · Past advised date, no report seen</div>
+            </div>
+            <button className="btn btn--ghost" type="button" onClick={() => navigate(`/patients/${rest.patientId}/plan`)}>Open plan</button>
+          </div>
+        </div>
+      </div>
+    );
+  }
+  if (item.kind === "missing_pin") {
+    const seen = item.entry.last_seen;
+    return (
+      <div className="priority-row">
+        {tag}
+        <div className="card">
+          <strong>{item.entry.marker_name}</strong>
+          <div className="muted">
+            Not in this visit · {seen ? `last ${seen.value}${seen.unit ? ` ${seen.unit}` : ""} on ${seen.as_of_date}` : "no earlier value"}
+          </div>
+        </div>
+      </div>
+    );
+  }
   return (
-    <section aria-labelledby={`section-${title}`} style={{ marginBottom: 32 }}>
-      <h2 id={`section-${title}`}>{title}</h2>
-      {fields.length === 0 ? (
-        <p className="muted">No data recorded for this visit.</p>
-      ) : (
-        fields.map((f, i) => (
-          <FieldEntry
-            key={`${title}-${f.fact_id ?? "none"}-${f.tracked_marker_id ?? i}`}
-            field={f}
-            patientId={patientId}
-            visitId={visitId}
-            onChanged={onChanged}
-            showTrend={showTrend}
-            batch={batch}
-          />
-        ))
-      )}
-    </section>
+    <div className="priority-row">
+      {tag}
+      <FieldEntry field={item.field} showTrend={item.section === "marker"} {...rest} />
+    </div>
   );
 }
 
@@ -268,6 +261,9 @@ export function Snapshot({ patientId }: { patientId: string }) {
   const [loading, setLoading] = useState(true);
 
   const [heldCount, setHeldCount] = useState(0);
+  const [planItems, setPlanItems] = useState<PlanItem[]>([]);
+  const [showRules, setShowRules] = useState(false);
+  const [showFolded, setShowFolded] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchError, setBatchError] = useState<string | null>(null);
@@ -283,6 +279,7 @@ export function Snapshot({ patientId }: { patientId: string }) {
   useEffect(() => {
     let current = true;
     setHeldCount(0);
+    setPlanItems([]);
     setSelected(new Set());
     setToast(null);
     setBatchError(null);
@@ -291,6 +288,13 @@ export function Snapshot({ patientId }: { patientId: string }) {
       .getPatientIdentityDocuments(patientId)
       .then((r) => {
         if (current) setHeldCount(r.documents.filter((d) => d.identity_status === "mismatch").length);
+      })
+      .catch(() => {});
+    // Same flag the Plan screen shows (rule 5); best-effort, so a failure just means no plan rows.
+    api
+      .getPatientPlan(patientId)
+      .then((r) => {
+        if (current) setPlanItems(r.items);
       })
       .catch(() => {});
     return () => {
@@ -340,6 +344,17 @@ export function Snapshot({ patientId }: { patientId: string }) {
   const age = ageFromDob(patient.date_of_birth);
 
   const visitFields = [...data.current_treatment, ...data.tumor_markers, ...data.radiology].filter((f) => f.fact_id !== null);
+  const items = deltaPriority({
+    treatment: data.current_treatment, markers: data.tumor_markers, radiology: data.radiology,
+    watchlist: data.watchlist, planItems,
+  });
+  const ruled = items.filter((i) => i.rule !== null);
+  // Unchanged facts, plus placeholders for fields with no fact, fold away. The Thyroglobulin / Anti-Tg
+  // adjacency (Decisions Log) is applied here only: inside the ruled list the rule order is never overridden.
+  const folded = withThyroglobulinAdjacency(items.filter((i) => i.rule === null));
+  const placeholders = [...data.current_treatment, ...data.tumor_markers, ...data.radiology].filter((f) => f.fact_id === null);
+  const foldedCount = folded.length + placeholders.length;
+  const rank = new Map(items.flatMap((it, i) => (it.kind === "fact" ? [[it.id, i] as [string, number]] : [])));
   const eligibleIds = new Set(visitFields.filter((f) => batchState(f).kind === "eligible").map((f) => f.fact_id!));
   // Only still-eligible picks count (a reload can change a fact's state).
   const picked = [...selected].filter((id) => eligibleIds.has(id));
@@ -355,6 +370,7 @@ export function Snapshot({ patientId }: { patientId: string }) {
       }),
     onSignedOff: (id) => setToast({ ids: [id] }),
   };
+  const rowProps = { patientId: data.patient.id, visitId, onChanged: load, batch };
   const labelFor = (factId: string) => {
     const f = visitFields.find((v) => v.fact_id === factId);
     return f ? (f.marker_name ?? FIELD_LABELS[f.field_type] ?? f.field_type) : "Unknown fact";
@@ -450,17 +466,23 @@ export function Snapshot({ patientId }: { patientId: string }) {
       {data.previous_visit.id !== null && (
         <section aria-labelledby="section-since-last-visit" style={{ marginBottom: 32 }}>
           <h2 id="section-since-last-visit">Since last visit</h2>
-          <DeltaSummary fields={data.since_last_visit} />
+          <DeltaSummary fields={data.since_last_visit} rank={rank} />
         </section>
       )}
 
       <Watchlist data={data} onChanged={load} />
 
-      <RoleGate roles={["oncologist"]}>
-        <section aria-labelledby="section-for-this-visit" style={{ marginBottom: 16 }}>
-          <div className="page-heading" style={{ marginBottom: 8 }}>
-            <h2 id="section-for-this-visit" style={{ margin: 0 }}>For this visit</h2>
-            <span style={{ display: "flex", alignItems: "center", gap: 12 }}>
+      <section aria-labelledby="section-for-this-visit" style={{ marginBottom: 32 }}>
+        <div className="page-heading" style={{ marginBottom: 8 }}>
+          <h2 id="section-for-this-visit" style={{ margin: 0 }}>For this visit · {ruled.length}</h2>
+          <span style={{ display: "flex", alignItems: "center", gap: 12 }}>
+            <button
+              className="btn btn--ghost" type="button" aria-expanded={showRules}
+              onClick={() => setShowRules((v) => !v)}
+            >
+              How this is ordered
+            </button>
+            <RoleGate roles={["oncologist"]}>
               <span className="muted">{signedCount} signed off this visit</span>
               <button
                 className="btn btn--primary"
@@ -470,8 +492,19 @@ export function Snapshot({ patientId }: { patientId: string }) {
               >
                 {picked.length === 0 ? "Select facts to sign off" : batchBusy ? "Signing off..." : `Sign off ${picked.length} reviewed`}
               </button>
-            </span>
+            </RoleGate>
+          </span>
+        </div>
+        {showRules && (
+          <div className="card" data-testid="how-ordered">
+            <ol style={{ margin: 0, paddingLeft: 20 }}>
+              {RULES.map((r) => <li key={r.rule}>{r.label}</li>)}
+            </ol>
+            <p className="muted" style={{ marginBottom: 0 }}>Then unchanged items, folded away.</p>
+            <p className="muted" style={{ marginBottom: 0 }}>Same order for every patient. No score or weighting.</p>
           </div>
+        )}
+        <RoleGate roles={["oncologist"]}>
           {batchError && <div className="error-banner">{batchError}</div>}
           {batchFailures.length > 0 && (
             <ul data-testid="batch-failures">
@@ -480,34 +513,31 @@ export function Snapshot({ patientId }: { patientId: string }) {
               ))}
             </ul>
           )}
-        </section>
-      </RoleGate>
-
-      <Section
-        title="Current treatment"
-        fields={data.current_treatment}
-        patientId={data.patient.id}
-        visitId={visitId}
-        onChanged={load}
-        batch={batch}
-      />
-      <Section
-        title="Tumor markers"
-        fields={withThyroglobulinAdjacency(data.tumor_markers)}
-        patientId={data.patient.id}
-        visitId={visitId}
-        onChanged={load}
-        showTrend
-        batch={batch}
-      />
-      <Section
-        title="Radiology"
-        fields={data.radiology}
-        patientId={data.patient.id}
-        visitId={visitId}
-        onChanged={load}
-        batch={batch}
-      />
+        </RoleGate>
+        {ruled.length === 0 && <p className="muted">Nothing changed or new in this visit.</p>}
+        {ruled.map((item) => (
+          <PriorityRow key={`${item.kind}-${item.id}`} item={item} {...rowProps} />
+        ))}
+        {foldedCount > 0 && (
+          <div style={{ marginTop: 16 }}>
+            <button className="btn btn--ghost" type="button" aria-expanded={showFolded} onClick={() => setShowFolded((v) => !v)}>
+              Unchanged and signed off · {foldedCount} {showFolded ? "▾" : "▸"}
+            </button>
+            {showFolded && (
+              <div>
+                {folded.map((item) => (
+                  <PriorityRow key={`${item.kind}-${item.id}`} item={item} {...rowProps} />
+                ))}
+                {placeholders.map((f, i) => (
+                  <div className="priority-row" key={`ph-${f.tracked_marker_id ?? f.field_type}-${i}`}>
+                    <FieldEntry field={f} showTrend={false} {...rowProps} />
+                  </div>
+                ))}
+              </div>
+            )}
+          </div>
+        )}
+      </section>
 
       <MarkerDisclaimerFooter />
 
