@@ -463,6 +463,8 @@ export async function setDocumentIdentityStatus(req: Request & { params: { id: s
 
 // M3-08: staff cannot confirm or reject a held document; they record an assessment and a note and the document
 // moves to 'awaiting_oncologist'. It stays held: every read that excludes 'mismatch' excludes it too.
+const MAX_FLAG_NOTE = 500;
+
 export async function flagDocumentIdentity(req: Request & { params: { id: string } }, user: AuthedUser): Promise<Response> {
   const documentId = req.params.id;
   if (!isUuid(documentId)) return jsonError(404, "not_found", "Document not found.");
@@ -481,6 +483,9 @@ export async function flagDocumentIdentity(req: Request & { params: { id: string
     return jsonError(400, "bad_request", "note must be text.");
   }
   const cleanNote = typeof note === "string" && note.trim() ? note.trim() : null;
+  if (cleanNote && cleanNote.length > MAX_FLAG_NOTE) {
+    return jsonError(400, "bad_request", `note must be at most ${MAX_FLAG_NOTE} characters.`);
+  }
 
   const outcome = await sql.begin(async (tx) => {
     const [before] = await tx`SELECT * FROM documents WHERE id = ${documentId} FOR UPDATE`;
@@ -537,11 +542,18 @@ export async function getIdentityPreview(req: Request & { params: { id: string }
         .filter((f: any) => f.marker_name)
         .map((f: any) => ({ marker_name: f.marker_name as string, as_of_date: f.as_of_date ? toDateOnly(f.as_of_date) : null }));
 
+      // Cost note: detectConflicts runs a few queries per fact inside this row-locking transaction. Batching its
+      // match queries per document would mean reworking detectConflicts itself, so it is left as is (reports are small).
       const newConflicts: Record<string, unknown>[] = [];
+      const seenPairs = new Set<string>();
       for (const f of facts) {
         for (const pair of await detectConflicts(tx, f as any, { dryRun: true })) {
           if (pair.alreadyExists) continue;
-          const [other] = await tx`SELECT value, unit FROM facts WHERE id = ${pair.factIdB}`;
+          // Two facts of the same held report that disagree are found from both sides: one entry per unordered pair.
+          const key = [pair.factIdA, pair.factIdB].sort().join(":");
+          if (seenPairs.has(key)) continue;
+          seenPairs.add(key);
+          const [other] = await tx`SELECT value, unit, document_id FROM facts WHERE id = ${pair.factIdB}`;
           newConflicts.push({
             field_type: f.field_type,
             marker_name: f.marker_name ?? null,
@@ -549,6 +561,7 @@ export async function getIdentityPreview(req: Request & { params: { id: string }
             this_value: f.value,
             other_value: other.value,
             unit: f.unit ?? other.unit ?? null,
+            other_side: other.document_id === documentId ? "this_report" : "record",
           });
         }
       }

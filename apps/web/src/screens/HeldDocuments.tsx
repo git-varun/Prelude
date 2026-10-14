@@ -128,7 +128,18 @@ export function HeldDocuments({ patientId }: { patientId: string }) {
               <StaffAssessmentLine doc={doc} />
               <p><ReviewLink id={doc.id} /></p>
               <RoleGate roles={["oncologist"]}>
-                <IdentityDecision documentId={doc.id} onDone={(o) => decided(doc, o)} />
+                <IdentityDecision documentId={doc.id} onDone={(o) => decided(doc, o)} confirmFirst />
+                <p style={{ margin: "4px 0 0" }}>
+                  <a
+                    href={`#/patients/${patientId}/snapshot`}
+                    onClick={(e) => {
+                      e.preventDefault();
+                      navigate(`/patients/${patientId}/snapshot`);
+                    }}
+                  >
+                    Review before confirming
+                  </a>
+                </p>
               </RoleGate>
               <RoleGate roles={["staff"]}>
                 <FlagForm documentId={doc.id} initial={doc} onDone={() => afterFlag(doc)} />

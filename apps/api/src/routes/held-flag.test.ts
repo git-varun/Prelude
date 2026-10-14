@@ -67,6 +67,7 @@ test("flag validates the assessment, 404s an unknown document and 409s a documen
   expect((await flag(heldDoc, { assessment: "maybe" })).status).toBe(400);
   expect((await flag(heldDoc, {})).status).toBe(400);
   expect((await flag(heldDoc, { assessment: "likely_same", note: 5 })).status).toBe(400);
+  expect((await flag(heldDoc, { assessment: "likely_same", note: "x".repeat(501) })).status).toBe(400);
   expect((await flag(crypto.randomUUID(), { assessment: "likely_same" })).status).toBe(404);
   expect((await flag("not-a-uuid", { assessment: "likely_same" })).status).toBe(404);
   expect((await flag(liveDoc, { assessment: "likely_same" })).status).toBe(409);
@@ -168,4 +169,20 @@ test("the oncologist rejects a flagged document; it stays excluded", async () =>
   expect(row.identity_status).toBe("rejected");
   expect(await sql`SELECT 1 FROM audit_log WHERE entity_id = ${doc} AND action = 'reject_identity'`).toHaveLength(1);
   expect((await flag(doc, { assessment: "likely_same" })).status).toBe(409);
+});
+
+test("preview dedupes two disagreeing facts of the same held report and labels the other side", async () => {
+  const doc = await newDoc("mismatch", "dup");
+  for (const value of ["1.1", "2.2"]) {
+    await sql`
+      INSERT INTO facts (patient_id, visit_id, document_id, tracked_marker_id, field_type, value, unit, as_of_date, coverage_status, verification_state)
+      VALUES (${patientId}, ${visitId}, ${doc}, ${markerId}, 'marker_value', ${value}, 'ng/mL', '2026-03-09', 'value_found', 'unverified')`;
+  }
+  const body = (await (await preview(doc)).json()) as any;
+  expect(body.new_conflicts).toHaveLength(1);
+  expect(body.new_conflicts[0]).toMatchObject({ marker_name: "CEA", as_of_date: "2026-03-09", other_side: "this_report" });
+  // A note of exactly 500 characters is accepted; a flag on a decided document is refused.
+  expect((await flag(doc, { assessment: "cannot_tell", note: "y".repeat(500) })).status).toBe(200);
+  expect((await decide(doc, "reject")).status).toBe(200);
+  expect((await flag(doc, { assessment: "cannot_tell" })).status).toBe(409);
 });

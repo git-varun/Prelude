@@ -64,6 +64,7 @@ export function FlagForm({ documentId, onDone, initial }: { documentId: string; 
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
+  const reflag = initial?.identity_status === "awaiting_oncologist";
 
   async function submit() {
     if (!assessment || inFlight.current) return;
@@ -74,9 +75,11 @@ export function FlagForm({ documentId, onDone, initial }: { documentId: string; 
       await api.flagDocumentIdentity(documentId, assessment, note.trim());
       onDone();
     } catch (err) {
-      // A 409 means the status already moved on: the parent reloads the truth.
-      if (err instanceof ApiError && err.status === 409) onDone();
-      else setError(err instanceof ApiError ? err.message : "Could not save the flag. Try again.");
+      // A 409 means the oncologist already decided: say so, then let the parent reload the truth.
+      if (err instanceof ApiError && err.status === 409) {
+        setError("This report was already decided by the oncologist.");
+        onDone();
+      } else setError(err instanceof ApiError ? err.message : "Could not save the flag. Try again.");
     } finally {
       inFlight.current = false;
       setBusy(false);
@@ -102,11 +105,12 @@ export function FlagForm({ documentId, onDone, initial }: { documentId: string; 
       </fieldset>
       <div className="field">
         <label htmlFor={`flag-note-${documentId}`}>Note for the oncologist (optional)</label>
-        <textarea id={`flag-note-${documentId}`} value={note} onChange={(e) => setNote(e.target.value)} />
+        <textarea id={`flag-note-${documentId}`} maxLength={500} value={note} onChange={(e) => setNote(e.target.value)} />
       </div>
       <button className="btn btn--secondary" type="button" disabled={busy || !assessment} onClick={() => void submit()}>
-        {busy ? "Saving..." : "Flag for oncologist"}
+        {busy ? "Saving..." : reflag ? "Update flag" : "Flag for oncologist"}
       </button>
+      {reflag && <p className="muted" style={{ fontSize: 12, margin: "4px 0 0" }}>Replaces the earlier flag</p>}
     </div>
   );
 }
@@ -161,7 +165,7 @@ function ReviewPanel({ doc, onDecided }: { doc: IdentityDocument; onDecided: (ou
                 <li key={i}>
                   {c.marker_name ?? FIELD_LABELS[c.field_type] ?? c.field_type}
                   {c.as_of_date ? ` · ${c.as_of_date}` : ""}: this report says {c.this_value}
-                  {c.unit ? ` ${c.unit}` : ""}, the record says {c.other_value}
+                  {c.unit ? ` ${c.unit}` : ""}, {c.other_side === "this_report" ? "another value in this same report is" : "the record says"} {c.other_value}
                 </li>
               ))}
             </ul>

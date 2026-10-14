@@ -253,7 +253,7 @@ export interface IdentityPreview {
   fact_counts: Record<string, number>;
   fact_total: number;
   markers: { marker_name: string; as_of_date: string | null }[];
-  new_conflicts: { field_type: string; marker_name: string | null; as_of_date: string | null; this_value: string; other_value: string; unit: string | null }[];
+  new_conflicts: { field_type: string; marker_name: string | null; as_of_date: string | null; this_value: string; other_value: string; unit: string | null; other_side: "this_report" | "record" }[];
   staff_assessment: { assessment: StaffAssessment; note: string | null; at: string } | null;
 }
 

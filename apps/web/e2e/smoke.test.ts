@@ -1587,6 +1587,7 @@ test("Held screen: Confirm removes the row, shows the result, and the document's
   await page.getByRole("link", { name: "Held documents" }).click();
   await page.getByRole("heading", { name: "Held documents" }).waitFor();
   await page.getByTestId("held-row").first().getByRole("button", { name: "Confirm" }).click();
+  await page.getByTestId("held-row").first().getByRole("button", { name: "Yes, confirm" }).click();
   await page.getByText("Confirmed. This document's facts are now live").waitFor();
   expect(await page.getByTestId("held-row").count()).toBe(1);
   expect(posts).toEqual([{ path: "/documents/dA/identity", body: { action: "confirm" } }]);
@@ -1625,6 +1626,7 @@ test("Held screen: Reject needs an explicit confirmation step, then removes the 
 test("Held screen: a 409 (already decided elsewhere) reloads the list instead of leaving a stale row", async () => {
   const { page, errors } = await openHeldScenario("/patients/p1/held", { conflictOnConfirm: true });
   await page.getByTestId("held-row").first().getByRole("button", { name: "Confirm" }).click();
+  await page.getByTestId("held-row").first().getByRole("button", { name: "Yes, confirm" }).click();
   await page.getByText("had already changed").waitFor();
   expect(await page.getByTestId("held-row").count()).toBe(1);
   expect(errors).toEqual([]);
@@ -1635,6 +1637,7 @@ test("Held screen: empty state when nothing is held", async () => {
   const { page, errors } = await openHeldScenario("/patients/p1/held");
   for (const remaining of [1, 0]) {
     await page.getByTestId("held-row").first().getByRole("button", { name: "Confirm" }).click();
+    await page.getByTestId("held-row").first().getByRole("button", { name: "Yes, confirm" }).click();
     await page.waitForFunction((n) => document.querySelectorAll('[data-testid="held-row"]').length === n, remaining);
   }
   await page.getByText("No documents held.").waitFor();
@@ -1655,6 +1658,7 @@ test("Extraction review: a held document shows both names with Confirm/Reject; a
   await banner.getByText("Test Patient").waitFor();
   expect(await banner.getByTestId("printed-name").textContent()).toBe("Someone Else");
   await banner.getByRole("button", { name: "Confirm" }).click();
+  await banner.getByRole("button", { name: "Yes, confirm" }).click();
   await page.getByText("Confirmed. This document's facts are now live").waitFor();
   await banner.waitFor({ state: "detached" });
   expect(errors).toEqual([]);
@@ -1677,9 +1681,10 @@ test("Extraction review: when the record name cannot be loaded the banner says s
 test("Held screen: a non-409 failure shows an inline error and the row stays", async () => {
   const { page, errors } = await openHeldScenario("/patients/p1/held", { postFails: true });
   await page.getByTestId("held-row").first().getByRole("button", { name: "Confirm" }).click();
+  await page.getByTestId("held-row").first().getByRole("button", { name: "Yes, confirm" }).click();
   await page.getByText("Could not save right now.").waitFor();
   expect(await page.getByTestId("held-row").count()).toBe(2);
-  expect(await page.getByTestId("held-row").first().getByRole("button", { name: "Confirm" }).isEnabled()).toBe(true);
+  expect(await page.getByTestId("held-row").first().getByRole("button", { name: "Yes, confirm" }).isEnabled()).toBe(true);
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);
@@ -2561,6 +2566,7 @@ test("Snapshot: with no previous visit here, 'Latest anywhere' still shows the s
   const { page, errors } = await openSnapshot("staff", bodyFor);
   await page.getByRole("button", { name: "Latest anywhere · Max Hospital 2026-01-20" }).click();
   await page.getByRole("heading", { name: "Since latest visit anywhere" }).waitFor();
+  await page.getByText("Compared with: Max Hospital 2026-01-20").waitFor();
   expect(await page.getByTestId("compare-baseline").textContent()).toBe("Compared with: Max Hospital 2026-01-20");
   expect(errors).toEqual([]);
   await page.close();

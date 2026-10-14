@@ -250,6 +250,7 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
             <IdentityDecision
               documentId={document.id}
               onDone={identityDecided}
+              confirmFirst
               confirmDisabled={recordedName === undefined || recordedError !== null}
             />
           </RoleGate>

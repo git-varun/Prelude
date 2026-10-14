@@ -315,11 +315,13 @@ export function Snapshot({ patientId }: { patientId: string }) {
 
   // Best-effort banner data: a failure here must never break or delay the snapshot, so it is
   // fetched independently and any error just means "no banner".
+  const heldSeq = useRef(0);
   const loadHeld = useCallback(() => {
+    const seq = ++heldSeq.current;
     api
       .getPatientIdentityDocuments(patientId)
       .then((r) => {
-        if (currentPatientId.current === patientId) {
+        if (currentPatientId.current === patientId && seq === heldSeq.current) {
           setHeldDocs(r.documents.filter((d) => d.identity_status === "mismatch" || d.identity_status === "awaiting_oncologist"));
         }
       })
@@ -507,9 +509,9 @@ export function Snapshot({ patientId }: { patientId: string }) {
         <CompareControl data={data} mode={compare} onChange={setCompare} />
       </div>
 
-      {(data.previous_visit.id !== null || (compare === "any" && data.compare.latest_any !== null)) && (
+      {(data.previous_visit.id !== null || (data.compare.mode === "any" && data.compare.latest_any !== null)) && (
         <section aria-labelledby="section-since-last-visit" style={{ marginBottom: 32 }}>
-          <h2 id="section-since-last-visit">{compare === "any" ? "Since latest visit anywhere" : "Since last visit here"}</h2>
+          <h2 id="section-since-last-visit">{data.compare.mode === "any" ? "Since latest visit anywhere" : "Since last visit here"}</h2>
           <p className="muted" data-testid="compare-baseline" style={{ marginTop: 0 }}>Compared with: {baselineText(data)}</p>
           <DeltaSummary fields={data.since_last_visit} rank={rank} />
         </section>
@@ -580,7 +582,7 @@ export function Snapshot({ patientId }: { patientId: string }) {
         {foldedCount + placeholders.length > 0 && (
           <div style={{ marginTop: 16 }}>
             <button className="btn btn--ghost" type="button" aria-expanded={showFolded} onClick={() => setFoldChoice(!showFolded)}>
-              Unchanged since last signed-off value {compare === "any" ? "anywhere" : "here"} · {foldedCount}{checkCount > 0 && ` · ${checkCount} need a check`} {showFolded ? "▾" : "▸"}
+              Unchanged since last signed-off value {data.compare.mode === "any" ? "anywhere" : "here"} · {foldedCount}{checkCount > 0 && ` · ${checkCount} need a check`} {showFolded ? "▾" : "▸"}
             </button>
             {showFolded && (
               <div>
