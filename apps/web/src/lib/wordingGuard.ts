@@ -27,6 +27,38 @@ function stripNonCopy(source: string): string {
     .join("\n");
 }
 
+// AM-06 additions. Unlike the terms above these are common code words ("done" status
+// enums, "due" in dueLabel), so they are matched only inside copy segments (see copySegments).
+export const PROHIBITED_COPY_TERMS = [
+  "done", "overdue", "missed", "due", "triage", "urgent", "priority patient",
+] as const;
+
+// Approved replacement vocabulary (AM-06). Tests assert each passes the guard.
+export const ALLOWED_PHRASES = [
+  "Planned", "Report seen", "Past advised date, no report seen", "Not found in documents",
+  "Not extracted yet", "Visit elsewhere", "Pinned", "Suggested pin",
+] as const;
+
+// A string literal exactly equal to one of these is a code value (status enum), not copy.
+const CODE_VALUE_LITERALS = new Set([
+  "done", // extraction_status / ocr_status enum value from the API; never rendered as copy
+]);
+
+// User-visible candidates on one line: string/template literals (with ${...} removed),
+// JSX text between > and <, and bare JSX text lines. Identifiers, keys and comparisons
+// are never included.
+function copySegments(line: string): string[] {
+  const segs: string[] = [];
+  const lit = /"((?:[^"\\]|\\.)*)"|'((?:[^'\\]|\\.)*)'|`((?:[^`\\]|\\.)*)`/g;
+  for (const m of line.matchAll(lit)) {
+    const body = (m[1] ?? m[2] ?? m[3] ?? "").replace(/\$\{[^}]*\}/g, " ");
+    if (!CODE_VALUE_LITERALS.has(body)) segs.push(body);
+  }
+  for (const m of line.matchAll(/>([^<>{}=&|;()]+)</g)) segs.push(m[1] ?? "");
+  if (/^\s*[A-Za-z][A-Za-z ,.'’!?:-]*$/.test(line)) segs.push(line);
+  return segs;
+}
+
 export function findViolations(source: string): WordingViolation[] {
   const violations: WordingViolation[] = [];
   const cleaned = stripNonCopy(source);
@@ -37,5 +69,15 @@ export function findViolations(source: string): WordingViolation[] {
       if (re.test(line)) violations.push({ term, line: i + 1, snippet: line.trim() });
     });
   }
+  const copyTerms = PROHIBITED_COPY_TERMS.map((term) => ({
+    term,
+    re: new RegExp(`\\b${term.replace(" ", "\\s+")}\\b`, "i"),
+  }));
+  lines.forEach((line, i) => {
+    const segs = copySegments(line);
+    for (const { term, re } of copyTerms) {
+      if (segs.some((seg) => re.test(seg))) violations.push({ term, line: i + 1, snippet: line.trim() });
+    }
+  });
   return violations;
 }

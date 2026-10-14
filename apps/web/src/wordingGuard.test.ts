@@ -1,7 +1,7 @@
 import { test, expect } from "bun:test";
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
-import { findViolations } from "./lib/wordingGuard";
+import { findViolations, ALLOWED_PHRASES, PROHIBITED_COPY_TERMS } from "./lib/wordingGuard";
 
 const SRC_DIR = join(import.meta.dir);
 
@@ -30,4 +30,37 @@ test("no apps/web source file uses a prohibited clinical-judgment term as user-v
     }
   }
   expect(violations).toEqual([]);
+});
+
+const terms = (src: string) => findViolations(src).map((v) => v.term);
+
+test("each AM-06 term is a violation in JSX text, a title prop and a template string", () => {
+  for (const term of PROHIBITED_COPY_TERMS) {
+    expect(terms(`<p>Visit ${term} today</p>`)).toContain(term);
+    expect(terms(`<Card title="Marked ${term}" />`)).toContain(term);
+    expect(terms("const s = `This is ${n} " + term + " now`;")).toContain(term);
+    expect(terms(`<p>\n  Marked ${term}\n</p>`)).toContain(term);
+  }
+});
+
+test("AM-06 terms are ignored in code, not copy", () => {
+  const ok = [
+    'if (x.ocr_status === "done") run();',
+    'type S = "pending" | "done" | "failed";',
+    "const dueLabel = fmt(r.due_date);",
+    '<div className="task-done due urgent" />',
+    "// this is overdue and done",
+    "/* urgent triage */",
+    'import { done } from "./due";',
+    "<p>Predone and redone</p>",
+    "const s = `${targets.length - done} left`;",
+  ];
+  for (const src of ok) expect(terms(src)).toEqual([]);
+});
+
+test("every ALLOWED_PHRASES entry passes the guard", () => {
+  for (const p of ALLOWED_PHRASES) {
+    expect(findViolations(`<p>${p}</p>`)).toEqual([]);
+    expect(findViolations(`const t = "${p}";`)).toEqual([]);
+  }
 });
