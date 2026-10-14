@@ -715,3 +715,24 @@ select {
   color: var(--color-text-muted, inherit);
   margin-bottom: var(--space-1, 4px);
 }
+
+/* AM-03: visits elsewhere are always marked with a dashed rule and the label "visit elsewhere · {facility}". No colour semantics. */
+.tag--elsewhere {
+  border-style: dashed;
+}
+
+.is-elsewhere {
+  border-bottom: 1px dashed var(--color-text-muted);
+}
+
+.compare-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: var(--space-2);
+  flex-wrap: wrap;
+}
+
+.compare-toggle .btn[aria-pressed="true"] {
+  border-color: var(--color-accent);
+  color: var(--color-accent);
+}

@@ -44,6 +44,10 @@ export function Upload({ patientId }: { patientId: string }) {
   const [documentType, setDocumentType] = useState<(typeof DOCUMENT_TYPES)[number]>("blood");
   const [imagingModality, setImagingModality] = useState<ImagingModality>("ct");
   const [sourceOrigin, setSourceOrigin] = useState<(typeof SOURCE_ORIGINS)[number]>("own_hospital");
+  // AM-03: a document from another facility needs BOTH the date and the facility, typed by staff. Never guessed.
+  const [fromElsewhere, setFromElsewhere] = useState(false);
+  const [outsideDate, setOutsideDate] = useState("");
+  const [outsideFacility, setOutsideFacility] = useState("");
   const [uploaded, setUploaded] = useState<DocumentRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -95,6 +99,10 @@ export function Upload({ patientId }: { patientId: string }) {
     if (!file || !visit) return;
 
     setError(null);
+    if (fromElsewhere && (!outsideDate || !outsideFacility.trim())) {
+      setError("Enter the date and the facility of the visit elsewhere before uploading.");
+      return;
+    }
     setUploading(true);
     try {
       const doc = await api.uploadDocument(patientId, {
@@ -102,6 +110,7 @@ export function Upload({ patientId }: { patientId: string }) {
         document_type: documentType,
         imaging_modality: documentType === "radiology" ? imagingModality : undefined,
         source_origin: sourceOrigin,
+        outside: fromElsewhere ? { date: outsideDate, facility: outsideFacility.trim() } : undefined,
         file,
       });
       setUploaded((prev) => [doc, ...prev]);
@@ -192,6 +201,24 @@ export function Upload({ patientId }: { patientId: string }) {
             </select>
           </div>
           <div className="field">
+            <label>
+              <input type="checkbox" checked={fromElsewhere} onChange={(e) => setFromElsewhere(e.target.checked)} />{" "}
+              This document is from another facility
+            </label>
+          </div>
+          {fromElsewhere && (
+            <>
+              <div className="field">
+                <label htmlFor="outside_date">Date of the visit elsewhere</label>
+                <input id="outside_date" type="date" value={outsideDate} onChange={(e) => setOutsideDate(e.target.value)} />
+              </div>
+              <div className="field">
+                <label htmlFor="outside_facility">Facility</label>
+                <input id="outside_facility" type="text" value={outsideFacility} onChange={(e) => setOutsideFacility(e.target.value)} />
+              </div>
+            </>
+          )}
+          <div className="field">
             <label htmlFor="file">File</label>
             <input id="file" type="file" ref={fileInputRef} required />
           </div>
@@ -209,6 +236,7 @@ export function Upload({ patientId }: { patientId: string }) {
               <span>
                 {doc.document_type}
                 {doc.imaging_modality && ` (${doc.imaging_modality.replace(/_/g, " ")})`} · {doc.source_origin.replace(/_/g, " ")}
+                {doc.outside_encounter_id && ` · visit elsewhere`}
               </span>
               <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <span className="tag tag--pending">OCR: {doc.ocr_status}</span>

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RoleGate } from "../auth/AuthContext";
-import { api, ApiError, type BatchFailure, type PatientSnapshot, type PlanItem, type ReviewFact, type SnapshotField } from "../api/client";
+import { api, ApiError, type CompareMode, type BatchFailure, type PatientSnapshot, type PlanItem, type ReviewFact, type SnapshotField } from "../api/client";
 import { FactCard } from "../components/FactCard";
+import { ElsewhereTag } from "../components/SummaryBits";
 import { MarkerDisclaimerFooter } from "../components/MarkerDisclaimerFooter";
 import { Watchlist } from "../components/Watchlist";
 import { SummaryStrip } from "../components/SummaryStrip";
@@ -122,6 +123,7 @@ function DeltaSummary({ fields, rank }: { fields: SnapshotField[]; rank: Map<str
               {f.unit && ` ${f.unit}`}
             </span>
             <span className="delta-row__meta">
+              <ElsewhereTag encounter={f.outside_encounter} />
               {f.delta_status && <span className="tag">{DELTA_LABELS[f.delta_status] ?? f.delta_status}</span>}
               <span className="tag">{COVERAGE_LABELS[f.coverage_status] ?? f.coverage_status}</span>
             </span>
@@ -201,7 +203,12 @@ function FieldEntry({
         trackedMarkers={[]}
         onChanged={onChanged}
         onSignedOff={batch.onSignedOff}
-        badge={field.imaging_modality && <span className="tag">{field.imaging_modality.replace(/_/g, " ")}</span>}
+        badge={
+          <>
+            <ElsewhereTag encounter={field.outside_encounter} />
+            {field.imaging_modality && <span className="tag">{field.imaging_modality.replace(/_/g, " ")}</span>}
+          </>
+        }
       />
       {showTrend && field.tracked_marker_id && (
         <div className="snapshot-field__trend">
@@ -258,10 +265,30 @@ function PriorityRow({ item, ...rest }: { item: PriorityItem; patientId: string;
   );
 }
 
+// AM-03: "Last visit here" is the default and the only choice that is ever pre-selected; "Latest anywhere" is opt-in.
+function CompareControl({ data, mode, onChange }: { data: PatientSnapshot; mode: CompareMode; onChange: (m: CompareMode) => void }) {
+  const { last_here, latest_any } = data.compare;
+  return (
+    <div className="compare-toggle" role="group" aria-label="Compare with">
+      <span className="muted">Compare with</span>
+      <button className="btn btn--ghost" type="button" aria-pressed={mode === "here"} onClick={() => onChange("here")}>
+        Last visit here{last_here ? ` · ${last_here.date}` : ""}
+      </button>
+      {(latest_any || mode === "any") && (
+        <button className="btn btn--ghost" type="button" aria-pressed={mode === "any"} onClick={() => onChange("any")}>
+          Latest anywhere{latest_any ? ` · ${latest_any.facility} ${latest_any.date}` : ""}
+        </button>
+      )}
+    </div>
+  );
+}
+
 export function Snapshot({ patientId }: { patientId: string }) {
   const [data, setData] = useState<PatientSnapshot | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  // Local state only: not persisted, always starts on "Last visit here" for a patient.
+  const [compare, setCompare] = useState<CompareMode>("here");
 
   const [heldCount, setHeldCount] = useState(0);
   const [planItems, setPlanItems] = useState<PlanItem[]>([]);
@@ -284,6 +311,7 @@ export function Snapshot({ patientId }: { patientId: string }) {
   useEffect(() => {
     let current = true;
     setHeldCount(0);
+    setCompare("here");
     setPlanItems([]);
     setPlanError(false);
     setFoldChoice(null);
@@ -308,7 +336,7 @@ export function Snapshot({ patientId }: { patientId: string }) {
     try {
       // Plan items (same flag the Plan screen shows, rule 5) reload with the snapshot; a failure is shown, not fatal.
       const planFetch = api.getPatientPlan(patientId).then((r) => r.items, () => null);
-      const [result, plan] = await Promise.all([api.getPatientSnapshot(patientId), planFetch]);
+      const [result, plan] = await Promise.all([api.getPatientSnapshot(patientId, compare), planFetch]);
       if (token !== latestLoad.current) return;
       if (plan !== null) setPlanItems(plan);
       setPlanError(plan === null);
@@ -320,7 +348,7 @@ export function Snapshot({ patientId }: { patientId: string }) {
     } finally {
       if (token === latestLoad.current) setLoading(false);
     }
-  }, [patientId]);
+  }, [patientId, compare]);
 
   useEffect(() => {
     currentPatientId.current = patientId;
@@ -472,6 +500,10 @@ export function Snapshot({ patientId }: { patientId: string }) {
       )}
 
       <SummaryStrip patientId={patient.id} />
+
+      <div style={{ marginBottom: 16 }}>
+        <CompareControl data={data} mode={compare} onChange={setCompare} />
+      </div>
 
       {data.previous_visit.id !== null && (
         <section aria-labelledby="section-since-last-visit" style={{ marginBottom: 32 }}>

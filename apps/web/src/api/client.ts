@@ -98,6 +98,8 @@ export interface PatientSummary {
   held_document_count: number;
   /** Live facts nobody has spot-checked yet. */
   unchecked_fact_count: number;
+  /** Latest visit elsewhere, only when newer than the latest visit here. */
+  latest_elsewhere: { facility: string; date: string } | null;
 }
 
 export interface TrackedMarker {
@@ -129,6 +131,22 @@ export interface VisitHistoryEntry {
   signed_off_count: number;
 }
 
+/** AM-03: a visit elsewhere, confirmed by staff (date and facility). Never signed off as a visit. */
+export interface OutsideEncounterRef {
+  id: string;
+  facility: string;
+  date: string;
+}
+
+export interface OutsideEncounterEntry {
+  id: string;
+  encounter_date: string;
+  facility: string;
+  document_count: number;
+}
+
+export type CompareMode = "here" | "any";
+
 export type IdentityStatus = "matched" | "partial" | "mismatch" | "confirmed" | "rejected" | "unknown";
 
 export interface DocumentRecord {
@@ -149,6 +167,7 @@ export interface DocumentRecord {
   identity_status: IdentityStatus | null;
   patient_name_on_report: string | null;
   lab_name: string | null;
+  outside_encounter_id: string | null;
 }
 
 export type CheckState = "unchecked" | "correct" | "incorrect";
@@ -283,6 +302,7 @@ export interface SnapshotField {
   conflicts: ConflictEntry[];
   provenance: Provenance | null;
   imaging_modality: ImagingModality | null;
+  outside_encounter: OutsideEncounterRef | null;
 }
 
 export interface WatchlistPoint {
@@ -312,6 +332,7 @@ export interface WatchlistEntry {
     delta_status: DeltaStatus | null;
     verification_state: string | null;
     was: { value: string | null; unit: string | null } | null;
+    outside_encounter: OutsideEncounterRef | null;
   } | null;
   sparkline: WatchlistPoint[];
   last_seen: WatchlistPoint | null;
@@ -353,6 +374,11 @@ export interface PatientSnapshot {
   watchlist: WatchlistEntry[];
   suggested_pins: SuggestedPin[];
   pin_options: PinOption[];
+  compare: {
+    mode: CompareMode;
+    last_here: { date: string } | null;
+    latest_any: { facility: string; date: string } | null;
+  };
 }
 
 export interface MarkerTrendPoint {
@@ -408,6 +434,7 @@ export interface SummaryItem {
   facility: string | null;
   verification_state: string;
   provenance: Provenance;
+  outside_encounter: OutsideEncounterRef | null;
 }
 
 export interface SummaryPrescription {
@@ -507,7 +534,8 @@ export const api = {
 
   getPatient: (id: string) => request<PatientDetail>(`/patients/${id}`),
 
-  getPatientSnapshot: (id: string) => request<PatientSnapshot>(`/patients/${id}/snapshot`),
+  getPatientSnapshot: (id: string, compare: CompareMode = "here") =>
+    request<PatientSnapshot>(`/patients/${id}/snapshot${compare === "any" ? "?compare=any" : ""}`),
 
   getMarkerTrend: (patientId: string, trackedMarkerId: string) =>
     request<MarkerTrend>(`/patients/${patientId}/markers/${trackedMarkerId}/trend`),
@@ -575,6 +603,8 @@ export const api = {
 
   listVisits: (patientId: string) => request<VisitHistoryEntry[]>(`/patients/${patientId}/visits`),
 
+  listOutsideEncounters: (patientId: string) => request<OutsideEncounterEntry[]>(`/patients/${patientId}/outside-encounters`),
+
   uploadDocument: (
     patientId: string,
     input: {
@@ -582,6 +612,7 @@ export const api = {
       document_type: string;
       imaging_modality?: ImagingModality;
       source_origin: string;
+      outside?: { date: string; facility: string };
       file: File;
     },
   ) => {
@@ -590,6 +621,11 @@ export const api = {
     form.set("document_type", input.document_type);
     if (input.imaging_modality) form.set("imaging_modality", input.imaging_modality);
     form.set("source_origin", input.source_origin);
+    if (input.outside) {
+      form.set("outside", "true");
+      form.set("outside_date", input.outside.date);
+      form.set("outside_facility", input.outside.facility);
+    }
     form.set("file", input.file);
     return request<DocumentRecord>(`/patients/${patientId}/documents`, { method: "POST", body: form });
   },

@@ -6,7 +6,7 @@ function field(over: Partial<SnapshotField> = {}): SnapshotField {
   return {
     fact_id: "f1", field_type: "marker_value", tracked_marker_id: "m1", marker_name: "CEA", value: "3", unit: "ng/mL",
     reference_range: "0-5", as_of_date: "2026-02-01", coverage_status: "value_found", verification_state: "unverified",
-    check_state: "correct", delta_status: "unchanged", conflicts: [], provenance: null, imaging_modality: null, ...over,
+    check_state: "correct", delta_status: "unchanged", conflicts: [], provenance: null, imaging_modality: null, outside_encounter: null, ...over,
   };
 }
 const conflict = (status = "open") =>

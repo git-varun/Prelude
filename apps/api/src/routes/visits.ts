@@ -33,6 +33,22 @@ export async function listVisits(req: Request & { params: { id: string } }): Pro
   return Response.json(visits);
 }
 
+// AM-03: visits elsewhere, newest first, with their document count. They are not visits here and carry no sign-off.
+export async function listOutsideEncounters(req: Request & { params: { id: string } }): Promise<Response> {
+  const patientId = req.params.id;
+  const [patient] = await sql`SELECT id FROM patients WHERE id = ${patientId}`;
+  if (!patient) return jsonError(404, "not_found", "Patient not found.");
+
+  const rows = await sql`
+    SELECT oe.id, to_char(oe.encounter_date, 'YYYY-MM-DD') AS encounter_date, oe.facility,
+           (SELECT count(*)::int FROM documents d WHERE d.outside_encounter_id = oe.id) AS document_count
+    FROM outside_encounters oe
+    WHERE oe.patient_id = ${patientId}
+    ORDER BY oe.encounter_date DESC, oe.id DESC
+  `;
+  return Response.json(rows);
+}
+
 /**
  * "Create/open the current visit" (docs/02 M1): a visit is a lightweight
  * grouping of the documents pushed for one OPD consult, not an

@@ -508,6 +508,7 @@ function snapshotBody(overrides: Record<string, unknown> = {}) {
     watchlist: [],
     suggested_pins: [],
     pin_options: [],
+    compare: { mode: "here", last_here: { date: "2026-01-01" }, latest_any: null },
     ...overrides,
   };
 }
@@ -536,7 +537,10 @@ async function openSnapshot(
       return route.fulfill({ status: 204, headers: { ...cors, "Access-Control-Allow-Headers": "content-type", "Access-Control-Allow-Methods": "GET,POST,OPTIONS" } });
     }
     if (path === "/auth/me") return json({ id: "u1", name: "Test", email: "t@opd.local", role });
-    if (path === "/patients/p1/snapshot") return json(body);
+    if (path === "/patients/p1/snapshot") {
+      // A function body lets a test answer per ?compare=.
+      return json(typeof body === "function" ? body(new URL(req.url()).searchParams.get("compare")) : body);
+    }
     if (path === "/patients/p1/summary") return json(summaryBody);
     if (path === "/patients/p1/plan" && planBody !== undefined) return json(planBody);
     const trendMatch = path.match(/^\/patients\/p1\/markers\/([^/]+)\/trend$/);
@@ -2388,6 +2392,131 @@ test("Snapshot: 'For this visit' follows the 7 rules in order, tags each row, fo
     "Plan item past advised date", "Pinned marker not in this visit", "Other changed or new",
   ]);
   await how.getByText("Same order for every patient. No score or weighting.").waitFor();
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+// M3-06 (AM-03): visits elsewhere.
+const MAX = { id: "oe1", facility: "Max Hospital", date: "2026-01-20" };
+
+test("Snapshot: compare defaults to 'Last visit here', switching reloads with ?compare=any and changes 'was'; elsewhere facts are labelled", async () => {
+  const compare = { mode: "here", last_here: { date: "2026-01-01" }, latest_any: { facility: "Max Hospital", date: "2026-01-20" } };
+  const bodyFor = (param: string | null) =>
+    snapshotBody({
+      compare: { ...compare, mode: param === "any" ? "any" : "here" },
+      tumor_markers: [snapshotField({ fact_id: "f1", outside_encounter: param === "any" ? MAX : null })],
+      pin_options: [{ tracked_marker_id: "m1", marker_name: "CEA", is_pinned: true, suggested: false }],
+      watchlist: [watchEntry({ latest: { ...watchEntry().latest, was: { value: param === "any" ? "8.0" : "3.0", unit: "ng/mL" }, outside_encounter: null } })],
+    });
+  const seen: (string | null)[] = [];
+  const { page, errors } = await openSnapshot("oncologist", (p: string | null) => (seen.push(p), bodyFor(p)));
+  const here = page.getByRole("button", { name: "Last visit here · 2026-01-01" });
+  const any = page.getByRole("button", { name: "Latest anywhere · Max Hospital 2026-01-20" });
+  await here.waitFor();
+  expect(await here.getAttribute("aria-pressed")).toBe("true");
+  expect(await any.getAttribute("aria-pressed")).toBe("false");
+  await page.getByText(/was 3\.0 ng\/mL/).waitFor();
+  expect(await page.getByTestId("elsewhere-tag").count()).toBe(0);
+  expect(seen).toEqual([null]);
+
+  await any.click();
+  await page.getByText(/was 8\.0 ng\/mL/).waitFor();
+  expect(await any.getAttribute("aria-pressed")).toBe("true");
+  expect(seen.at(-1)).toBe("any");
+  await page.getByTestId("elsewhere-tag").first().waitFor();
+  expect(await page.getByTestId("elsewhere-tag").first().textContent()).toBe("visit elsewhere · Max Hospital");
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Snapshot: without outside data there is no 'Latest anywhere' option", async () => {
+  const { page, errors } = await openSnapshot("staff", snapshotBody());
+  await page.getByRole("button", { name: "Last visit here · 2026-01-01" }).waitFor();
+  expect(await page.getByRole("button", { name: /Latest anywhere/ }).count()).toBe(0);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+async function openRoutedPage(hash: string, handle: (path: string, method: string, postData: string | null) => unknown | undefined) {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  const errors: string[] = [];
+  page.on("pageerror", (err) => errors.push(`pageerror: ${err.message}`));
+  page.on("console", (msg) => {
+    if (msg.type() === "error") errors.push(`console: ${msg.text()}`);
+  });
+  const cors = { "Access-Control-Allow-Origin": BASE, "Access-Control-Allow-Credentials": "true" };
+  await page.route(`${API}/**`, (route) => {
+    const req = route.request();
+    const path = new URL(req.url()).pathname;
+    if (req.method() === "OPTIONS") {
+      return route.fulfill({ status: 204, headers: { ...cors, "Access-Control-Allow-Headers": "content-type", "Access-Control-Allow-Methods": "GET,POST,OPTIONS" } });
+    }
+    const json = (b: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", headers: cors, body: JSON.stringify(b) });
+    if (path === "/auth/me") return json({ id: "u1", name: "Test", email: "t@opd.local", role: "staff" });
+    const result = handle(path, req.method(), req.postData());
+    return result === undefined ? json({}, 404) : json(result);
+  });
+  await page.goto(`${BASE}/#${hash}`);
+  return { page, errors };
+}
+
+test("Upload: 'from another facility' needs both a date and a facility before anything is sent", async () => {
+  const posts: string[] = [];
+  const { page, errors } = await openRoutedPage("/patients/p1/upload", (path, method, postData) => {
+    if (path === "/patients/p1" && method === "GET") return { id: "p1", name: "Test Patient", cancer_type: "Breast", tracked_markers: [] };
+    if (path === "/patients/p1/visits" && method === "POST") return { id: "v2", patient_id: "p1", visit_date: "2026-02-01" };
+    if (path === "/patients/p1/documents" && method === "POST") {
+      posts.push(postData ?? "");
+      return { id: "d1", document_type: "blood", source_origin: "own_hospital", ocr_status: "pending", imaging_modality: null, outside_encounter_id: "oe1" };
+    }
+    return undefined;
+  });
+  await page.getByRole("heading", { name: "Test Patient" }).waitFor();
+  // Hidden until the option is chosen.
+  expect(await page.getByLabel("Facility", { exact: true }).count()).toBe(0);
+  await page.setInputFiles("#file", { name: "a.pdf", mimeType: "application/pdf", buffer: Buffer.from("x") });
+  await page.getByLabel("This document is from another facility").check();
+  const upload = page.getByRole("button", { name: "Upload", exact: true });
+  await upload.click();
+  await page.getByText("Enter the date and the facility of the visit elsewhere before uploading.").waitFor();
+  await page.getByLabel("Date of the visit elsewhere").fill("2026-01-20");
+  await upload.click();
+  await page.getByText("Enter the date and the facility of the visit elsewhere before uploading.").waitFor();
+  expect(posts).toEqual([]);
+
+  await page.getByLabel("Facility", { exact: true }).fill("Max Hospital");
+  await upload.click();
+  await page.getByText("blood · own hospital · visit elsewhere").waitFor();
+  expect(posts).toHaveLength(1);
+  expect(posts[0]).toContain('name="outside"');
+  expect(posts[0]).toContain("2026-01-20");
+  expect(posts[0]).toContain("Max Hospital");
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Visit history: a visit elsewhere is listed in date order with a dashed rule, '{facility} · elsewhere' and its document count", async () => {
+  const { page, errors } = await openRoutedPage("/patients/p1/history", (path) => {
+    if (path === "/patients/p1/visits") {
+      return [
+        { id: "v2", visit_date: "2026-03-01", document_count: 1, fact_count: 2, signed_off_count: 1 },
+        { id: "v1", visit_date: "2026-01-01", document_count: 1, fact_count: 1, signed_off_count: 0 },
+      ];
+    }
+    if (path === "/patients/p1/outside-encounters") return [{ id: "oe1", encounter_date: "2026-02-10", facility: "Max Hospital", document_count: 2 }];
+    return undefined;
+  });
+  const row = page.getByTestId("elsewhere-row");
+  await row.waitFor();
+  expect(await row.getByText("Max Hospital · elsewhere").count()).toBe(1);
+  expect(await row.getByText("visit elsewhere · Max Hospital").count()).toBe(1);
+  expect(await row.getByText("2 documents").count()).toBe(1);
+  expect(await row.evaluate((el) => getComputedStyle(el).borderBottomStyle)).toBe("dashed");
+  // Between 2026-03-01 and 2026-01-01, in date order, with no sign-off tag.
+  const names = await page.locator(".delta-row__name").allTextContents();
+  expect(names).toEqual(["2026-03-01", "2026-02-10", "2026-01-01"]);
+  expect(await row.getByText(/signed off/).count()).toBe(0);
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);

@@ -1,4 +1,4 @@
-import type { SummaryItem } from "../api/client";
+import type { OutsideEncounterRef, SummaryItem } from "../api/client";
 import { navigate } from "../router";
 
 export const NOT_FOUND_TEXT = "Not found in documents";
@@ -13,6 +13,13 @@ const TRUST_LABELS: Record<string, string> = {
 
 export function trustLabel(state: string): string {
   return TRUST_LABELS[state] ?? state.replace(/_/g, " ");
+}
+
+export const elsewhereLabel = (facility: string) => `visit elsewhere · ${facility}`;
+
+export function ElsewhereTag({ encounter }: { encounter: OutsideEncounterRef | null | undefined }) {
+  if (!encounter) return null;
+  return <span className="tag tag--elsewhere" data-testid="elsewhere-tag">{elsewhereLabel(encounter.facility)}</span>;
 }
 
 export function sourceHref(item: SummaryItem): string {
@@ -36,5 +43,6 @@ export function SourceLink({ item }: { item: SummaryItem }) {
 
 // "13 Oct 2026 · unverified" -- the fact's own date (if any) and its trust state, as plain text.
 export function sourceLine(item: SummaryItem): string {
-  return [item.as_of_date, item.facility, trustLabel(item.verification_state)].filter(Boolean).join(" · ");
+  return [item.as_of_date, item.facility, item.outside_encounter ? elsewhereLabel(item.outside_encounter.facility) : null, trustLabel(item.verification_state)]
+    .filter(Boolean).join(" · ");
 }

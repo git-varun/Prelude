@@ -3,7 +3,7 @@ import { jsonError } from "../middleware/auth";
 import type { AuthedUser } from "../middleware/auth";
 import { isControlledMarker } from "@prelude/shared";
 import {
-  deltaKey, deltaForCurrentFact, deltaForAbsentField, loadDeltaBaselines, LIVE_FACT_FILTER, CONFLICT_SIDES_LIVE,
+  deltaKey, deltaForCurrentFact, deltaForAbsentField, loadDeltaBaselines, LIVE_FACT_FILTER, type CompareMode, CONFLICT_SIDES_LIVE,
   type DeltaBaseline, type DeltaStatus,
 } from "../services/delta";
 import { provenanceFor, type Provenance } from "../services/provenance";
@@ -178,6 +178,17 @@ export async function listPatients(req: Request): Promise<Response> {
     (SELECT count(*)::int FROM documents d WHERE d.patient_id = p.id AND d.identity_status = 'mismatch') AS held_document_count
   `;
 
+  // AM-03: the latest visit elsewhere, only when it is newer than the latest visit here (or there is no visit here).
+  const elsewhereSubquery = sql`
+    (SELECT json_build_object('facility', oe.facility, 'date', to_char(oe.encounter_date, 'YYYY-MM-DD'))
+     FROM outside_encounters oe
+     WHERE oe.patient_id = p.id
+       AND (NOT EXISTS (SELECT 1 FROM visits v WHERE v.patient_id = p.id)
+            OR oe.encounter_date > (SELECT MAX(v.visit_date) FROM visits v WHERE v.patient_id = p.id))
+     ORDER BY oe.encounter_date DESC, oe.id DESC LIMIT 1
+    ) AS latest_elsewhere
+  `;
+
   // Most recently seen first is more clinically useful than most recently
   // registered -- a patient with no visits yet sorts last (NULLS LAST).
   const rows = search
@@ -187,7 +198,8 @@ export async function listPatients(req: Request): Promise<Response> {
                (SELECT to_char(MAX(v.visit_date), 'YYYY-MM-DD') FROM visits v WHERE v.patient_id = p.id) AS last_visit_date,
                ${needsAttentionSubquery},
                ${uncheckedSubquery},
-               ${heldDocumentSubquery}
+               ${heldDocumentSubquery},
+               ${elsewhereSubquery}
         FROM patients p
         WHERE p.name ILIKE ${"%" + search + "%"}
         ORDER BY last_visit_date DESC NULLS LAST
@@ -199,7 +211,8 @@ export async function listPatients(req: Request): Promise<Response> {
                (SELECT to_char(MAX(v.visit_date), 'YYYY-MM-DD') FROM visits v WHERE v.patient_id = p.id) AS last_visit_date,
                ${needsAttentionSubquery},
                ${uncheckedSubquery},
-               ${heldDocumentSubquery}
+               ${heldDocumentSubquery},
+               ${elsewhereSubquery}
         FROM patients p
         ORDER BY last_visit_date DESC NULLS LAST
         LIMIT ${limit} OFFSET ${offset}
@@ -507,6 +520,7 @@ function fieldObject(
   fieldType: string,
   conflictsByFactId: Map<string, ConflictEntry[]>,
   deltaStatus: DeltaStatus | null,
+  outsideByFactId: Map<string, OutsideRef>,
 ) {
   const factId = row.fact_id;
   return {
@@ -525,7 +539,23 @@ function fieldObject(
     conflicts: factId ? (conflictsByFactId.get(factId) ?? []) : [],
     provenance: factId ? provenanceFor(row.document_id!, row.source_page, row.source_location, row.source_snippet) : null,
     imaging_modality: factId ? (row.imaging_modality ?? null) : null,
+    outside_encounter: factId ? (outsideByFactId.get(factId) ?? null) : null,
   };
+}
+
+// AM-03: the visit elsewhere a fact came from, if any (null for every fact from a visit here).
+export interface OutsideRef { id: string; facility: string; date: string }
+
+async function loadOutsideRefs(factIds: string[]): Promise<Map<string, OutsideRef>> {
+  const map = new Map<string, OutsideRef>();
+  if (factIds.length === 0) return map;
+  const rows = await sql`
+    SELECT f.id AS fact_id, oe.id, oe.facility, to_char(oe.encounter_date, 'YYYY-MM-DD') AS date
+    FROM facts f JOIN outside_encounters oe ON oe.id = f.outside_encounter_id
+    WHERE f.id IN ${sql(factIds)}
+  `;
+  for (const r of rows) map.set(r.fact_id, { id: r.id, facility: r.facility, date: r.date });
+  return map;
 }
 
 const EMPTY_ROW: SnapshotFactRow = {
@@ -540,13 +570,14 @@ function buildSingleKeyBlock(
   fieldType: string,
   baselines: Map<string, DeltaBaseline>,
   conflictsByFactId: Map<string, ConflictEntry[]>,
+  outsideByFactId: Map<string, OutsideRef>,
 ) {
   const baseline = baselines.get(deltaKey(fieldType, null));
   if (rows.length === 0) {
     const delta = deltaForAbsentField(baseline);
-    return delta === null ? [] : [fieldObject(EMPTY_ROW, fieldType, conflictsByFactId, delta)];
+    return delta === null ? [] : [fieldObject(EMPTY_ROW, fieldType, conflictsByFactId, delta, outsideByFactId)];
   }
-  return rows.map((r) => fieldObject(r, fieldType, conflictsByFactId, deltaForCurrentFact(r.value, r.unit, baseline)));
+  return rows.map((r) => fieldObject(r, fieldType, conflictsByFactId, deltaForCurrentFact(r.value, r.unit, baseline), outsideByFactId));
 }
 
 // M3-07: pinned markers in fixed order (pinned_at, then name), built from the same tumor-marker winners and delta
@@ -613,6 +644,7 @@ async function loadPins(
         as_of_date: current.as_of_date, delta_status: current.delta_status,
         verification_state: current.verification_state,
         was: baseline ? { value: baseline.value, unit: baseline.unit } : null,
+        outside_encounter: current.outside_encounter,
       },
       sparkline: plotted,
       last_seen: lastSeenPoint,
@@ -651,25 +683,38 @@ export async function getPatientSnapshot(req: Request & { params: { id: string }
   const [currentVisit, previousVisit] = visits;
   if (!currentVisit) return jsonError(404, "not_found", "This patient has no visits yet.");
 
+  // AM-03: "here" (default) compares with visits here only; "any" also uses visits elsewhere. Never defaults to "any".
+  const compareParam = new URL(req.url).searchParams.get("compare") ?? "here";
+  if (compareParam !== "here" && compareParam !== "any") return jsonError(400, "bad_request", "compare must be 'here' or 'any'.");
+  const compare: CompareMode = compareParam;
+
   const [markerRows, treatmentRows, radiologyRows, baselines] = await Promise.all([
     loadTumorMarkers(patientId, currentVisit.id),
     loadCurrentTreatment(currentVisit.id),
     loadRadiology(currentVisit.id),
-    loadDeltaBaselines(patientId, currentVisit.visit_date),
+    loadDeltaBaselines(patientId, currentVisit.visit_date, compare, currentVisit.id),
   ]);
 
   const factIds = [...markerRows, ...treatmentRows, ...radiologyRows]
     .map((r) => r.fact_id)
     .filter((id): id is string => id != null);
-  const conflicts = await loadConflicts(factIds);
+  const [conflicts, outsideRefs, [latestAny]] = await Promise.all([
+    loadConflicts(factIds),
+    loadOutsideRefs(factIds),
+    sql`
+      SELECT id, facility, to_char(encounter_date, 'YYYY-MM-DD') AS date FROM outside_encounters
+      WHERE patient_id = ${patientId} AND encounter_date < ${currentVisit.visit_date}::date
+      ORDER BY encounter_date DESC, id DESC LIMIT 1
+    `,
+  ]);
 
   const tumorMarkers = markerRows.map((r) => {
     const baseline = baselines.get(deltaKey("marker_value", r.tracked_marker_id ?? null));
     const delta = r.fact_id ? deltaForCurrentFact(r.value, r.unit, baseline) : deltaForAbsentField(baseline);
-    return fieldObject(r, "marker_value", conflicts, delta);
+    return fieldObject(r, "marker_value", conflicts, delta, outsideRefs);
   });
-  const currentTreatment = buildSingleKeyBlock(treatmentRows, "treatment_regimen", baselines, conflicts);
-  const radiology = buildSingleKeyBlock(radiologyRows, "radiology_impression", baselines, conflicts);
+  const currentTreatment = buildSingleKeyBlock(treatmentRows, "treatment_regimen", baselines, conflicts, outsideRefs);
+  const radiology = buildSingleKeyBlock(radiologyRows, "radiology_impression", baselines, conflicts, outsideRefs);
 
   const pins = await loadPins(patientId, tumorMarkers, baselines);
 
@@ -698,6 +743,11 @@ export async function getPatientSnapshot(req: Request & { params: { id: string }
     tumor_markers: tumorMarkers,
     radiology,
     since_last_visit: sinceLastVisit,
+    compare: {
+      mode: compare,
+      last_here: previousVisit ? { date: previousVisit.visit_date as string } : null,
+      latest_any: latestAny ? { facility: latestAny.facility as string, date: latestAny.date as string } : null,
+    },
     ...pins,
   });
 }
@@ -883,10 +933,14 @@ interface SummaryRow {
   source_page: number | null;
   source_location: string | null;
   source_snippet: string | null;
+  oe_id: string | null;
+  oe_facility: string | null;
+  oe_date: string | null;
 }
 
 function summaryItem(r: SummaryRow) {
   return {
+    outside_encounter: r.oe_id ? { id: r.oe_id, facility: r.oe_facility as string, date: r.oe_date as string } : null,
     fact_id: r.fact_id,
     document_id: r.document_id,
     text: r.value,
@@ -923,9 +977,11 @@ export async function getPatientSummary(req: Request & { params: { id: string } 
   const rows: SummaryRow[] = await sql`
     SELECT f.id AS fact_id, f.document_id, d.document_type, f.field_type, f.value,
            to_char(f.as_of_date, 'YYYY-MM-DD') AS as_of_date, f.facility, f.verification_state,
-           f.source_page, f.source_location, f.source_snippet
+           f.source_page, f.source_location, f.source_snippet,
+           oe.id AS oe_id, oe.facility AS oe_facility, to_char(oe.encounter_date, 'YYYY-MM-DD') AS oe_date
     FROM facts f
     JOIN documents d ON d.id = f.document_id
+    LEFT JOIN outside_encounters oe ON oe.id = f.outside_encounter_id
     WHERE f.patient_id = ${patientId} AND f.value IS NOT NULL
       AND f.field_type IN ('diagnosis', 'histology_ihc', 'stage', 'surgery_procedure', 'treatment_regimen',
                            'radiology_impression', 'tests_advised', 'next_review_date')

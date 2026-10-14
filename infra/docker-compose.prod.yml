@@ -41,6 +41,7 @@ services:
       - ../apps/api/src/db/migrations/012_care_plan_items.sql:/docker-entrypoint-initdb.d/13-care-plan-items.sql:ro
       - ../apps/api/src/db/migrations/013_check_error_facility.sql:/docker-entrypoint-initdb.d/14-check-error-facility.sql:ro
       - ../apps/api/src/db/migrations/014_marker_pins.sql:/docker-entrypoint-initdb.d/15-marker-pins.sql:ro
+      - ../apps/api/src/db/migrations/015_outside_encounters.sql:/docker-entrypoint-initdb.d/16-outside-encounters.sql:ro
       - ../apps/api/src/db/migrations/010_fact_spot_check.sql:/docker-entrypoint-initdb.d/11-fact-spot-check.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U prelude -d prelude"]

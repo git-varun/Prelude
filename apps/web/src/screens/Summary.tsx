@@ -26,7 +26,7 @@ function KeyedRows({ rows }: { rows: { key: string; items: SummaryItem[] | "not_
           );
         }
         return r.items.map((item, i) => (
-          <div className="summary-row summary-row--keyed" key={item.fact_id}>
+          <div className={`summary-row summary-row--keyed${item.outside_encounter ? " is-elsewhere" : ""}`} key={item.fact_id}>
             <span className="summary-row__key">{i === 0 ? r.key : ""}</span>
             <span>
               {item.text}
@@ -48,7 +48,7 @@ function PrescriptionLines({ label, items }: { label: string; items: SummaryItem
         <span className="muted">{NOT_FOUND_TEXT}</span>
       ) : (
         items.map((item) => (
-          <div key={item.fact_id}>
+          <div key={item.fact_id} className={item.outside_encounter ? "is-elsewhere" : undefined}>
             {item.text}
             <span className="summary-row__source">{sourceLine(item)}</span> <SourceLink item={item} />
           </div>
@@ -128,7 +128,7 @@ export function Summary({ patientId }: { patientId: string }) {
         ) : (
           <div className="card" style={{ padding: 0 }}>
             {data.what_happened.map((item) => (
-              <div className="summary-row summary-row--dated" key={item.fact_id}>
+              <div className={`summary-row summary-row--dated${item.outside_encounter ? " is-elsewhere" : ""}`} key={item.fact_id}>
                 <span className="muted">{item.as_of_date}</span>
                 <span>
                   {item.text}
@@ -174,10 +174,10 @@ export function Summary({ patientId }: { patientId: string }) {
         ) : (
           <div className="card" style={{ padding: 0 }}>
             {data.procedures.map((item) => (
-              <div className="summary-row summary-row--procedure" key={item.fact_id}>
+              <div className={`summary-row summary-row--procedure${item.outside_encounter ? " is-elsewhere" : ""}`} key={item.fact_id}>
                 <span className="muted">{item.as_of_date ?? "No date"}</span>
                 <span>{item.text}</span>
-                <span className="muted">{item.facility ?? NOT_FOUND_TEXT}</span>
+                <span className="muted">{item.outside_encounter ? `${item.outside_encounter.facility} · elsewhere` : (item.facility ?? NOT_FOUND_TEXT)}</span>
                 <span>
                   <span className="summary-row__source" style={{ marginRight: 8 }}>
                     {sourceLine(item)}

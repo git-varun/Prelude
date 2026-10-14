@@ -86,6 +86,11 @@ export function PatientList() {
                 {p.mrn && ` · MRN ${p.mrn}`}
                 {" · "}
                 {p.last_visit_date ? `last visit ${p.last_visit_date}` : "no visits yet"}
+                {p.latest_elsewhere && (
+                  <span className="tag tag--elsewhere" style={{ marginLeft: 8 }} data-testid="elsewhere-note">
+                    visit elsewhere: {p.latest_elsewhere.facility} {p.latest_elsewhere.date}
+                  </span>
+                )}
               </span>
               <button
                 className="btn btn--ghost"

@@ -3,7 +3,7 @@ import { RoleGate } from "../auth/AuthContext";
 import { api, ApiError, type WatchlistEntry, type PatientSnapshot } from "../api/client";
 import { flagForRange, parseReferenceRange } from "../lib/referenceRange";
 import { navigate } from "../router";
-import { trustLabel } from "./SummaryBits";
+import { elsewhereLabel, trustLabel } from "./SummaryBits";
 
 const W = 120;
 const H = 32;
@@ -86,6 +86,7 @@ function Cell({ entry }: { entry: WatchlistEntry }) {
     flag ? `${flag} reference range` : null,
     latest.was ? `was ${latest.was.value ?? "—"}${latest.was.unit ? ` ${latest.was.unit}` : ""}` : null,
     latest.verification_state ? trustLabel(latest.verification_state) : null,
+    latest.outside_encounter ? elsewhereLabel(latest.outside_encounter.facility) : null,
     entry.unit_changed ? "unit changed — earlier values not plotted" : null,
   ].filter(Boolean);
   const body = (

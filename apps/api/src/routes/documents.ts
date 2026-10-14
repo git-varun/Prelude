@@ -67,6 +67,24 @@ export async function uploadDocument(req: Request & { params: { id: string } }, 
   const imagingModality = form.get("imaging_modality");
   const file = form.get("file");
 
+  // AM-03: a visit elsewhere exists only when staff state BOTH the date and the facility. Never inferred
+  // (no OCR-derived creation): without both fields an outside upload is refused.
+  const isOutside = form.get("outside") === "true";
+  let outside: { date: string; facility: string } | null = null;
+  if (isOutside) {
+    const rawDate = form.get("outside_date");
+    const rawFacility = form.get("outside_facility");
+    const date = typeof rawDate === "string" ? rawDate.trim() : "";
+    const facility = typeof rawFacility === "string" ? rawFacility.trim() : "";
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || Number.isNaN(Date.parse(`${date}T00:00:00Z`)) || new Date(`${date}T00:00:00Z`).toISOString().slice(0, 10) !== date) {
+      return jsonError(400, "bad_request", "A document from another facility needs the date of that visit (YYYY-MM-DD).");
+    }
+    if (!facility) {
+      return jsonError(400, "bad_request", "A document from another facility needs the facility name.");
+    }
+    outside = { date, facility };
+  }
+
   if (typeof visitId !== "string" || !visitId) {
     return jsonError(400, "bad_request", "visit_id is required.");
   }
@@ -114,9 +132,25 @@ export async function uploadDocument(req: Request & { params: { id: string } }, 
     // silently breaking the audit trail this PHI data otherwise maintains
     // everywhere else (facts.ts/conflicts.ts already do this correctly).
     document = await sql.begin(async (tx) => {
+      // Created or reused (same patient, date, facility name ignoring case) in the same transaction as the document.
+      let outsideEncounterId: string | null = null;
+      if (outside) {
+        const [enc] = await tx`
+          INSERT INTO outside_encounters (patient_id, encounter_date, facility, confirmed_by)
+          VALUES (${patientId}, ${outside.date}, ${outside.facility}, ${user.id})
+          ON CONFLICT (patient_id, encounter_date, (lower(facility))) DO UPDATE SET facility = outside_encounters.facility
+          RETURNING id, patient_id, to_char(encounter_date, 'YYYY-MM-DD') AS encounter_date, facility, confirmed_by, (xmax = 0) AS created
+        `;
+        outsideEncounterId = enc.id;
+        const { created, ...encounter } = enc;
+        await tx`
+          INSERT INTO audit_log (actor_id, action, entity_type, entity_id, after_value)
+          VALUES (${user.id}, 'confirm_outside_encounter', 'outside_encounter', ${enc.id}, ${JSON.stringify({ ...encounter, reused: !created })}::jsonb)
+        `;
+      }
       const [doc] = await tx`
-        INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, imaging_modality, uploaded_by, ocr_status, file_sha256)
-        VALUES (${patientId}, ${visitId}, ${file_ref}, ${documentType}, ${sourceOrigin}, ${documentType === "radiology" ? (imagingModality as string) : null}, ${user.id}, 'pending', ${fileSha256})
+        INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, imaging_modality, uploaded_by, ocr_status, file_sha256, outside_encounter_id)
+        VALUES (${patientId}, ${visitId}, ${file_ref}, ${documentType}, ${sourceOrigin}, ${documentType === "radiology" ? (imagingModality as string) : null}, ${user.id}, 'pending', ${fileSha256}, ${outsideEncounterId})
         RETURNING *
       `;
       await tx`

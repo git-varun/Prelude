@@ -44,18 +44,30 @@ export const CONFLICT_SIDES_LIVE = sql`
 `;
 
 // Most recent prior oncologist_signed_off fact per (field_type, tracked_marker_id), searched across the patient's whole visit history, not just the visit immediately before currentVisitDate.
-export async function loadDeltaBaselines(patientId: string, currentVisitDate: string): Promise<Map<string, DeltaBaseline>> {
+// AM-03: compare 'here' (default) uses only facts from visits here (outside_encounter_id null); 'any' also takes facts from
+// visits elsewhere, dated by the encounter's own date. 'any' never takes the current visit's own facts as a baseline.
+export type CompareMode = "here" | "any";
+
+export async function loadDeltaBaselines(
+  patientId: string,
+  currentVisitDate: string,
+  compare: CompareMode = "here",
+  currentVisitId: string | null = null,
+): Promise<Map<string, DeltaBaseline>> {
   const rows = await sql`
     WITH prior AS (
       SELECT f.field_type, f.tracked_marker_id, f.value, f.unit,
              RANK() OVER (
                PARTITION BY f.field_type, f.tracked_marker_id
-               ORDER BY v.visit_date DESC, f.as_of_date DESC NULLS LAST, f.id DESC
+               ORDER BY COALESCE(oe.encounter_date, v.visit_date) DESC, f.as_of_date DESC NULLS LAST, f.id DESC
              ) AS rnk
       FROM facts f
       JOIN visits v ON v.id = f.visit_id
+      LEFT JOIN outside_encounters oe ON oe.id = f.outside_encounter_id
       WHERE f.patient_id = ${patientId} AND f.verification_state = 'oncologist_signed_off'
-        AND v.visit_date < ${currentVisitDate}::date
+        AND COALESCE(oe.encounter_date, v.visit_date) < ${currentVisitDate}::date
+        AND (${compare === "any"} OR f.outside_encounter_id IS NULL)
+        AND (${currentVisitId}::uuid IS NULL OR f.visit_id != ${currentVisitId}::uuid)
         AND ${LIVE_FACT_FILTER}
     )
     SELECT field_type, tracked_marker_id, value, unit FROM prior WHERE rnk = 1
