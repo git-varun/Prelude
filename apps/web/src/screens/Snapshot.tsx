@@ -7,7 +7,8 @@ import { Watchlist } from "../components/Watchlist";
 import { SummaryStrip } from "../components/SummaryStrip";
 import { MarkerTrendChart } from "../components/MarkerTrendChart";
 import { withThyroglobulinAdjacency } from "../lib/markerOrder";
-import { deltaPriority, RULES, type PriorityItem } from "../lib/priorityOrder";
+import { dueLabel } from "./Plan";
+import { deltaPriority, needsCheck, RULES, type PriorityItem } from "../lib/priorityOrder";
 import { navigate } from "../router";
 
 const FIELD_LABELS: Record<string, string> = {
@@ -225,7 +226,9 @@ function PriorityRow({ item, ...rest }: { item: PriorityItem; patientId: string;
           <div className="page-heading" style={{ marginBottom: 0 }}>
             <div>
               <strong>{item.plan.text}</strong>
-              <div className="muted">Advised {item.plan.advised_at} · Past advised date, no report seen</div>
+              <div className="muted">
+                Advised {item.plan.advised_at} · Past advised date{dueLabel(item.plan) ? ` · ${dueLabel(item.plan)}` : ""}, no report seen
+              </div>
             </div>
             <button className="btn btn--ghost" type="button" onClick={() => navigate(`/patients/${rest.patientId}/plan`)}>Open plan</button>
           </div>
@@ -263,7 +266,9 @@ export function Snapshot({ patientId }: { patientId: string }) {
   const [heldCount, setHeldCount] = useState(0);
   const [planItems, setPlanItems] = useState<PlanItem[]>([]);
   const [showRules, setShowRules] = useState(false);
-  const [showFolded, setShowFolded] = useState(false);
+  // null = not chosen yet: the fold then opens by itself only when something in it needs a check.
+  const [foldChoice, setFoldChoice] = useState<boolean | null>(null);
+  const [planError, setPlanError] = useState(false);
   const [selected, setSelected] = useState<Set<string>>(new Set());
   const [batchBusy, setBatchBusy] = useState(false);
   const [batchError, setBatchError] = useState<string | null>(null);
@@ -280,6 +285,8 @@ export function Snapshot({ patientId }: { patientId: string }) {
     let current = true;
     setHeldCount(0);
     setPlanItems([]);
+    setPlanError(false);
+    setFoldChoice(null);
     setSelected(new Set());
     setToast(null);
     setBatchError(null);
@@ -288,13 +295,6 @@ export function Snapshot({ patientId }: { patientId: string }) {
       .getPatientIdentityDocuments(patientId)
       .then((r) => {
         if (current) setHeldCount(r.documents.filter((d) => d.identity_status === "mismatch").length);
-      })
-      .catch(() => {});
-    // Same flag the Plan screen shows (rule 5); best-effort, so a failure just means no plan rows.
-    api
-      .getPatientPlan(patientId)
-      .then((r) => {
-        if (current) setPlanItems(r.items);
       })
       .catch(() => {});
     return () => {
@@ -306,8 +306,12 @@ export function Snapshot({ patientId }: { patientId: string }) {
     if (currentPatientId.current !== patientId) return;
     const token = ++latestLoad.current;
     try {
-      const result = await api.getPatientSnapshot(patientId);
+      // Plan items (same flag the Plan screen shows, rule 5) reload with the snapshot; a failure is shown, not fatal.
+      const planFetch = api.getPatientPlan(patientId).then((r) => r.items, () => null);
+      const [result, plan] = await Promise.all([api.getPatientSnapshot(patientId), planFetch]);
       if (token !== latestLoad.current) return;
+      if (plan !== null) setPlanItems(plan);
+      setPlanError(plan === null);
       setData(result);
       setError(null);
     } catch (err) {
@@ -353,12 +357,18 @@ export function Snapshot({ patientId }: { patientId: string }) {
   // adjacency (Decisions Log) is applied here only: inside the ruled list the rule order is never overridden.
   const folded = withThyroglobulinAdjacency(items.filter((i) => i.rule === null));
   const placeholders = [...data.current_treatment, ...data.tumor_markers, ...data.radiology].filter((f) => f.fact_id === null);
-  const foldedCount = folded.length + placeholders.length;
+  // Placeholders are shown in the fold but are not facts, so they are not counted. Facts that still need a
+  // check are counted separately and open the fold.
+  const foldedCount = folded.length;
+  const checkCount = folded.filter((i) => i.kind === "fact" && needsCheck(i.field)).length;
+  const showFolded = foldChoice ?? checkCount > 0;
+  const hasFacts = (section: string) => items.some((i) => i.kind === "fact" && i.section === section);
+  const ruledFacts = ruled.flatMap((i) => (i.kind === "fact" ? [i.field] : []));
   const rank = new Map(items.flatMap((it, i) => (it.kind === "fact" ? [[it.id, i] as [string, number]] : [])));
   const eligibleIds = new Set(visitFields.filter((f) => batchState(f).kind === "eligible").map((f) => f.fact_id!));
   // Only still-eligible picks count (a reload can change a fact's state).
   const picked = [...selected].filter((id) => eligibleIds.has(id));
-  const signedCount = visitFields.filter((f) => f.verification_state === "oncologist_signed_off").length;
+  const signedCount = ruledFacts.filter((f) => f.verification_state === "oncologist_signed_off").length;
   const batch: Batch = {
     selected: new Set(picked),
     toggle: (id) =>
@@ -475,6 +485,7 @@ export function Snapshot({ patientId }: { patientId: string }) {
       <section aria-labelledby="section-for-this-visit" style={{ marginBottom: 32 }}>
         <div className="page-heading" style={{ marginBottom: 8 }}>
           <h2 id="section-for-this-visit" style={{ margin: 0 }}>For this visit · {ruled.length}</h2>
+          <span className="muted">{signedCount} signed off this visit</span>
           <span style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <button
               className="btn btn--ghost" type="button" aria-expanded={showRules}
@@ -483,7 +494,6 @@ export function Snapshot({ patientId }: { patientId: string }) {
               How this is ordered
             </button>
             <RoleGate roles={["oncologist"]}>
-              <span className="muted">{signedCount} signed off this visit</span>
               <button
                 className="btn btn--primary"
                 type="button"
@@ -514,14 +524,28 @@ export function Snapshot({ patientId }: { patientId: string }) {
             </ul>
           )}
         </RoleGate>
-        {ruled.length === 0 && <p className="muted">Nothing changed or new in this visit.</p>}
+        {planError && (
+          <p className="muted">
+            Plan items could not be loaded. Plan rows may be missing.{" "}
+            <button className="btn btn--ghost" type="button" onClick={() => void load()}>Retry</button>
+          </p>
+        )}
+        {ruled.length === 0 && (
+          <p className="muted">
+            Nothing changed or new in this visit.
+            {checkCount > 0 && ` ${checkCount} unchanged ${checkCount === 1 ? "item needs" : "items need"} a check — open the list below.`}
+          </p>
+        )}
         {ruled.map((item) => (
           <PriorityRow key={`${item.kind}-${item.id}`} item={item} {...rowProps} />
         ))}
-        {foldedCount > 0 && (
+        {!hasFacts("treatment") && <p className="muted">No treatment facts recorded for this visit.</p>}
+        {!hasFacts("marker") && <p className="muted">No tumor marker values recorded for this visit.</p>}
+        {!hasFacts("radiology") && <p className="muted">No radiology facts recorded for this visit.</p>}
+        {foldedCount + placeholders.length > 0 && (
           <div style={{ marginTop: 16 }}>
-            <button className="btn btn--ghost" type="button" aria-expanded={showFolded} onClick={() => setShowFolded((v) => !v)}>
-              Unchanged and signed off · {foldedCount} {showFolded ? "▾" : "▸"}
+            <button className="btn btn--ghost" type="button" aria-expanded={showFolded} onClick={() => setFoldChoice(!showFolded)}>
+              Unchanged since last signed-off value · {foldedCount}{checkCount > 0 && ` · ${checkCount} need a check`} {showFolded ? "▾" : "▸"}
             </button>
             {showFolded && (
               <div>

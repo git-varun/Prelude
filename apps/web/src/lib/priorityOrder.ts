@@ -36,6 +36,12 @@ const hasOpenConflict = (f: SnapshotField) => f.conflicts.some((c) => c.status =
 // stayed the same, so it is treated as new rather than folded away.
 const isChangedOrNew = (f: SnapshotField) => f.delta_status !== "unchanged";
 
+// An unchanged fact that still needs a person to look at it (so the fold must not present it as settled):
+// uncertain extraction, no date, a marker not mapped to a tracked marker, or checked Incorrect.
+export const needsCheck = (f: SnapshotField) =>
+  f.coverage_status === "extraction_uncertain" || f.as_of_date === null ||
+  (f.field_type === "marker_value" && !f.tracked_marker_id) || f.check_state === "incorrect";
+
 // Pure and deterministic: the same input always gives the same output.
 // Tie order within a rule (AM-05 "ties keep document date order"): as_of_date ascending (older document date
 // first, undated last), then id so the order is total and stable.
@@ -52,6 +58,8 @@ export function deltaPriority(input: PriorityInput): PriorityItem[] {
       let rule: Rule | null = null;
       if (hasOpenConflict(field)) rule = 1;
       else if (section === "marker" && changed && field.tracked_marker_id !== null && pinned.has(field.tracked_marker_id)) rule = 2;
+      // Rule 3 "new radiology report": the payload has no new-document signal, so this is derived from a changed-or-new
+      // radiology fact versus the signed-off baseline. lesion_size is not in the snapshot radiology block.
       else if (section === "radiology" && changed) rule = 3;
       else if (section === "marker" && changed && flagForRange(field.value, field.reference_range) !== null) rule = 4;
       else if (changed) rule = 7;

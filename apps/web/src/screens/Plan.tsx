@@ -12,7 +12,7 @@ function shortDate(iso: string, withYear = false): string {
 }
 
 // The date the item is due: one written in the text, else the approximate one (marked ≈), else none.
-function dueLabel(item: PlanItem, withYear = false): string | null {
+export function dueLabel(item: PlanItem, withYear = false): string | null {
   if (item.stated_date) return shortDate(item.stated_date, true);
   return item.approx_date ? `≈${shortDate(item.approx_date, withYear)}` : null;
 }

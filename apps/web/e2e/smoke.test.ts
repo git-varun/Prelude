@@ -491,7 +491,7 @@ function snapshotField(overrides: Record<string, unknown> = {}) {
   return {
     fact_id: "f1", field_type: "marker_value", tracked_marker_id: "m1", marker_name: "CEA",
     value: "4.2", unit: "ng/mL", reference_range: "0-5", as_of_date: "2026-02-01",
-    coverage_status: "value_found", verification_state: "unverified", check_state: "correct", delta_status: null,
+    coverage_status: "value_found", verification_state: "unverified", check_state: "correct", delta_status: "changed",
     conflicts: [], provenance: provenance(), ...overrides,
   };
 }
@@ -554,9 +554,9 @@ async function openSnapshot(
   return { page, errors };
 }
 
-// Unchanged items are folded under "Unchanged and signed off · N"; open the fold to reach them.
+// Unchanged items are folded under "Unchanged since last signed-off value · N"; open the fold to reach them.
 async function openFold(page: import("playwright").Page) {
-  await page.getByRole("button", { name: /Unchanged and signed off/ }).click();
+  await page.getByRole("button", { name: /Unchanged since last signed-off value/ }).click();
 }
 
 test("Snapshot: 'Since last visit' shows only the changed marker, not the unchanged one, while Tumor markers shows both", async () => {
@@ -778,7 +778,7 @@ test("Snapshot: mixed-unit trend points show a 'units differ' note instead of a 
   await page.close();
 }, 30_000);
 
-test("Snapshot: Thyroglobulin always renders adjacent to Anti-Tg, even when the API returns them apart", async () => {
+test("Snapshot: Thyroglobulin renders adjacent to Anti-Tg within a group (here the folded one), even when the API returns them apart", async () => {
   const body = snapshotBody({
     tumor_markers: [
       snapshotField({ fact_id: "f1", marker_name: "Anti-Tg (TgAb)", delta_status: "unchanged" }),
@@ -2376,7 +2376,7 @@ test("Snapshot: 'For this visit' follows the 7 rules in order, tags each row, fo
   expect(await page.getByRole("heading", { name: "CA-125" }).count()).toBe(0);
   await page.getByRole("checkbox", { name: "Select CEA for sign-off" }).check();
   await page.getByRole("button", { name: "Sign off 1 reviewed" }).waitFor();
-  await page.getByRole("button", { name: "Unchanged and signed off · 1 ▸" }).click();
+  await page.getByRole("button", { name: "Unchanged since last signed-off value · 1 ▸" }).click();
   await page.getByRole("heading", { name: "CA-125" }).waitFor();
 
   // The rule list is hidden until asked for.

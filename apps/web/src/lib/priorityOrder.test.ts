@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import type { PlanItem, SnapshotField, WatchlistEntry } from "../api/client";
-import { deltaPriority, RULES, type PriorityInput } from "./priorityOrder";
+import { deltaPriority, needsCheck, RULES, type PriorityInput } from "./priorityOrder";
 
 function field(over: Partial<SnapshotField> = {}): SnapshotField {
   return {
@@ -133,4 +133,40 @@ test("every item carries exactly one rule and rule numbers match the published l
   }));
   expect(out).toHaveLength(1);
   expect(out[0]!.rule).toBe(1);
+});
+
+test("pinned + unchanged + out of range stays unruled (folded)", () => {
+  expect(ruleOf(input({ markers: [field({ delta_status: "unchanged", value: "9" })], watchlist: [pin()] }), "f1")).toBeNull();
+});
+
+test("rule 6 with a pin that has no last_seen sorts after dated ones", () => {
+  const seen = { fact_id: "x", document_id: null, value: "1", unit: null, as_of_date: "2026-01-05", verification_state: "unverified" };
+  const out = deltaPriority(input({ watchlist: [
+    pin({ tracked_marker_id: "a", missing: true, last_seen: null } as Partial<WatchlistEntry>),
+    pin({ tracked_marker_id: "b", missing: true, last_seen: seen } as Partial<WatchlistEntry>),
+  ] }));
+  expect(out.map((i) => [i.id, i.rule])).toEqual([["b", 6], ["a", 6]]);
+});
+
+test("a missing pin ranks before a rule 7 fact on the same date (rule wins over date)", () => {
+  const seen = { fact_id: "x", document_id: null, value: "1", unit: null, as_of_date: "2026-02-01", verification_state: "unverified" };
+  const out = deltaPriority(input({
+    markers: [field({ fact_id: "a", tracked_marker_id: "m2", delta_status: "changed", as_of_date: "2026-02-01" })],
+    watchlist: [pin({ tracked_marker_id: "z", missing: true, last_seen: seen } as Partial<WatchlistEntry>)],
+  }));
+  expect(out.map((i) => [i.id, i.rule])).toEqual([["z", 6], ["a", 7]]);
+});
+
+test("Tg and Anti-Tg under the same rule and date stay adjacent in the ruled list", () => {
+  const f = (id: string, name: string) => field({ fact_id: id, tracked_marker_id: id, marker_name: name, delta_status: "changed" });
+  const out = deltaPriority(input({ markers: [f("f1", "Thyroglobulin (Tg)"), f("f2", "Anti-Tg (TgAb)"), f("f3", "CEA")] }));
+  expect(out.map((i) => [i.id, i.rule])).toEqual([["f1", 7], ["f2", 7], ["f3", 7]]);
+});
+
+test("needsCheck: uncertain, undated, unmapped or incorrect facts", () => {
+  expect(needsCheck(field())).toBe(false);
+  expect(needsCheck(field({ coverage_status: "extraction_uncertain" }))).toBe(true);
+  expect(needsCheck(field({ as_of_date: null }))).toBe(true);
+  expect(needsCheck(field({ tracked_marker_id: null }))).toBe(true);
+  expect(needsCheck(field({ check_state: "incorrect" }))).toBe(true);
 });
