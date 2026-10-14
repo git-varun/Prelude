@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { mkdir, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { sql } from "../src/db/client";
+import { isHeldIdentityStatus } from "../src/services/delta";
 import { slugFor } from "./buildFixtures";
 import { ExpectedDocSchema, type ExpectedDoc } from "./types";
 
@@ -19,7 +20,7 @@ export async function buildExpectedDoc(documentId: string): Promise<ExpectedDoc 
     SELECT document_type, identity_status, lab_name, collected_on, patient_name_on_report, lab_patient_ref
     FROM documents WHERE id = ${documentId}`;
   if (!doc) return { skipped: "document not found" };
-  if (doc.identity_status === "mismatch" || doc.identity_status === "rejected") return { skipped: "document is held or rejected" };
+  if (isHeldIdentityStatus(doc.identity_status)) return { skipped: "document is held or rejected" };
 
   const facts: Record<string, any>[] = await sql`
     SELECT f.id, f.field_type, f.value, f.unit, f.reference_range, f.as_of_date, f.source_page, f.check_state, f.excluded_at,

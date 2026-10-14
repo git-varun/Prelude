@@ -44,13 +44,17 @@ export function IdentityDecision({
   documentId,
   onDone,
   confirmDisabled = false,
+  confirmFirst = false,
 }: {
   documentId: string;
   onDone: (outcome: IdentityOutcome) => void;
   /** Confirm waits until the recorded name is on screen; Reject stays available. */
   confirmDisabled?: boolean;
+  /** Confirm needs a second click on an inline confirmation, like Reject (used where a preview is shown). */
+  confirmFirst?: boolean;
 }) {
   const [confirmingReject, setConfirmingReject] = useState(false);
+  const [confirmingConfirm, setConfirmingConfirm] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const inFlight = useRef(false);
@@ -59,6 +63,7 @@ export function IdentityDecision({
   useEffect(() => {
     currentDoc.current = documentId;
     setConfirmingReject(false);
+    setConfirmingConfirm(false);
     setBusy(false);
     setError(null);
     inFlight.current = false;
@@ -110,9 +115,26 @@ export function IdentityDecision({
             </button>
           </div>
         </div>
+      ) : confirmingConfirm ? (
+        <div className="card" style={{ margin: 0 }}>
+          <p style={{ marginTop: 0 }}>Confirm this report belongs to this patient? Its facts will go live in every view.</p>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button className="btn btn--primary" type="button" disabled={busy} onClick={() => void submit("confirm")}>
+              {busy ? "Confirming..." : "Yes, confirm"}
+            </button>
+            <button className="btn btn--ghost" type="button" disabled={busy} onClick={() => setConfirmingConfirm(false)}>
+              Cancel
+            </button>
+          </div>
+        </div>
       ) : (
         <div style={{ display: "flex", gap: 8 }}>
-          <button className="btn btn--primary" type="button" disabled={busy || confirmDisabled} onClick={() => void submit("confirm")}>
+          <button
+            className="btn btn--primary"
+            type="button"
+            disabled={busy || confirmDisabled}
+            onClick={() => (confirmFirst ? setConfirmingConfirm(true) : void submit("confirm"))}
+          >
             {busy ? "Saving..." : "Confirm"}
           </button>
           <button className="btn btn--secondary" type="button" disabled={busy} onClick={() => setConfirmingReject(true)}>

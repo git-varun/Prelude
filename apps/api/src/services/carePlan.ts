@@ -55,7 +55,7 @@ export async function loadCandidateDocuments(patientId: string): Promise<Candida
                AND f.raw_marker_label IS NOT NULL
            ), '{}') AS raw_labels
     FROM documents d
-    WHERE d.patient_id = ${patientId} AND d.document_type != 'other' AND COALESCE(d.identity_status::text, '') NOT IN ('mismatch', 'rejected')
+    WHERE d.patient_id = ${patientId} AND d.document_type != 'other' AND COALESCE(d.identity_status::text, '') NOT IN ('mismatch', 'awaiting_oncologist', 'rejected')
   `;
   return rows.map((r: any) => ({
     id: r.id as string,

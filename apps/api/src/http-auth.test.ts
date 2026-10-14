@@ -149,3 +149,30 @@ test("POST /tracked-markers/:id/pin through the real router: no session -> 401, 
   expect((await post({ cookie: oncologist.cookie })).status).toBe(200);
   await sql`DELETE FROM audit_log WHERE entity_type = 'tracked_marker' AND entity_id = ${marker.id}`;
 });
+
+test("held-document identity routes through the real router: staff may flag but not confirm/reject or preview; the oncologist may", async () => {
+  const [visit] = await sql`SELECT id FROM visits WHERE patient_id = ${patientId} LIMIT 1`;
+  const [doc] = await sql`
+    INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, uploaded_by, ocr_status, identity_status)
+    VALUES (${patientId}, ${visit.id}, 'local://test/held.pdf', 'blood', 'own_hospital', ${staff.id}, 'done', 'mismatch') RETURNING id`;
+  const send = (method: string, path: string, headers: Record<string, string>, body?: unknown) =>
+    fetch(`${BASE}/documents/${doc.id}/${path}`, { method, headers: { "content-type": "application/json", ...headers }, body: body === undefined ? undefined : JSON.stringify(body) });
+
+  // staff: 403 on confirm/reject and on the preview, document untouched
+  expect((await send("POST", "identity", {}, { action: "confirm" })).status).toBe(401);
+  expect((await send("POST", "identity", { cookie: staff.cookie }, { action: "confirm" })).status).toBe(403);
+  expect((await send("POST", "identity", { cookie: staff.cookie }, { action: "reject" })).status).toBe(403);
+  expect((await send("GET", "identity-preview", { cookie: staff.cookie })).status).toBe(403);
+  expect((await sql`SELECT identity_status FROM documents WHERE id = ${doc.id}`)[0].identity_status).toBe("mismatch");
+
+  // staff flag passes; bad assessment is a 400 past the role check
+  expect((await send("POST", "identity-flag", {}, { assessment: "likely_same" })).status).toBe(401);
+  expect((await send("POST", "identity-flag", { cookie: staff.cookie }, { assessment: "nope" })).status).toBe(400);
+  expect((await send("POST", "identity-flag", { cookie: staff.cookie }, { assessment: "cannot_tell", note: "n" })).status).toBe(200);
+  expect((await sql`SELECT identity_status FROM documents WHERE id = ${doc.id}`)[0].identity_status).toBe("awaiting_oncologist");
+
+  // oncologist: preview and confirm pass
+  expect((await send("GET", "identity-preview", { cookie: oncologist.cookie })).status).toBe(200);
+  expect((await send("POST", "identity", { cookie: oncologist.cookie }, { action: "confirm" })).status).toBe(200);
+  expect((await sql`SELECT identity_status FROM documents WHERE id = ${doc.id}`)[0].identity_status).toBe("confirmed");
+});

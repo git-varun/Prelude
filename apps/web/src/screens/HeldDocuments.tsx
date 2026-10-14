@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type IdentityDocument, type PatientIdentityDocuments } from "../api/client";
+import { RoleGate } from "../auth/AuthContext";
 import { IdentityDecision, IdentityNames, type IdentityOutcome } from "../components/IdentityDecision";
+import { FlagForm, FlaggedTag, StaffAssessmentLine, isFlagged } from "../components/HeldReport";
 import { documentTypeLabel } from "../lib/documentTypeLabel";
 import { navigate } from "../router";
 
@@ -79,11 +81,19 @@ export function HeldDocuments({ patientId }: { patientId: string }) {
     void load();
   }
 
+  function afterFlag(doc: IdentityDocument) {
+    setResults((prev) => [
+      { id: `${doc.id}-${prev.length}`, text: `${doc.lab_name ?? documentTypeLabel(doc.document_type)}: Sent to the oncologist. It stays held until they decide.` },
+      ...prev,
+    ]);
+    void load();
+  }
+
   if (loading) return <p className="muted">Loading...</p>;
   if (!data) return <div className="error-banner">{error ?? "Patient not found."}</div>;
 
-  const held = data.documents.filter((d) => d.identity_status === "mismatch");
-  const partial = data.documents.filter((d) => d.identity_status === "partial");
+  const held = data.documents.filter((d) => d.identity_status === "mismatch" || d.identity_status === "awaiting_oncologist");
+  const accepted = data.documents.filter((d) => d.identity_status === "partial" || d.identity_status === "confirmed");
 
   return (
     <div>
@@ -113,24 +123,38 @@ export function HeldDocuments({ patientId }: { patientId: string }) {
           held.map((doc) => (
             <div className="card" key={doc.id} data-testid="held-row">
               <DocMeta doc={doc} />
+              {isFlagged(doc) && <p style={{ margin: "0 0 4px" }}><FlaggedTag /></p>}
               <IdentityNames printedName={doc.patient_name_on_report} recordedName={data.patient_name} />
+              <StaffAssessmentLine doc={doc} />
               <p><ReviewLink id={doc.id} /></p>
-              <IdentityDecision documentId={doc.id} onDone={(o) => decided(doc, o)} />
+              <RoleGate roles={["oncologist"]}>
+                <IdentityDecision documentId={doc.id} onDone={(o) => decided(doc, o)} />
+              </RoleGate>
+              <RoleGate roles={["staff"]}>
+                <FlagForm documentId={doc.id} initial={doc} onDone={() => afterFlag(doc)} />
+              </RoleGate>
             </div>
           ))
         )}
       </section>
 
-      {partial.length > 0 && (
+      {accepted.length > 0 && (
         <section aria-labelledby="section-partial" style={{ marginBottom: 32 }}>
           <h2 id="section-partial">Accepted with a name difference</h2>
           <p className="muted">
-            The name on these reports differs slightly from the record. Their facts are live; verify each is the right patient.
+            The name on these reports differed from the record. Their facts are live; verify each is the right patient.
           </p>
-          {partial.map((doc) => (
+          {accepted.map((doc) => (
             <div className="card" key={doc.id} data-testid="partial-row">
               <DocMeta doc={doc} />
               <IdentityNames printedName={doc.patient_name_on_report} recordedName={data.patient_name} />
+              {doc.identity_status === "confirmed" && (
+                <p data-testid="confirmed-by" style={{ margin: "4px 0" }}>
+                  Confirmed{doc.confirmed_by_name ? ` by ${doc.confirmed_by_name}` : ""}
+                  {doc.confirmed_at ? ` · ${doc.confirmed_at.slice(0, 10)}` : ""}
+                </p>
+              )}
+              <StaffAssessmentLine doc={doc} />
               <p style={{ marginBottom: 0 }}><ReviewLink id={doc.id} /></p>
             </div>
           ))}

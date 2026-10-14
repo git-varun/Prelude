@@ -1,5 +1,6 @@
 import { sql } from "../db/client";
 import { assignCoverageStatus, detectConflicts } from "./rules";
+import { isHeldIdentityStatus } from "./delta";
 import { matchMarker } from "@prelude/shared";
 import type { ExtractedFactCandidate, ExtractionResult } from "@prelude/shared";
 import type { IdentityMatchStatus } from "./extraction/deterministic/identity";
@@ -162,7 +163,7 @@ export async function persistExtractedFacts(
 
       // A document held for an identity mismatch must not open conflicts against the patient's real facts;
       // setDocumentIdentityStatus runs detection when staff confirm it.
-      if (documentMetadata?.identityStatus !== "mismatch") await detectConflicts(tx, fact);
+      if (!isHeldIdentityStatus(documentMetadata?.identityStatus)) await detectConflicts(tx, fact);
     }
 
     if (needsManualDate) {

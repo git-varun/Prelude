@@ -5,6 +5,7 @@ import { setDocumentIdentityStatus } from "./documents";
 import { createTestUser, deleteTestUsers, createTestPatient, deleteTestPatients, asAuthedUser, type TestUser } from "../test-helpers";
 
 let staff: TestUser;
+let oncologist: TestUser;
 let patientId: string;
 let otherPatientId: string;
 const docs: Record<string, string> = {};
@@ -22,6 +23,7 @@ async function insertDoc(pid: string, key: string, identity: string | null, extr
 
 beforeAll(async () => {
   staff = await createTestUser("staff", "ident-list-staff");
+  oncologist = await createTestUser("oncologist", "ident-list-onc");
   patientId = (await createTestPatient(staff.id)).id;
   otherPatientId = (await createTestPatient(staff.id)).id;
   for (const pid of [patientId, otherPatientId]) {
@@ -40,7 +42,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await deleteTestPatients(patientId, otherPatientId);
-  await deleteTestUsers(staff.id);
+  await deleteTestUsers(staff.id, oncologist.id);
 });
 
 function req(path: string, params: Record<string, string>) {
@@ -50,21 +52,24 @@ function req(path: string, params: Record<string, string>) {
 }
 const identity = (id: string) => getPatientDocumentIdentity(req(`/patients/${id}/documents/identity`, { id }) as any);
 
-test("returns the patient's name and only mismatch + partial documents, newest first", async () => {
+test("returns the patient's name and the mismatch, partial and confirmed documents, newest first", async () => {
   const res = await identity(patientId);
   expect(res.status).toBe(200);
   const body = (await res.json()) as any;
   expect(body.patient_name).toBe("Test Patient");
-  expect(body.documents.map((d: any) => d.id)).toEqual([docs.partial, docs.mismatch]);
-  expect(body.documents.map((d: any) => d.identity_status)).toEqual(["partial", "mismatch"]);
-  expect(body.documents[1].lab_name).toBe("Lab A");
-  expect(body.documents[1].patient_name_on_report).toBe("Someone Else");
+  const byKey = (k: string) => body.documents.find((d: any) => d.id === docs[k]);
+  expect(body.documents.map((d: any) => d.id).slice(0, 2)).toEqual([docs.partial, docs.mismatch]);
+  expect(body.documents).toHaveLength(3);
+  expect(byKey("mismatch").identity_status).toBe("mismatch");
+  expect(byKey("mismatch").lab_name).toBe("Lab A");
+  expect(byKey("mismatch").patient_name_on_report).toBe("Someone Else");
+  expect(byKey("confirmed").identity_status).toBe("confirmed");
 });
 
-test("excludes matched, confirmed, rejected, unknown and live (null) documents", async () => {
+test("excludes matched, rejected, unknown and live (null) documents", async () => {
   const body = (await (await identity(patientId)).json()) as any;
   const ids = body.documents.map((d: any) => d.id);
-  for (const k of ["matched", "confirmed", "rejected", "unknown", "live"]) expect(ids).not.toContain(docs[k]);
+  for (const k of ["matched", "rejected", "unknown", "live"]) expect(ids).not.toContain(docs[k]);
 });
 
 test("is scoped to the patient: another patient's held document is never returned", async () => {
@@ -81,7 +86,10 @@ test("exposes exactly the whitelisted columns and never file_ref", async () => {
   expect(text).not.toContain("local://");
   const body = JSON.parse(text);
   for (const d of body.documents) {
-    expect(Object.keys(d).sort()).toEqual(["document_type", "id", "identity_status", "lab_name", "patient_name_on_report", "uploaded_at"]);
+    expect(Object.keys(d).sort()).toEqual([
+      "collected_on", "confirmed_at", "confirmed_by_name", "document_type", "id", "identity_status", "lab_name", "patient_name_on_report",
+      "staff_identity_assessment", "staff_identity_at", "staff_identity_by_name", "staff_identity_note", "uploaded_at",
+    ]);
   }
 });
 
@@ -104,11 +112,15 @@ test("confirming or rejecting a held document removes it from the list and from 
   const act = (id: string, action: string) =>
     setDocumentIdentityStatus(
       Object.assign(new Request(`http://localhost/documents/${id}/identity`, { method: "POST", body: JSON.stringify({ action }) }), { params: { id } }),
-      asAuthedUser(staff),
+      asAuthedUser(oncologist),
     );
   expect((await act(docs.mismatch!, "confirm")).status).toBe(200);
   let body = (await (await identity(patientId)).json()) as any;
-  expect(body.documents.map((d: any) => d.id)).toEqual([docs.partial]);
+  // Confirmed stays listed (the "Accepted with a name difference" list), with who confirmed it.
+  const confirmed = body.documents.find((d: any) => d.id === docs.mismatch);
+  expect(confirmed.identity_status).toBe("confirmed");
+  expect(confirmed.confirmed_by_name).toBe("ident-list-onc");
+  expect(body.documents.filter((d: any) => d.identity_status === "mismatch")).toEqual([]);
   const list = (await (await listPatients(new Request("http://localhost/patients?limit=500"))).json()) as any[];
   expect(list.find((p) => p.id === patientId).held_document_count).toBe(0);
 

@@ -175,7 +175,7 @@ export async function listPatients(req: Request): Promise<Response> {
   // Documents held for an identity mismatch (not 'partial': that is a softer signal and its facts stay live).
   // Independent of needs_attention_count, which already excludes held facts via LIVE_FACT_FILTER.
   const heldDocumentSubquery = sql`
-    (SELECT count(*)::int FROM documents d WHERE d.patient_id = p.id AND d.identity_status = 'mismatch') AS held_document_count
+    (SELECT count(*)::int FROM documents d WHERE d.patient_id = p.id AND d.identity_status IN ('mismatch', 'awaiting_oncologist')) AS held_document_count
   `;
 
   // AM-03: the latest visit elsewhere, only when it is newer than the latest visit here (or there is no visit here).
@@ -221,9 +221,9 @@ export async function listPatients(req: Request): Promise<Response> {
   return Response.json(rows);
 }
 
-// Documents needing an identity decision for one patient: held (mismatch) and partial. Explicit columns only --
-// file_ref is a storage path and must never leave the API through this listing. Confirming/rejecting flips the
-// status (POST /documents/:id/identity), which drops the row from this list.
+// Documents with an identity decision for one patient: held (mismatch, awaiting_oncologist), partial, and
+// confirmed (accepted after a hold; who confirmed and the staff note travel with it). Explicit columns only --
+// file_ref is a storage path and must never leave the API through this listing. Rejecting drops the row.
 export async function getPatientDocumentIdentity(req: Request & { params: { id: string } }): Promise<Response> {
   const patientId = req.params.id;
   if (!isUuid(patientId)) return jsonError(404, "not_found", "Patient not found.");
@@ -232,10 +232,20 @@ export async function getPatientDocumentIdentity(req: Request & { params: { id: 
   if (!patient) return jsonError(404, "not_found", "Patient not found.");
 
   const documents = await sql`
-    SELECT id, document_type, lab_name, patient_name_on_report, identity_status, uploaded_at
-    FROM documents
-    WHERE patient_id = ${patientId} AND identity_status IN ('mismatch', 'partial')
-    ORDER BY uploaded_at DESC, id
+    SELECT d.id, d.document_type, d.lab_name, d.patient_name_on_report, d.identity_status, d.uploaded_at, to_char(d.collected_on, 'YYYY-MM-DD') AS collected_on,
+           d.staff_identity_assessment, d.staff_identity_note, d.staff_identity_at,
+           su.name AS staff_identity_by_name,
+           ca.created_at AS confirmed_at, cu.name AS confirmed_by_name
+    FROM documents d
+    LEFT JOIN users su ON su.id = d.staff_identity_by
+    LEFT JOIN LATERAL (
+      SELECT actor_id, created_at FROM audit_log
+      WHERE entity_type = 'document' AND entity_id = d.id AND action = 'confirm_identity'
+      ORDER BY created_at DESC LIMIT 1
+    ) ca ON d.identity_status = 'confirmed'
+    LEFT JOIN users cu ON cu.id = ca.actor_id
+    WHERE d.patient_id = ${patientId} AND d.identity_status IN ('mismatch', 'awaiting_oncologist', 'partial', 'confirmed')
+    ORDER BY d.uploaded_at DESC, d.id
   `;
   return Response.json({ patient_name: patient.name, documents });
 }
@@ -495,7 +505,7 @@ async function loadConflicts(factIds: string[]): Promise<Map<string, ConflictEnt
     ) pairs
     JOIN facts ofact ON ofact.id = pairs.other_fact_id
     -- the other side of a conflict is shown to the reader: never a fact from a held/rejected document
-    WHERE NOT EXISTS (SELECT 1 FROM documents d WHERE d.id = ofact.document_id AND d.identity_status IN ('mismatch', 'rejected'))
+    WHERE NOT EXISTS (SELECT 1 FROM documents d WHERE d.id = ofact.document_id AND d.identity_status IN ('mismatch', 'awaiting_oncologist', 'rejected'))
   `;
 
   for (const row of rows) {

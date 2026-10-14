@@ -1419,9 +1419,15 @@ test("Upload: the imaging modality select appears only when document type is rad
 
 
 // ---- Held documents (patient-identity mismatch) -------------------------------------------
-type HeldDoc = { id: string; status: "mismatch" | "partial" | "confirmed" | "rejected"; name: string; lab: string };
+type HeldDoc = {
+  id: string; status: "mismatch" | "awaiting_oncologist" | "partial" | "confirmed" | "rejected"; name: string; lab: string;
+  assessment?: string; note?: string; confirmedBy?: string;
+};
 
-async function openHeldScenario(startAt: string, opts: { conflictOnConfirm?: boolean; identityListFails?: boolean; postFails?: boolean } = {}) {
+async function openHeldScenario(
+  startAt: string,
+  opts: { conflictOnConfirm?: boolean; identityListFails?: boolean; postFails?: boolean; role?: "staff" | "oncologist"; extraDocs?: HeldDoc[] } = {},
+) {
   const page = await browser.newPage();
   page.setDefaultTimeout(5000);
   const errors: string[] = [];
@@ -1439,6 +1445,7 @@ async function openHeldScenario(startAt: string, opts: { conflictOnConfirm?: boo
     { id: "dA", status: "mismatch", name: "Someone Else", lab: "Lab A" },
     { id: "dB", status: "mismatch", name: "Another Person", lab: "Lab B" },
     { id: "dP", status: "partial", name: "Test P.", lab: "Lab P" },
+    ...(opts.extraDocs ?? []),
   ];
   const posts: { path: string; body: unknown }[] = [];
   const cors = {
@@ -1453,7 +1460,7 @@ async function openHeldScenario(startAt: string, opts: { conflictOnConfirm?: boo
     ocr_text_ref: null, needs_manual_date: false, extraction_status: "done", extraction_error: null,
     identity_status: d.status, patient_name_on_report: d.name, lab_name: d.lab,
   });
-  const heldCount = () => docs.filter((d) => d.status === "mismatch").length;
+  const heldCount = () => docs.filter((d) => d.status === "mismatch" || d.status === "awaiting_oncologist").length;
 
   await page.route(`${API}/**`, (route) => {
     const req = route.request();
@@ -1461,7 +1468,7 @@ async function openHeldScenario(startAt: string, opts: { conflictOnConfirm?: boo
     const json = (b: unknown, status = 200) =>
       route.fulfill({ status, contentType: "application/json", headers: cors, body: JSON.stringify(b) });
     if (req.method() === "OPTIONS") return route.fulfill({ status: 204, headers: cors });
-    if (path === "/auth/me") return json({ id: "u1", name: "Test Staff", email: "s@opd.local", role: "staff" });
+    if (path === "/auth/me") return json({ id: "u1", name: "Test User", email: "t@opd.local", role: opts.role ?? "oncologist" });
     if (path === "/patients" && req.method() === "GET") {
       const base = { cancer_type: "Breast", created_at: "2026-01-01", created_by: "u1", mrn: null, patient_origin: "own_hospital", date_of_birth: null, stage: null, last_visit_date: "2026-02-01", needs_attention_count: 0, unchecked_fact_count: 0 };
       return json([
@@ -1473,9 +1480,12 @@ async function openHeldScenario(startAt: string, opts: { conflictOnConfirm?: boo
       if (opts.identityListFails) return json({ error: "boom", message: "Server exploded." }, 500);
       return json({
         patient_name: "Test Patient",
-        documents: docs.filter((d) => d.status === "mismatch" || d.status === "partial").map((d) => ({
+        documents: docs.filter((d) => d.status !== "rejected").map((d) => ({
           id: d.id, document_type: "blood", lab_name: d.lab, patient_name_on_report: d.name,
-          identity_status: d.status, uploaded_at: "2026-03-02T00:00:00Z",
+          identity_status: d.status, uploaded_at: "2026-03-02T00:00:00Z", collected_on: "2026-03-01",
+          staff_identity_assessment: d.assessment ?? null, staff_identity_note: d.note ?? null,
+          staff_identity_at: d.assessment ? "2026-03-03T00:00:00Z" : null, staff_identity_by_name: d.assessment ? "Priya" : null,
+          confirmed_at: d.confirmedBy ? "2026-03-04T00:00:00Z" : null, confirmed_by_name: d.confirmedBy ?? null,
         })),
       });
     }
@@ -1497,9 +1507,32 @@ async function openHeldScenario(startAt: string, opts: { conflictOnConfirm?: boo
       if (opts.postFails) return json({ error: "boom", message: "Could not save right now." }, 500);
       if (!d) return json({ error: "not_found", message: "Document not found." }, 404);
       if (opts.conflictOnConfirm && d.id === "dA") d.status = "confirmed"; // someone else decided first
-      if (d.status !== "mismatch") return json({ error: "conflict", message: "Not held." }, 409);
+      if (d.status !== "mismatch" && d.status !== "awaiting_oncologist") return json({ error: "conflict", message: "Not held." }, 409);
       d.status = body.action === "confirm" ? "confirmed" : "rejected";
+      if (d.status === "confirmed") d.confirmedBy = "Dr Rao";
       return json(docRecord(d));
+    }
+    const flagPost = path.match(/^\/documents\/([^/]+)\/identity-flag$/);
+    if (flagPost && req.method() === "POST") {
+      const d = docs.find((x) => x.id === flagPost[1]);
+      const body = req.postDataJSON() as { assessment: string; note: string };
+      posts.push({ path, body });
+      if (!d) return json({ error: "not_found", message: "Document not found." }, 404);
+      if (d.status !== "mismatch" && d.status !== "awaiting_oncologist") return json({ error: "conflict", message: "Not held." }, 409);
+      d.status = "awaiting_oncologist";
+      d.assessment = body.assessment;
+      d.note = body.note;
+      return json(docRecord(d));
+    }
+    if (/^\/documents\/[^/]+\/identity-preview$/.test(path)) {
+      const d = docs.find((x) => path.includes(`/${x.id}/`));
+      return json({
+        document_id: d?.id, lab_name: d?.lab, patient_name_on_report: d?.name, fact_total: 3,
+        fact_counts: { marker_value: 2, diagnosis: 1 },
+        markers: [{ marker_name: "CEA", as_of_date: "2026-03-01" }, { marker_name: "CA 15-3", as_of_date: "2026-03-01" }],
+        new_conflicts: [{ field_type: "marker_value", marker_name: "CEA", as_of_date: "2026-03-01", this_value: "9.9", other_value: "4.2", unit: "ng/mL" }],
+        staff_assessment: d?.assessment ? { assessment: d.assessment, note: d.note ?? null, at: "2026-03-03T00:00:00Z" } : null,
+      });
     }
     const facts = path.match(/^\/documents\/([^/]+)\/facts$/);
     if (facts) {
@@ -1548,10 +1581,10 @@ test("Held screen: shows printed vs recorded name, lab and review link; partial 
 test("Held screen: Confirm removes the row, shows the result, and the document's facts then appear in the Snapshot", async () => {
   const { page, errors, posts } = await openHeldScenario("/patients/p1/snapshot");
   await page.getByRole("heading", { name: "Test Patient" }).waitFor();
-  await page.getByText("2 documents held for patient identity, excluded from this view.").waitFor();
+  await page.getByText("2 reports held for identity").waitFor();
   expect(await page.getByText("Marker from Lab A").count()).toBe(0);
 
-  await page.getByRole("link", { name: "Review held documents" }).click();
+  await page.getByRole("link", { name: "Held documents" }).click();
   await page.getByRole("heading", { name: "Held documents" }).waitFor();
   await page.getByTestId("held-row").first().getByRole("button", { name: "Confirm" }).click();
   await page.getByText("Confirmed. This document's facts are now live").waitFor();
@@ -1559,8 +1592,8 @@ test("Held screen: Confirm removes the row, shows the result, and the document's
   expect(posts).toEqual([{ path: "/documents/dA/identity", body: { action: "confirm" } }]);
 
   await page.getByRole("button", { name: "Back to Snapshot" }).click();
-  await page.getByText("Marker from Lab A").waitFor();
-  await page.getByText("1 document held for patient identity, excluded from this view.").waitFor();
+  await page.getByText("Marker from Lab A").first().waitFor();
+  await page.getByText("1 report held for identity").waitFor();
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);
@@ -1583,7 +1616,7 @@ test("Held screen: Reject needs an explicit confirmation step, then removes the 
   expect(posts).toEqual([{ path: "/documents/dA/identity", body: { action: "reject" } }]);
 
   await page.getByRole("button", { name: "Back to Snapshot" }).click();
-  await page.getByText("1 document held for patient identity, excluded from this view.").waitFor();
+  await page.getByText("1 report held for identity").waitFor();
   expect(await page.getByText("Marker from Lab A").count()).toBe(0);
   expect(errors).toEqual([]);
   await page.close();
@@ -1647,6 +1680,92 @@ test("Held screen: a non-409 failure shows an inline error and the row stays", a
   await page.getByText("Could not save right now.").waitFor();
   expect(await page.getByTestId("held-row").count()).toBe(2);
   expect(await page.getByTestId("held-row").first().getByRole("button", { name: "Confirm" }).isEnabled()).toBe(true);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+const flaggedDoc = (): HeldDoc => ({ id: "dF", status: "awaiting_oncologist", name: "Flag Person", lab: "Lab F", assessment: "likely_same", note: "Spelt differently on the lab system" });
+const acceptedDoc = (): HeldDoc => ({ id: "dC", status: "confirmed", name: "Confirmed Person", lab: "Lab C", assessment: "cannot_tell", note: "Two similar names", confirmedBy: "Dr Rao" });
+
+test("Staff on the Snapshot banner: sees the report text, flags for the oncologist, and has no Confirm or Reject", async () => {
+  const { page, errors, posts } = await openHeldScenario("/patients/p1/snapshot", { role: "staff" });
+  const banner = page.getByTestId("held-banner");
+  await banner.waitFor();
+  expect(await banner.textContent()).toContain('"Someone Else" on Lab A, 2026-03-01');
+  expect(await banner.textContent()).toContain("excluded below until the oncologist confirms");
+  expect(await banner.getByRole("button", { name: "Review held report" }).count()).toBe(0);
+  await banner.getByTestId("held-banner-row").first().getByRole("button", { name: "Flag for oncologist" }).click();
+  const form = page.getByTestId("flag-form");
+  expect(await form.getByRole("button", { name: "Flag for oncologist" }).isDisabled()).toBe(true);
+  expect(await page.getByRole("button", { name: "Confirm" }).count()).toBe(0);
+  expect(await page.getByRole("button", { name: "Reject" }).count()).toBe(0);
+  await form.getByLabel("Likely the same patient").check();
+  await form.getByLabel("Note for the oncologist (optional)").fill("Spelt differently");
+  await form.getByRole("button", { name: "Flag for oncologist" }).click();
+  await page.getByTestId("flagged-tag").waitFor();
+  expect(posts).toEqual([{ path: "/documents/dA/identity-flag", body: { assessment: "likely_same", note: "Spelt differently" } }]);
+  expect(await page.getByText("Marker from Lab A").count()).toBe(0);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Oncologist on the Snapshot banner: Review held report shows the staff assessment and preview, then Confirm needs a confirmation", async () => {
+  const { page, errors, posts } = await openHeldScenario("/patients/p1/snapshot", { extraDocs: [flaggedDoc()] });
+  const banner = page.getByTestId("held-banner");
+  await banner.waitFor();
+  expect(await banner.textContent()).toContain("3 reports held for identity");
+  expect(await banner.textContent()).toContain("excluded below until you confirm");
+  const row = banner.getByTestId("held-banner-row").nth(2);
+  expect(await row.textContent()).toContain("Staff assessment · awaiting oncologist");
+  await row.getByRole("button", { name: "Review held report" }).click();
+
+  const panel = page.getByTestId("review-panel");
+  await panel.getByTestId("identity-preview").waitFor();
+  expect(await panel.getByTestId("staff-assessment").textContent()).toContain("Staff think this is the same patient");
+  expect(await panel.getByTestId("staff-assessment").textContent()).toContain("Spelt differently on the lab system");
+  expect(await panel.textContent()).toContain("2 × Marker values");
+  expect(await panel.textContent()).toContain("CEA (2026-03-01)");
+  expect(await panel.getByTestId("preview-conflicts").textContent()).toContain("this report says 9.9 ng/mL, the record says 4.2");
+
+  await panel.getByRole("button", { name: "Confirm" }).click();
+  expect(posts).toEqual([]);
+  await panel.getByRole("button", { name: "Yes, confirm" }).click();
+  await page.getByTestId("held-result").getByText("Confirmed. This report's facts are now live").waitFor();
+  expect(posts).toEqual([{ path: "/documents/dF/identity", body: { action: "confirm" } }]);
+  await page.getByText("Marker from Lab F").first().waitFor();
+  await page.getByText("2 reports held for identity").waitFor();
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Held screen as staff: no Confirm or Reject, a flag form, and a flagged row shows the assessment in plain words", async () => {
+  const { page, errors, posts } = await openHeldScenario("/patients/p1/held", { role: "staff", extraDocs: [flaggedDoc()] });
+  await page.getByTestId("held-row").first().waitFor();
+  expect(await page.getByRole("button", { name: "Confirm" }).count()).toBe(0);
+  expect(await page.getByRole("button", { name: "Reject" }).count()).toBe(0);
+  const flagged = page.getByTestId("held-row").nth(2);
+  expect(await flagged.textContent()).toContain("Staff assessment · awaiting oncologist");
+  expect(await flagged.getByTestId("staff-assessment").textContent()).toContain("Staff think this is the same patient");
+
+  const first = page.getByTestId("held-row").first();
+  await first.getByLabel("Likely a different patient").check();
+  await first.getByRole("button", { name: "Flag for oncologist" }).click();
+  await page.getByText("Sent to the oncologist. It stays held until they decide.").waitFor();
+  expect(posts).toEqual([{ path: "/documents/dA/identity-flag", body: { assessment: "likely_different", note: "" } }]);
+  expect(await first.textContent()).toContain("Staff assessment · awaiting oncologist");
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Held screen: the 'Accepted with a name difference' list shows confirmed documents with who confirmed and the staff note", async () => {
+  const { page, errors } = await openHeldScenario("/patients/p1/held", { extraDocs: [acceptedDoc()] });
+  await page.getByRole("heading", { name: "Accepted with a name difference" }).waitFor();
+  const rows = page.getByTestId("partial-row");
+  expect(await rows.count()).toBe(2);
+  const confirmed = rows.nth(1);
+  expect(await confirmed.getByTestId("confirmed-by").textContent()).toContain("Confirmed by Dr Rao");
+  expect(await confirmed.getByTestId("staff-assessment").textContent()).toContain("Two similar names");
+  expect(await confirmed.getByRole("button").count()).toBe(0);
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);

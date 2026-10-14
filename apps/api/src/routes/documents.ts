@@ -410,6 +410,8 @@ export async function getDocumentFile(req: Request & { params: { id: string } })
 }
 
 const IDENTITY_ACTIONS = ["confirm", "reject"] as const;
+const HELD_FOR_DECISION = ["mismatch", "awaiting_oncologist"];
+const STAFF_ASSESSMENTS = ["likely_same", "likely_different", "cannot_tell"] as const;
 
 // Resolves a document held for a patient-identity mismatch (identity.ts). Only a
 // document currently 'mismatch' can be acted on -- matches conflicts.ts's
@@ -434,7 +436,7 @@ export async function setDocumentIdentityStatus(req: Request & { params: { id: s
   const outcome = await sql.begin(async (tx) => {
     const [before] = await tx`SELECT * FROM documents WHERE id = ${documentId} FOR UPDATE`;
     if (!before) return "not_found" as const;
-    if (before.identity_status !== "mismatch") return "not_held" as const;
+    if (!HELD_FOR_DECISION.includes(before.identity_status)) return "not_held" as const;
 
     const [updated] = await tx`
       UPDATE documents SET identity_status = ${nextStatus}::identity_status WHERE id = ${documentId} RETURNING *
@@ -453,8 +455,123 @@ export async function setDocumentIdentityStatus(req: Request & { params: { id: s
   });
 
   if (outcome === "not_found") return jsonError(404, "not_found", "Document not found.");
-  if (outcome === "not_held") return jsonError(409, "conflict", "Only a document held for identity mismatch can be confirmed or rejected.");
+  if (outcome === "not_held") return jsonError(409, "conflict", "Only a held document can be confirmed or rejected.");
 
   const [document] = await sql`SELECT * FROM documents WHERE id = ${documentId}`;
   return Response.json(document);
+}
+
+// M3-08: staff cannot confirm or reject a held document; they record an assessment and a note and the document
+// moves to 'awaiting_oncologist'. It stays held: every read that excludes 'mismatch' excludes it too.
+export async function flagDocumentIdentity(req: Request & { params: { id: string } }, user: AuthedUser): Promise<Response> {
+  const documentId = req.params.id;
+  if (!isUuid(documentId)) return jsonError(404, "not_found", "Document not found.");
+
+  let body: Record<string, unknown>;
+  try {
+    body = (await req.json()) as Record<string, unknown>;
+  } catch {
+    return jsonError(400, "bad_request", "Malformed JSON body.");
+  }
+  const { assessment, note } = body;
+  if (!(STAFF_ASSESSMENTS as readonly string[]).includes(assessment as string)) {
+    return jsonError(400, "bad_request", `assessment must be one of: ${STAFF_ASSESSMENTS.join(", ")}.`);
+  }
+  if (note !== undefined && note !== null && typeof note !== "string") {
+    return jsonError(400, "bad_request", "note must be text.");
+  }
+  const cleanNote = typeof note === "string" && note.trim() ? note.trim() : null;
+
+  const outcome = await sql.begin(async (tx) => {
+    const [before] = await tx`SELECT * FROM documents WHERE id = ${documentId} FOR UPDATE`;
+    if (!before) return "not_found" as const;
+    if (!HELD_FOR_DECISION.includes(before.identity_status)) return "not_held" as const;
+    const [updated] = await tx`
+      UPDATE documents SET identity_status = 'awaiting_oncologist'::identity_status,
+        staff_identity_assessment = ${assessment as string}, staff_identity_note = ${cleanNote},
+        staff_identity_by = ${user.id}, staff_identity_at = now()
+      WHERE id = ${documentId} RETURNING *
+    `;
+    await tx`
+      INSERT INTO audit_log (actor_id, action, entity_type, entity_id, before_value, after_value)
+      VALUES (${user.id}, 'flag_identity', 'document', ${documentId}, ${JSON.stringify(before)}::jsonb, ${JSON.stringify(updated)}::jsonb)
+    `;
+    return "ok" as const;
+  });
+
+  if (outcome === "not_found") return jsonError(404, "not_found", "Document not found.");
+  if (outcome === "not_held") return jsonError(409, "conflict", "Only a held document can be flagged for the oncologist.");
+  const [document] = await sql`SELECT * FROM documents WHERE id = ${documentId}`;
+  return Response.json(document);
+}
+
+class PreviewDone extends Error {}
+
+function toDateOnly(d: unknown): string {
+  return d instanceof Date ? d.toISOString().slice(0, 10) : String(d).slice(0, 10);
+}
+
+// What confirming a held document would add: its facts by type, the markers and dates they cover, and the conflicts
+// that would open against the patient's live facts. Writes nothing: the status change that makes the facts live runs
+// in a transaction that is always rolled back, and detectConflicts runs dry.
+export async function getIdentityPreview(req: Request & { params: { id: string } }): Promise<Response> {
+  const documentId = req.params.id;
+  if (!isUuid(documentId)) return jsonError(404, "not_found", "Document not found.");
+
+  let result: Record<string, unknown> | "not_found" | "not_held" | null = null;
+  try {
+    await sql.begin(async (tx) => {
+      const [doc] = await tx`SELECT * FROM documents WHERE id = ${documentId} FOR UPDATE`;
+      if (!doc) { result = "not_found"; throw new PreviewDone(); }
+      if (!HELD_FOR_DECISION.includes(doc.identity_status)) { result = "not_held"; throw new PreviewDone(); }
+
+      await tx`UPDATE documents SET identity_status = 'confirmed'::identity_status WHERE id = ${documentId}`;
+      const facts = await tx`
+        SELECT f.*, tm.marker_name FROM facts f LEFT JOIN tracked_markers tm ON tm.id = f.tracked_marker_id
+        WHERE f.document_id = ${documentId} AND f.excluded_at IS NULL
+        ORDER BY f.as_of_date NULLS LAST, f.id
+      `;
+      const counts: Record<string, number> = {};
+      for (const f of facts) counts[f.field_type] = (counts[f.field_type] ?? 0) + 1;
+      const markers = facts
+        .filter((f: any) => f.marker_name)
+        .map((f: any) => ({ marker_name: f.marker_name as string, as_of_date: f.as_of_date ? toDateOnly(f.as_of_date) : null }));
+
+      const newConflicts: Record<string, unknown>[] = [];
+      for (const f of facts) {
+        for (const pair of await detectConflicts(tx, f as any, { dryRun: true })) {
+          if (pair.alreadyExists) continue;
+          const [other] = await tx`SELECT value, unit FROM facts WHERE id = ${pair.factIdB}`;
+          newConflicts.push({
+            field_type: f.field_type,
+            marker_name: f.marker_name ?? null,
+            as_of_date: f.as_of_date ? toDateOnly(f.as_of_date) : null,
+            this_value: f.value,
+            other_value: other.value,
+            unit: f.unit ?? other.unit ?? null,
+          });
+        }
+      }
+      result = {
+        document_id: documentId,
+        identity_status: doc.identity_status,
+        lab_name: doc.lab_name,
+        patient_name_on_report: doc.patient_name_on_report,
+        fact_counts: counts,
+        fact_total: facts.length,
+        markers,
+        new_conflicts: newConflicts,
+        staff_assessment: doc.staff_identity_assessment
+          ? { assessment: doc.staff_identity_assessment, note: doc.staff_identity_note, by: doc.staff_identity_by, at: doc.staff_identity_at }
+          : null,
+      };
+      throw new PreviewDone();
+    });
+  } catch (err) {
+    if (!(err instanceof PreviewDone)) throw err;
+  }
+
+  if (result === "not_found") return jsonError(404, "not_found", "Document not found.");
+  if (result === "not_held") return jsonError(409, "conflict", "Only a held document has a confirm preview.");
+  return Response.json(result);
 }

@@ -102,7 +102,7 @@ export async function detectConflicts(
   // (persist, PATCH /facts, backfillConflicts). Confirming the document lifts the hold.
   const [held] = await tx`
     SELECT 1 FROM facts f JOIN documents d ON d.id = f.document_id
-    WHERE f.id = ${fact.id}::uuid AND d.identity_status IN ('mismatch', 'rejected')
+    WHERE f.id = ${fact.id}::uuid AND d.identity_status IN ('mismatch', 'awaiting_oncologist', 'rejected')
   `;
   if (held) return [];
   // An excluded fact (spot-check: not in the document / wrong patient) is not evidence: re-detection over a

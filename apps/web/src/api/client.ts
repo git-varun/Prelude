@@ -147,7 +147,7 @@ export interface OutsideEncounterEntry {
 
 export type CompareMode = "here" | "any";
 
-export type IdentityStatus = "matched" | "partial" | "mismatch" | "confirmed" | "rejected" | "unknown";
+export type IdentityStatus = "matched" | "partial" | "mismatch" | "awaiting_oncologist" | "confirmed" | "rejected" | "unknown";
 
 export interface DocumentRecord {
   id: string;
@@ -227,7 +227,14 @@ export interface IdentityDocument {
   document_type: string;
   lab_name: string | null;
   patient_name_on_report: string | null;
-  identity_status: "mismatch" | "partial";
+  identity_status: "mismatch" | "awaiting_oncologist" | "partial" | "confirmed";
+  collected_on: string | null;
+  staff_identity_assessment: StaffAssessment | null;
+  staff_identity_note: string | null;
+  staff_identity_at: string | null;
+  staff_identity_by_name: string | null;
+  confirmed_at: string | null;
+  confirmed_by_name: string | null;
   uploaded_at: string;
 }
 
@@ -237,6 +244,18 @@ export interface PatientIdentityDocuments {
 }
 
 export type IdentityAction = "confirm" | "reject";
+export type StaffAssessment = "likely_same" | "likely_different" | "cannot_tell";
+
+export interface IdentityPreview {
+  document_id: string;
+  lab_name: string | null;
+  patient_name_on_report: string | null;
+  fact_counts: Record<string, number>;
+  fact_total: number;
+  markers: { marker_name: string; as_of_date: string | null }[];
+  new_conflicts: { field_type: string; marker_name: string | null; as_of_date: string | null; this_value: string; other_value: string; unit: string | null }[];
+  staff_assessment: { assessment: StaffAssessment; note: string | null; at: string } | null;
+}
 
 export interface DocumentReview {
   document: DocumentRecord;
@@ -644,6 +663,11 @@ export const api = {
 
   setDocumentIdentity: (documentId: string, action: IdentityAction) =>
     request<DocumentRecord>(`/documents/${documentId}/identity`, { method: "POST", body: JSON.stringify({ action }) }),
+
+  flagDocumentIdentity: (documentId: string, assessment: StaffAssessment, note: string) =>
+    request<DocumentRecord>(`/documents/${documentId}/identity-flag`, { method: "POST", body: JSON.stringify({ assessment, note }) }),
+
+  getIdentityPreview: (documentId: string) => request<IdentityPreview>(`/documents/${documentId}/identity-preview`),
 
   getDocumentFacts: (documentId: string) => request<DocumentReview>(`/documents/${documentId}/facts`),
 

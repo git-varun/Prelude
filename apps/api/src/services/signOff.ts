@@ -1,6 +1,6 @@
 import type { sql } from "../db/client";
 import { createPlanItemFromFact } from "./carePlan";
-import { CONFLICT_SIDES_LIVE } from "./delta";
+import { CONFLICT_SIDES_LIVE, isHeldIdentityStatus } from "./delta";
 
 type Tx = typeof sql;
 
@@ -42,7 +42,7 @@ export async function signOffOne(
   // Lock order fact -> document (as checkFact). FOR SHARE blocks a concurrent hold (FOR UPDATE) until we commit,
   // without making concurrent sign-offs of the same document wait on each other.
   const [doc] = await tx`SELECT identity_status FROM documents WHERE id = ${before.document_id} FOR SHARE`;
-  if (doc && (doc.identity_status === "mismatch" || doc.identity_status === "rejected")) return "held";
+  if (doc && (isHeldIdentityStatus(doc.identity_status))) return "held";
   if (before.check_state === "unchecked") return "unchecked";
   if (opts.requireCorrect && before.check_state !== "correct") return "not_correct";
 

@@ -2,7 +2,9 @@ import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent } fro
 import { api, ApiError, type DocumentFileCheck, type DocumentReview } from "../api/client";
 import { FactCard } from "../components/FactCard";
 import { MarkerDisclaimerFooter } from "../components/MarkerDisclaimerFooter";
+import { RoleGate } from "../auth/AuthContext";
 import { IdentityDecision, IdentityNames, type IdentityOutcome } from "../components/IdentityDecision";
+import { FlagForm, FlaggedTag } from "../components/HeldReport";
 import { documentTypeLabel } from "../lib/documentTypeLabel";
 import { sortByRisk } from "../lib/riskOrder";
 import { navigate } from "../router";
@@ -48,7 +50,7 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
       if (token !== latestLoad.current) return;
       setData(result);
       setError(null);
-      if (result.document.identity_status === "mismatch") {
+      if (result.document.identity_status === "mismatch" || result.document.identity_status === "awaiting_oncologist") {
         // Needed for the held banner. Loading and failure are shown distinctly, and Confirm
         // stays disabled until the name is known.
         void loadRecordedName(result.document.patient_id, token);
@@ -227,7 +229,7 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
 
       {error && <div className="error-banner">{error}</div>}
       {identityResult && <div className="card" role="status">{identityResult}</div>}
-      {document.identity_status === "mismatch" && (
+      {(document.identity_status === "mismatch" || document.identity_status === "awaiting_oncologist") && (
         <div className="card" data-testid="identity-mismatch-banner">
           <strong>Held for patient identity.</strong>{" "}
           <span className="muted">The name on this report does not match the patient record, so its facts are excluded from every view until you decide.</span>
@@ -243,11 +245,17 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
               </button>
             </p>
           )}
-          <IdentityDecision
-            documentId={document.id}
-            onDone={identityDecided}
-            confirmDisabled={recordedName === undefined || recordedError !== null}
-          />
+          {document.identity_status === "awaiting_oncologist" && <p><FlaggedTag /></p>}
+          <RoleGate roles={["oncologist"]}>
+            <IdentityDecision
+              documentId={document.id}
+              onDone={identityDecided}
+              confirmDisabled={recordedName === undefined || recordedError !== null}
+            />
+          </RoleGate>
+          <RoleGate roles={["staff"]}>
+            <FlagForm documentId={document.id} onDone={() => void load()} />
+          </RoleGate>
         </div>
       )}
       {document.identity_status === "partial" && (

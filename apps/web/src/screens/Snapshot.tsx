@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { RoleGate } from "../auth/AuthContext";
-import { api, ApiError, type CompareMode, type BatchFailure, type PatientSnapshot, type PlanItem, type ReviewFact, type SnapshotField } from "../api/client";
+import { api, ApiError, type IdentityDocument, type CompareMode, type BatchFailure, type PatientSnapshot, type PlanItem, type ReviewFact, type SnapshotField } from "../api/client";
 import { FactCard } from "../components/FactCard";
 import { ElsewhereTag } from "../components/SummaryBits";
 import { MarkerDisclaimerFooter } from "../components/MarkerDisclaimerFooter";
 import { Watchlist } from "../components/Watchlist";
 import { SummaryStrip } from "../components/SummaryStrip";
+import { HeldReportBanner } from "../components/HeldReport";
 import { MarkerTrendChart } from "../components/MarkerTrendChart";
 import { withThyroglobulinAdjacency } from "../lib/markerOrder";
 import { dueLabel } from "./Plan";
@@ -296,7 +297,7 @@ export function Snapshot({ patientId }: { patientId: string }) {
   const compare: CompareMode = compareChoice.patientId === patientId ? compareChoice.mode : "here";
   const setCompare = (mode: CompareMode) => setCompareChoice({ patientId, mode });
 
-  const [heldCount, setHeldCount] = useState(0);
+  const [heldDocs, setHeldDocs] = useState<IdentityDocument[]>([]);
   const [planItems, setPlanItems] = useState<PlanItem[]>([]);
   const [showRules, setShowRules] = useState(false);
   // null = not chosen yet: the fold then opens by itself only when something in it needs a check.
@@ -314,9 +315,19 @@ export function Snapshot({ patientId }: { patientId: string }) {
 
   // Best-effort banner data: a failure here must never break or delay the snapshot, so it is
   // fetched independently and any error just means "no banner".
+  const loadHeld = useCallback(() => {
+    api
+      .getPatientIdentityDocuments(patientId)
+      .then((r) => {
+        if (currentPatientId.current === patientId) {
+          setHeldDocs(r.documents.filter((d) => d.identity_status === "mismatch" || d.identity_status === "awaiting_oncologist"));
+        }
+      })
+      .catch(() => {});
+  }, [patientId]);
+
   useEffect(() => {
-    let current = true;
-    setHeldCount(0);
+    setHeldDocs([]);
     setPlanItems([]);
     setPlanError(false);
     setFoldChoice(null);
@@ -324,16 +335,8 @@ export function Snapshot({ patientId }: { patientId: string }) {
     setToast(null);
     setBatchError(null);
     setBatchFailures([]);
-    api
-      .getPatientIdentityDocuments(patientId)
-      .then((r) => {
-        if (current) setHeldCount(r.documents.filter((d) => d.identity_status === "mismatch").length);
-      })
-      .catch(() => {});
-    return () => {
-      current = false;
-    };
-  }, [patientId]);
+    loadHeld();
+  }, [patientId, loadHeld]);
 
   const load = useCallback(async () => {
     if (currentPatientId.current !== patientId) return;
@@ -489,20 +492,14 @@ export function Snapshot({ patientId }: { patientId: string }) {
 
       {error && <div className="error-banner">{error}</div>}
 
-      {heldCount > 0 && (
-        <div className="card" role="status" data-testid="held-banner">
-          {heldCount} document{heldCount === 1 ? "" : "s"} held for patient identity, excluded from this view.{" "}
-          <a
-            href={`#/patients/${patient.id}/held`}
-            onClick={(e) => {
-              e.preventDefault();
-              navigate(`/patients/${patient.id}/held`);
-            }}
-          >
-            Review held documents
-          </a>
-        </div>
-      )}
+      <HeldReportBanner
+        patientId={patient.id}
+        docs={heldDocs}
+        onChanged={() => {
+          loadHeld();
+          void load();
+        }}
+      />
 
       <SummaryStrip patientId={patient.id} />
 

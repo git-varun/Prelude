@@ -11,12 +11,14 @@ delete process.env.OCR_PROVIDER;
 delete process.env.EXTRACTION_PROVIDER;
 
 let staff: TestUser;
+let oncologist: TestUser;
 let patientId: string;
 let otherPatientId: string;
 let visitId: string;
 
 beforeAll(async () => {
   staff = await createTestUser("staff", "documents-test-staff");
+  oncologist = await createTestUser("oncologist", "documents-test-onc");
   patientId = (await createTestPatient(staff.id)).id;
   otherPatientId = (await createTestPatient(staff.id)).id;
 
@@ -31,7 +33,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await deleteTestPatients(patientId, otherPatientId);
-  await deleteTestUsers(staff.id);
+  await deleteTestUsers(staff.id, oncologist.id);
 });
 
 function uploadRequest(form: FormData): Request & { params: { id: string } } {
@@ -469,7 +471,7 @@ test("extractWithFallback does not resolve the LLM provider unless a fallback is
 test("setDocumentIdentityStatus 404s for an unknown document", async () => {
   const req = new Request("http://localhost/documents/x/identity", { method: "POST", body: JSON.stringify({ action: "confirm" }) }) as Request & { params: { id: string } };
   req.params = { id: "00000000-0000-0000-0000-000000000000" };
-  const res = await setDocumentIdentityStatus(req, asAuthedUser(staff));
+  const res = await setDocumentIdentityStatus(req, asAuthedUser(oncologist));
   expect(res.status).toBe(404);
 });
 
@@ -477,7 +479,7 @@ test("setDocumentIdentityStatus rejects an action other than confirm/reject", as
   const doc = await newDocumentRow({ identity_status: "mismatch" });
   const req = new Request(`http://localhost/documents/${doc.id}/identity`, { method: "POST", body: JSON.stringify({ action: "ignore" }) }) as Request & { params: { id: string } };
   req.params = { id: doc.id };
-  const res = await setDocumentIdentityStatus(req, asAuthedUser(staff));
+  const res = await setDocumentIdentityStatus(req, asAuthedUser(oncologist));
   expect(res.status).toBe(400);
 });
 
@@ -485,7 +487,7 @@ test("setDocumentIdentityStatus 409s when the document isn't currently held (ide
   const doc = await newDocumentRow({ identity_status: "matched" });
   const req = new Request(`http://localhost/documents/${doc.id}/identity`, { method: "POST", body: JSON.stringify({ action: "confirm" }) }) as Request & { params: { id: string } };
   req.params = { id: doc.id };
-  const res = await setDocumentIdentityStatus(req, asAuthedUser(staff));
+  const res = await setDocumentIdentityStatus(req, asAuthedUser(oncologist));
   expect(res.status).toBe(409);
 });
 
@@ -493,7 +495,7 @@ test("confirm moves a held document to 'confirmed' and logs an audit_log row", a
   const doc = await newDocumentRow({ identity_status: "mismatch" });
   const req = new Request(`http://localhost/documents/${doc.id}/identity`, { method: "POST", body: JSON.stringify({ action: "confirm" }) }) as Request & { params: { id: string } };
   req.params = { id: doc.id };
-  const res = await setDocumentIdentityStatus(req, asAuthedUser(staff));
+  const res = await setDocumentIdentityStatus(req, asAuthedUser(oncologist));
   expect(res.status).toBe(200);
   const [row] = await sql`SELECT identity_status FROM documents WHERE id = ${doc.id}`;
   expect(row.identity_status).toBe("confirmed");
@@ -505,7 +507,7 @@ test("reject moves a held document to 'rejected'", async () => {
   const doc = await newDocumentRow({ identity_status: "mismatch" });
   const req = new Request(`http://localhost/documents/${doc.id}/identity`, { method: "POST", body: JSON.stringify({ action: "reject" }) }) as Request & { params: { id: string } };
   req.params = { id: doc.id };
-  const res = await setDocumentIdentityStatus(req, asAuthedUser(staff));
+  const res = await setDocumentIdentityStatus(req, asAuthedUser(oncologist));
   expect(res.status).toBe(200);
   const [row] = await sql`SELECT identity_status FROM documents WHERE id = ${doc.id}`;
   expect(row.identity_status).toBe("rejected");
@@ -526,7 +528,7 @@ test("confirming a held document detects conflicts for its now-live facts; the h
 
   const req = new Request(`http://localhost/documents/${doc.id}/identity`, { method: "POST", body: JSON.stringify({ action: "confirm" }) }) as Request & { params: { id: string } };
   req.params = { id: doc.id };
-  expect((await setDocumentIdentityStatus(req, asAuthedUser(staff))).status).toBe(200);
+  expect((await setDocumentIdentityStatus(req, asAuthedUser(oncologist))).status).toBe(200);
   const after = await sql`SELECT id FROM conflicts WHERE fact_id_a IN (${live.id}, ${held.id}) OR fact_id_b IN (${live.id}, ${held.id})`;
   expect(after.length).toBeGreaterThan(0);
 });

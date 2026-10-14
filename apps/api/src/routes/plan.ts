@@ -1,7 +1,7 @@
 import { sql } from "../db/client";
 import { jsonError } from "../middleware/auth";
 import type { AuthedUser } from "../middleware/auth";
-import { LIVE_FACT_FILTER } from "../services/delta";
+import { LIVE_FACT_FILTER, isHeldIdentityStatus } from "../services/delta";
 import { outsideRefOf } from "../services/provenance";
 import { loadCandidateDocuments } from "../services/carePlan";
 import { approximateDate, derivePlanStatus, statedDate, suggestMatches, type PlanItemType } from "../services/carePlanLogic";
@@ -127,7 +127,7 @@ export async function setPlanItemMatch(req: Request & { params: { id: string } }
   `;
   if (!doc) return jsonError(400, "bad_request", "document_id does not belong to this patient.");
   if (doc.document_type === "other") return jsonError(400, "bad_request", "An 'Other' document cannot be matched to a plan item.");
-  if (doc.identity_status === "mismatch" || doc.identity_status === "rejected") {
+  if (isHeldIdentityStatus(doc.identity_status)) {
     return jsonError(409, "conflict", "This document is held for an identity check and cannot be matched.");
   }
   await sql`

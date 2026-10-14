@@ -17,11 +17,17 @@ export function deltaKey(fieldType: string, trackedMarkerId: string | null): str
   return `${fieldType}::${trackedMarkerId ?? ""}`;
 }
 
+// A document in one of these identity states is held: its facts are excluded from every view.
+export function isHeldIdentityStatus(status: unknown): boolean {
+  return status === "mismatch" || status === "awaiting_oncologist" || status === "rejected";
+}
+
 // Excludes a fact the spot-check marked as not belonging to the record (excluded_at: not_in_document /
 // wrong_patient), a fact that lost an authoritative-pick conflict resolution (docs/03 §3),
 // and a fact whose document is held for a patient-identity mismatch (or was
 // rejected after review) -- docs/superpowers/specs/2026-10-10-deterministic-extraction-design.md
 // "Identity match". NULL/'matched'/'partial'/'unknown'/'confirmed' are never held.
+// 'awaiting_oncologist' (staff flagged it, the oncologist has not decided) is held exactly like 'mismatch'.
 // Shared with every other fact-reading query, which aliases facts as `f` too.
 export const LIVE_FACT_FILTER = sql`
   f.excluded_at IS NULL
@@ -32,7 +38,7 @@ export const LIVE_FACT_FILTER = sql`
       AND NOT EXISTS (SELECT 1 FROM facts af WHERE af.id = c.authoritative_fact_id AND af.excluded_at IS NOT NULL)
   )
   AND NOT EXISTS (
-    SELECT 1 FROM documents d WHERE d.id = f.document_id AND d.identity_status IN ('mismatch', 'rejected')
+    SELECT 1 FROM documents d WHERE d.id = f.document_id AND d.identity_status IN ('mismatch', 'awaiting_oncologist', 'rejected')
   )
 `;
 

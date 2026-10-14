@@ -1,5 +1,6 @@
 import { sql } from "../db/client";
 import { jsonError } from "../middleware/auth";
+import { isHeldIdentityStatus } from "../services/delta";
 import { isUuid } from "../services/corrections";
 import type { CheckErrorType } from "../services/factChecks";
 
@@ -20,7 +21,7 @@ export async function getDocumentCheckSummary(req: Request & { params: { id: str
   if (!isUuid(documentId)) return jsonError(404, "not_found", "Document not found.");
   const [doc] = await sql`SELECT id, lab_name, identity_status FROM documents WHERE id = ${documentId}`;
   if (!doc) return jsonError(404, "not_found", "Document not found.");
-  if (doc.identity_status === "mismatch" || doc.identity_status === "rejected") {
+  if (isHeldIdentityStatus(doc.identity_status)) {
     return jsonError(409, "conflict", "This document is held or rejected; it has no check summary.");
   }
 
@@ -68,14 +69,14 @@ export async function getLabCheckSummary(_req: Request): Promise<Response> {
            count(*) FILTER (WHERE f.check_state = 'correct' AND f.checked_by IS NOT NULL)::int AS spot_correct,
            count(*) FILTER (WHERE f.check_state = 'incorrect' AND f.checked_by IS NOT NULL)::int AS spot_incorrect
     FROM documents d LEFT JOIN facts f ON f.document_id = d.id
-    WHERE d.identity_status IS DISTINCT FROM 'mismatch' AND d.identity_status IS DISTINCT FROM 'rejected'
+    WHERE d.identity_status IS DISTINCT FROM 'mismatch' AND d.identity_status IS DISTINCT FROM 'awaiting_oncologist' AND d.identity_status IS DISTINCT FROM 'rejected'
     GROUP BY COALESCE(d.lab_name, 'unknown')
     ORDER BY lab_name`;
   const errorRows = await sql`
     SELECT COALESCE(d.lab_name, 'unknown') AS lab_name, f.error_type, count(*)::int AS n
     FROM facts f JOIN documents d ON d.id = f.document_id
     WHERE f.check_state = 'incorrect' AND f.error_type IS NOT NULL
-      AND d.identity_status IS DISTINCT FROM 'mismatch' AND d.identity_status IS DISTINCT FROM 'rejected'
+      AND d.identity_status IS DISTINCT FROM 'mismatch' AND d.identity_status IS DISTINCT FROM 'awaiting_oncologist' AND d.identity_status IS DISTINCT FROM 'rejected'
     GROUP BY 1, 2`;
   const errs = new Map<string, Record<CheckErrorType, number>>();
   for (const r of errorRows) {

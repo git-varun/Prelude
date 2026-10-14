@@ -2,7 +2,7 @@ import type { FieldType } from "@prelude/shared";
 import { SPOT_CHECK_ERRORS_BY_FIELD_TYPE } from "@prelude/shared";
 import type { sql } from "../db/client";
 import { applyCorrection, parseCorrection, recomputeDocumentNeedsManualDate, type Correction } from "./corrections";
-import { CONFLICT_SIDES_LIVE } from "./delta";
+import { CONFLICT_SIDES_LIVE, isHeldIdentityStatus } from "./delta";
 import { detectConflicts } from "./rules";
 
 type Tx = typeof sql;
@@ -76,7 +76,7 @@ export async function checkFact(tx: Tx, factId: string, input: CheckInput, userI
   if (!before) return { outcome: "not_found" };
   if (before.verification_state === "oncologist_signed_off") return { outcome: "signed_off" };
   const [doc] = await tx`SELECT identity_status FROM documents WHERE id = ${before.document_id} FOR UPDATE`;
-  if (doc && (doc.identity_status === "mismatch" || doc.identity_status === "rejected")) return { outcome: "held" };
+  if (doc && (isHeldIdentityStatus(doc.identity_status))) return { outcome: "held" };
 
   // The error options depend on the fact type (M3-01); the API enforces what the UI offers.
   if (input.result === "incorrect") {
