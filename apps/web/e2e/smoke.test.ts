@@ -2559,3 +2559,48 @@ test("Visit history: a visit elsewhere is listed in date order with a dashed rul
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);
+
+test("Upload: 'Other' is selectable, is sent as document_type=other and is listed as 'Other'", async () => {
+  const posts: string[] = [];
+  const { page, errors } = await openRoutedPage("/patients/p1/upload", (path, method, postData) => {
+    if (path === "/patients/p1" && method === "GET") return { id: "p1", name: "Test Patient", cancer_type: "Breast", tracked_markers: [] };
+    if (path === "/patients/p1/visits" && method === "POST") return { id: "v2", patient_id: "p1", visit_date: "2026-02-01" };
+    if (path === "/patients/p1/documents" && method === "POST") {
+      posts.push(postData ?? "");
+      return { id: "d1", document_type: "other", source_origin: "own_hospital", ocr_status: "done", imaging_modality: null, outside_encounter_id: null };
+    }
+    return undefined;
+  });
+  await page.getByRole("heading", { name: "Test Patient" }).waitFor();
+  await page.getByLabel("Document type").selectOption({ label: "Other" });
+  await page.setInputFiles("#file", { name: "a.pdf", mimeType: "application/pdf", buffer: Buffer.from("x") });
+  await page.getByRole("button", { name: "Upload", exact: true }).click();
+  await page.getByText("Uploaded this session").waitFor();
+  expect(posts.length).toBe(1);
+  expect(posts[0]).toContain("other");
+  expect(await page.locator(".patient-row", { hasText: "Other · own hospital" }).count()).toBe(1);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("review screen: an 'other' document says 'Not extracted in this version', never failed or nothing found", async () => {
+  const { page, errors } = await openRoutedPage("/documents/doc1/review", (path) => {
+    if (path === "/documents/doc1/facts") {
+      return {
+        document: {
+          id: "doc1", patient_id: "p1", visit_id: "v1", file_ref: "local://x.pdf", document_type: "other",
+          source_origin: "own_hospital", uploaded_by: "u1", uploaded_at: "2026-01-01T00:00:00Z",
+          ocr_status: "done", ocr_text_ref: null, needs_manual_date: false,
+          extraction_status: "not_extracted", extraction_error: null,
+        },
+        facts: [], tracked_markers: [], check_summary: checkSummaryFor([]),
+      };
+    }
+    return undefined;
+  });
+  await page.getByText("Not extracted in this version.").waitFor();
+  expect(await page.getByText(/Fact extraction failed/).count()).toBe(0);
+  expect(await page.getByText(ZERO_FACTS_TEXT).count()).toBe(0);
+  expect(await page.getByText(PENDING_TEXT).count()).toBe(0);
+  await page.close();
+}, 30_000);

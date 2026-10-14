@@ -596,3 +596,33 @@ test("OCR reuse is off in the default (llm) mode: the same bytes re-uploaded run
     if (savedMode !== undefined) process.env.EXTRACTION_MODE = savedMode;
   }
 });
+
+test("an 'other' upload is accepted and stored with no facts, and extraction never calls a provider (status not_extracted)", async () => {
+  const form = new FormData();
+  form.set("visit_id", visitId);
+  form.set("document_type", "other");
+  form.set("source_origin", "own_hospital");
+  form.set("file", new File(["data"], "a.pdf", { type: "application/pdf" }));
+  const res = await uploadDocument(uploadRequest(form), asAuthedUser(staff));
+  expect(res.status).toBe(201);
+  const body = (await res.json()) as any;
+  expect(body.document_type).toBe("other");
+  expect(body.extraction_status).not.toBe("failed");
+  const [{ count }] = await sql`SELECT count(*)::int AS count FROM facts WHERE document_id = ${body.id}`;
+  expect(count).toBe(0);
+
+  // Even with a provider injected, an 'other' document is never sent to it.
+  let calls = 0;
+  const spy: ExtractionProvider = {
+    name: "spy",
+    async extractFacts() {
+      calls++;
+      return { candidates: [], failedFieldTypes: [] };
+    },
+  };
+  await runExtraction(body, "other", { fullText: "x", pages: [], providerRaw: null } as any, staff.id, null, spy);
+  expect(calls).toBe(0);
+  const [after] = await sql`SELECT extraction_status, extraction_error FROM documents WHERE id = ${body.id}`;
+  expect(after.extraction_status).toBe("not_extracted");
+  expect(after.extraction_error).toBeNull();
+});

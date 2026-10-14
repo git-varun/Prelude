@@ -16,12 +16,12 @@ export interface User {
   created_at: string;
 }
 
-export type DocumentType = "prescription" | "blood" | "radiology" | "pathology" | "discharge";
+export type DocumentType = "prescription" | "blood" | "radiology" | "pathology" | "discharge" | "other";
 export type ImagingModality =
   | "ct" | "ct_contrast" | "mri" | "mri_contrast" | "pet_ct" | "ultrasound" | "xray" | "mammography" | "other";
 export type SourceOrigin = "own_hospital" | "outside_paper" | "outside_cd" | "whatsapp_pdf";
 export type OcrStatus = "pending" | "done" | "partial" | "failed";
-export type ExtractionStatus = "pending" | "done" | "failed";
+export type ExtractionStatus = "pending" | "done" | "failed" | "not_extracted";
 
 export type FieldType =
   | "marker_value"

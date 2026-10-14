@@ -35,6 +35,8 @@ export const FIELD_TYPES_BY_DOCUMENT_TYPE: Record<DocumentType, FieldType[]> = {
   radiology: ["radiology_impression", "disease_status_trend", "lesion_size"],
   pathology: ["diagnosis", "histology_ihc", "stage", "surgery_procedure"],
   discharge: ["diagnosis", "stage", "surgery_procedure", "treatment_regimen", "next_review_date", "tests_advised", "procedures_planned"],
+  // Deferred (M3-10): an "other" document is stored and viewable but never sent to an extraction provider.
+  other: [],
 };
 
 export function pageAnnotatedText(ocr: OcrResult): string {

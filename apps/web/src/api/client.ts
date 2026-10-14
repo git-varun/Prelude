@@ -162,7 +162,7 @@ export interface DocumentRecord {
   ocr_status: string;
   ocr_text_ref: string | null;
   needs_manual_date: boolean;
-  extraction_status: "pending" | "done" | "partial" | "failed";
+  extraction_status: "pending" | "done" | "partial" | "failed" | "not_extracted";
   extraction_error: string | null;
   identity_status: IdentityStatus | null;
   patient_name_on_report: string | null;

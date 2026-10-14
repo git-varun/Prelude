@@ -58,7 +58,8 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
       // by the browser regardless of try/catch) for documents with no file.
       const needsFileFallback =
         result.document.ocr_status === "done" &&
-        (result.document.extraction_status === "failed" ||
+        (result.document.extraction_status === "not_extracted" ||
+          result.document.extraction_status === "failed" ||
           result.document.extraction_status === "pending" ||
           result.facts.length === 0);
       if (needsFileFallback) {
@@ -213,7 +214,7 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
         <div>
           <h1>Extraction review</h1>
           <p className="muted" style={{ margin: 0 }}>
-            {document.document_type}
+            {document.document_type === "other" ? "Other" : document.document_type}
             {document.imaging_modality && ` (${document.imaging_modality.replace(/_/g, " ")})`} ·{" "}
             {document.source_origin.replace(/_/g, " ")}
           </p>
@@ -268,6 +269,16 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
             OCR status is "{document.ocr_status}", so there are no extracted facts to review for this document.
           </p>
         </div>
+      ) : document.extraction_status === "not_extracted" ? (
+        <>
+          <div className="empty-state">Not extracted in this version.</div>
+          {fileCheck?.ok && (
+            <div className="card">
+              <h2>Uploaded file</h2>
+              <OriginalDocument fileCheck={fileCheck} sourcePage={null} />
+            </div>
+          )}
+        </>
       ) : document.extraction_status === "failed" ? (
         <>
           <div className="error-banner">

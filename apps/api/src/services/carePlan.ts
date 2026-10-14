@@ -32,7 +32,7 @@ const MODALITY_LABELS: Record<string, string> = {
 };
 const TYPE_LABELS: Record<string, string> = {
   blood: "Blood report", radiology: "Radiology report", prescription: "Prescription", pathology: "Pathology report",
-  discharge: "Discharge summary",
+  discharge: "Discharge summary", other: "Other",
 };
 
 // Documents of the patient that could be a report for a plan item: not held or rejected for identity, with a
@@ -55,7 +55,7 @@ export async function loadCandidateDocuments(patientId: string): Promise<Candida
                AND f.raw_marker_label IS NOT NULL
            ), '{}') AS raw_labels
     FROM documents d
-    WHERE d.patient_id = ${patientId} AND COALESCE(d.identity_status::text, '') NOT IN ('mismatch', 'rejected')
+    WHERE d.patient_id = ${patientId} AND d.document_type != 'other' AND COALESCE(d.identity_status::text, '') NOT IN ('mismatch', 'rejected')
   `;
   return rows.map((r: any) => ({
     id: r.id as string,

@@ -13,7 +13,7 @@ import type { DocumentType, ExtractionProvider, ExtractionResult, OcrResult } fr
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const isUuid = (s: unknown): s is string => typeof s === "string" && UUID.test(s);
 
-const DOCUMENT_TYPES = ["prescription", "blood", "radiology", "pathology", "discharge"] as const;
+const DOCUMENT_TYPES = ["prescription", "blood", "radiology", "pathology", "discharge", "other"] as const;
 const SOURCE_ORIGINS = ["own_hospital", "outside_paper", "outside_cd", "whatsapp_pdf"] as const;
 
 // file_ref's suffix preserves the original upload's extension (saveDocumentFile), so the
@@ -327,6 +327,12 @@ export async function runExtraction(
   patientName: string | null,
   provider?: ExtractionProvider,
 ): Promise<void> {
+  // M3-10: an 'other' document is stored for viewing only. It never reaches an extraction provider (injected or
+  // configured) and is recorded as not extracted, which is neither 'failed' nor a clean "nothing found".
+  if (documentType === "other") {
+    await sql`UPDATE documents SET extraction_status = 'not_extracted', extraction_error = NULL WHERE id = ${document.id}`;
+    return;
+  }
   try {
     const { candidates, failedFieldTypes, failureMessages, header } = await (provider
       ? provider.extractFacts(ocr, documentType)
