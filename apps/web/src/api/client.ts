@@ -285,6 +285,39 @@ export interface SnapshotField {
   imaging_modality: ImagingModality | null;
 }
 
+export interface WatchlistEntry {
+  tracked_marker_id: string;
+  marker_name: string;
+  pinned_by_name: string | null;
+  missing: boolean;
+  latest: {
+    fact_id: string;
+    document_id: string | null;
+    value: string | null;
+    unit: string | null;
+    reference_range: string | null;
+    as_of_date: string | null;
+    delta_status: DeltaStatus | null;
+    was: { value: string | null; unit: string | null } | null;
+  } | null;
+  sparkline: { fact_id: string; value: string; unit: string | null; as_of_date: string }[];
+  last_seen: { fact_id: string; value: string; unit: string | null; as_of_date: string } | null;
+}
+
+export interface SuggestedPin {
+  tracked_marker_id: string;
+  marker_name: string;
+  suggested_by_name: string;
+  note: string | null;
+}
+
+export interface PinOption {
+  tracked_marker_id: string;
+  marker_name: string;
+  is_pinned: boolean;
+  suggested: boolean;
+}
+
 export interface PatientSnapshot {
   patient: {
     id: string;
@@ -304,6 +337,9 @@ export interface PatientSnapshot {
   tumor_markers: SnapshotField[];
   radiology: SnapshotField[];
   since_last_visit: SnapshotField[];
+  watchlist: WatchlistEntry[];
+  suggested_pins: SuggestedPin[];
+  pin_options: PinOption[];
 }
 
 export interface MarkerTrendPoint {
@@ -472,6 +508,15 @@ export const api = {
 
   setPlanItemMatch: (itemId: string, documentId: string | null) =>
     request<{ id: string }>(`/plan-items/${itemId}/match`, { method: "POST", body: JSON.stringify({ document_id: documentId }) }),
+
+  setMarkerPin: (trackedMarkerId: string, pinned: boolean) =>
+    request<{ id: string; is_pinned: boolean }>(`/tracked-markers/${trackedMarkerId}/pin`, { method: "POST", body: JSON.stringify({ pinned }) }),
+
+  suggestMarkerPin: (trackedMarkerId: string, note?: string) =>
+    request<{ id: string }>(`/tracked-markers/${trackedMarkerId}/suggest-pin`, { method: "POST", body: JSON.stringify({ note }) }),
+
+  dismissPinSuggestion: (trackedMarkerId: string) =>
+    request<{ id: string }>(`/tracked-markers/${trackedMarkerId}/dismiss-suggestion`, { method: "POST" }),
 
   getTimeline: (patientId: string) => request<TimelineResponse>(`/patients/${patientId}/timeline`),
 

@@ -3,6 +3,7 @@ import { RoleGate } from "../auth/AuthContext";
 import { api, ApiError, type BatchFailure, type PatientSnapshot, type ReviewFact, type SnapshotField } from "../api/client";
 import { FactCard } from "../components/FactCard";
 import { MarkerDisclaimerFooter } from "../components/MarkerDisclaimerFooter";
+import { Watchlist } from "../components/Watchlist";
 import { SummaryStrip } from "../components/SummaryStrip";
 import { MarkerTrendChart } from "../components/MarkerTrendChart";
 import { withThyroglobulinAdjacency } from "../lib/markerOrder";
@@ -452,6 +453,8 @@ export function Snapshot({ patientId }: { patientId: string }) {
           <DeltaSummary fields={data.since_last_visit} />
         </section>
       )}
+
+      <Watchlist data={data} onChanged={load} />
 
       <RoleGate roles={["oncologist"]}>
         <section aria-labelledby="section-for-this-visit" style={{ marginBottom: 16 }}>

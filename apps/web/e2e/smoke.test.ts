@@ -505,6 +505,9 @@ function snapshotBody(overrides: Record<string, unknown> = {}) {
     tumor_markers: [],
     radiology: [],
     since_last_visit: [],
+    watchlist: [],
+    suggested_pins: [],
+    pin_options: [],
     ...overrides,
   };
 }
@@ -2147,6 +2150,111 @@ test("spot-check: an excluded undated fact does not trigger the undated notice, 
   await page.keyboard.press("c");
   await page.waitForTimeout(300);
   expect(checkBodies).toEqual([]);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+// --- Watchlist (M3-07) ---
+function watchEntry(overrides: Record<string, unknown> = {}) {
+  return {
+    tracked_marker_id: "m1", marker_name: "CEA", pinned_by_name: "Dr. Rao", missing: false,
+    latest: { fact_id: "f1", document_id: "doc1", value: "7.5", unit: "ng/mL", reference_range: "0-5", as_of_date: "2026-02-01", delta_status: "changed", was: { value: "3.0", unit: "ng/mL" } },
+    sparkline: [
+      { fact_id: "f0", value: "3.0", unit: "ng/mL", as_of_date: "2026-01-01" },
+      { fact_id: "f1", value: "7.5", unit: "ng/mL", as_of_date: "2026-02-01" },
+    ],
+    last_seen: { fact_id: "f1", value: "7.5", unit: "ng/mL", as_of_date: "2026-02-01" },
+    ...overrides,
+  };
+}
+
+test("Watchlist: pinned cell shows value, text-only out-of-range and 'was', a hollow marker; a missing pin shows the last value; no red/green", async () => {
+  const body = snapshotBody({
+    watchlist: [
+      watchEntry(),
+      watchEntry({ tracked_marker_id: "m2", marker_name: "AFP", missing: true, latest: null, sparkline: [],
+        last_seen: { fact_id: "f9", value: "1.5", unit: "ng/mL", as_of_date: "2026-01-05" } }),
+    ],
+    pin_options: [
+      { tracked_marker_id: "m1", marker_name: "CEA", is_pinned: true, suggested: false },
+      { tracked_marker_id: "m2", marker_name: "AFP", is_pinned: true, suggested: false },
+    ],
+  });
+  const { page, errors } = await openSnapshot("oncologist", body);
+  await page.getByRole("heading", { name: "Watchlist · pinned by Dr. Rao" }).waitFor();
+  const cells = page.getByTestId("watch-cell");
+  expect(await cells.count()).toBe(2);
+  const cea = cells.nth(0);
+  await cea.getByText("7.5", { exact: true }).waitFor();
+  await cea.getByText("ng/mL · ref 0-5 · above reference range · was 3.0 ng/mL").waitFor();
+  expect(await cea.locator("svg circle").getAttribute("fill")).toBe("var(--color-surface)");
+  await cells.nth(1).getByText("Not in this visit · last 1.5 ng/mL on 2026-01-05").waitFor();
+  expect(await cells.nth(1).getByText("—", { exact: true }).count()).toBe(1);
+  expect(await page.getByText("1 suggested pin").count()).toBe(0);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Watchlist: clicking a cell opens that fact's source view", async () => {
+  const body = snapshotBody({ watchlist: [watchEntry()], pin_options: [{ tracked_marker_id: "m1", marker_name: "CEA", is_pinned: true, suggested: false }] });
+  const { page } = await openSnapshot("staff", body);
+  await page.getByTestId("watch-cell").click();
+  await page.waitForFunction(() => location.hash.startsWith("#/documents/doc1/source?fact=f1"));
+  await page.close();
+}, 30_000);
+
+test("Watchlist: oncologist sees the suggestion banner with Accept and Dismiss; Accept POSTs a pin", async () => {
+  const body = snapshotBody({
+    suggested_pins: [{ tracked_marker_id: "m3", marker_name: "CA 19-9", suggested_by_name: "Priya", note: "rising" }],
+    pin_options: [{ tracked_marker_id: "m3", marker_name: "CA 19-9", is_pinned: false, suggested: true }],
+  });
+  const posts: { path: string; body: string | null }[] = [];
+  const { page, errors } = await openSnapshot("oncologist", body, {}, () => undefined);
+  await page.route(`${API}/tracked-markers/**`, (route) => {
+    const req = route.request();
+    if (req.method() === "OPTIONS") return route.fallback();
+    posts.push({ path: new URL(req.url()).pathname, body: req.postData() });
+    return route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": BASE, "Access-Control-Allow-Credentials": "true" }, body: "{}" });
+  });
+  await page.getByText("1 suggested pin from Priya").waitFor();
+  const banner = page.getByTestId("suggested-pin-banner");
+  await banner.getByText("CA 19-9").waitFor();
+  await banner.getByRole("button", { name: "Dismiss" }).waitFor();
+  await banner.getByRole("button", { name: "Accept" }).click();
+  for (let i = 0; i < 100 && posts.length === 0; i++) await Bun.sleep(20);
+  expect(posts.length).toBe(1);
+  expect(posts[0]).toEqual({ path: "/tracked-markers/m3/pin", body: JSON.stringify({ pinned: true }) });
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Watchlist: staff see the suggestion text but no Accept/Dismiss, and can Suggest pin with a note", async () => {
+  const body = snapshotBody({
+    suggested_pins: [{ tracked_marker_id: "m3", marker_name: "CA 19-9", suggested_by_name: "Priya", note: null }],
+    pin_options: [
+      { tracked_marker_id: "m3", marker_name: "CA 19-9", is_pinned: false, suggested: true },
+      { tracked_marker_id: "m4", marker_name: "AFP", is_pinned: false, suggested: false },
+    ],
+  });
+  const posts: { path: string; body: string | null }[] = [];
+  const { page, errors } = await openSnapshot("staff", body);
+  await page.route(`${API}/tracked-markers/**`, (route) => {
+    const req = route.request();
+    if (req.method() === "OPTIONS") return route.fallback();
+    posts.push({ path: new URL(req.url()).pathname, body: req.postData() });
+    return route.fulfill({ status: 200, contentType: "application/json", headers: { "Access-Control-Allow-Origin": BASE, "Access-Control-Allow-Credentials": "true" }, body: "{}" });
+  });
+  await page.getByText("1 suggested pin from Priya").waitFor();
+  expect(await page.getByRole("button", { name: "Accept" }).count()).toBe(0);
+  expect(await page.getByRole("button", { name: "Dismiss" }).count()).toBe(0);
+  await page.getByRole("button", { name: "Edit pins" }).click();
+  expect(await page.getByRole("button", { name: "Pin", exact: true }).count()).toBe(0);
+  await page.getByRole("button", { name: "Suggest pin" }).nth(1).click();
+  await page.getByLabel("Note for AFP (optional)").fill("check trend");
+  await page.getByRole("button", { name: "Send suggestion" }).click();
+  for (let i = 0; i < 100 && posts.length === 0; i++) await Bun.sleep(20);
+  expect(posts.length).toBe(1);
+  expect(posts[0]).toEqual({ path: "/tracked-markers/m4/suggest-pin", body: JSON.stringify({ note: "check trend" }) });
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);

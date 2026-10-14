@@ -549,6 +549,73 @@ function buildSingleKeyBlock(
   return rows.map((r) => fieldObject(r, fieldType, conflictsByFactId, deltaForCurrentFact(r.value, r.unit, baseline)));
 }
 
+// M3-07: pinned markers in fixed order (pinned_at, then name), built from the same tumor-marker winners and delta
+// baselines the rest of the snapshot uses. The sparkline is the last 8 live dated values; held documents never reach it.
+async function loadPins(
+  patientId: string,
+  tumorMarkers: ReturnType<typeof fieldObject>[],
+  baselines: Map<string, DeltaBaseline>,
+) {
+  const rows = await sql`
+    SELECT tm.id, tm.marker_name, tm.is_pinned, tm.suggested_by, tm.suggested_note,
+           pu.name AS pinned_by_name, su.name AS suggested_by_name
+    FROM tracked_markers tm
+    LEFT JOIN users pu ON pu.id = tm.pinned_by
+    LEFT JOIN users su ON su.id = tm.suggested_by
+    WHERE tm.patient_id = ${patientId}
+    ORDER BY tm.is_pinned DESC, tm.pinned_at ASC NULLS LAST, tm.marker_name ASC, tm.id
+  `;
+  const pinned = rows.filter((r: any) => r.is_pinned);
+  const history = new Map<string, { fact_id: string; value: string; unit: string | null; as_of_date: string }[]>();
+  if (pinned.length > 0) {
+    const points = await sql`
+      SELECT * FROM (
+        SELECT f.tracked_marker_id, f.id AS fact_id, f.value, f.unit, to_char(f.as_of_date, 'YYYY-MM-DD') AS as_of_date,
+               ROW_NUMBER() OVER (PARTITION BY f.tracked_marker_id ORDER BY f.as_of_date DESC, f.id DESC) AS rn
+        FROM facts f
+        WHERE f.patient_id = ${patientId} AND f.field_type = 'marker_value' AND f.value IS NOT NULL
+          AND f.as_of_date IS NOT NULL AND f.tracked_marker_id IN ${sql(pinned.map((r: any) => r.id))}
+          AND ${LIVE_FACT_FILTER}
+      ) t WHERE rn <= 8 ORDER BY as_of_date ASC, fact_id
+    `;
+    for (const pt of points) {
+      const list = history.get(pt.tracked_marker_id) ?? [];
+      list.push({ fact_id: pt.fact_id, value: pt.value, unit: pt.unit, as_of_date: pt.as_of_date });
+      history.set(pt.tracked_marker_id, list);
+    }
+  }
+  const watchlist = pinned.map((r: any) => {
+    const current = tumorMarkers.find((m) => m.tracked_marker_id === r.id && m.fact_id !== null) ?? null;
+    const baseline = baselines.get(deltaKey("marker_value", r.id));
+    const sparkline = history.get(r.id) ?? [];
+    const lastPoint = sparkline[sparkline.length - 1] ?? null;
+    return {
+      tracked_marker_id: r.id as string,
+      marker_name: r.marker_name as string,
+      pinned_by_name: (r.pinned_by_name as string | null) ?? null,
+      missing: current === null,
+      latest: current && {
+        fact_id: current.fact_id, document_id: current.provenance?.document_id ?? null,
+        value: current.value, unit: current.unit, reference_range: current.reference_range,
+        as_of_date: current.as_of_date, delta_status: current.delta_status,
+        was: baseline ? { value: baseline.value, unit: baseline.unit } : null,
+      },
+      sparkline,
+      last_seen: lastPoint && { fact_id: lastPoint.fact_id, value: lastPoint.value, unit: lastPoint.unit, as_of_date: lastPoint.as_of_date },
+    };
+  });
+  const suggestedPins = rows
+    .filter((r: any) => !r.is_pinned && r.suggested_by)
+    .map((r: any) => ({
+      tracked_marker_id: r.id as string, marker_name: r.marker_name as string,
+      suggested_by_name: r.suggested_by_name as string, note: (r.suggested_note as string | null) ?? null,
+    }));
+  const pinOptions = rows
+    .map((r: any) => ({ tracked_marker_id: r.id as string, marker_name: r.marker_name as string, is_pinned: !!r.is_pinned, suggested: !!r.suggested_by }))
+    .sort((a: any, b: any) => a.marker_name.localeCompare(b.marker_name));
+  return { watchlist, suggested_pins: suggestedPins, pin_options: pinOptions };
+}
+
 export async function getPatientSnapshot(req: Request & { params: { id: string } }): Promise<Response> {
   const patientId = req.params.id;
   if (!isUuid(patientId)) return jsonError(404, "not_found", "Patient not found.");
@@ -590,6 +657,8 @@ export async function getPatientSnapshot(req: Request & { params: { id: string }
   const currentTreatment = buildSingleKeyBlock(treatmentRows, "treatment_regimen", baselines, conflicts);
   const radiology = buildSingleKeyBlock(radiologyRows, "radiology_impression", baselines, conflicts);
 
+  const pins = await loadPins(patientId, tumorMarkers, baselines);
+
   const sinceLastVisit = [...currentTreatment, ...tumorMarkers, ...radiology].filter(
     (entry) => entry.delta_status !== null && entry.delta_status !== "unchanged",
   );
@@ -615,6 +684,7 @@ export async function getPatientSnapshot(req: Request & { params: { id: string }
     tumor_markers: tumorMarkers,
     radiology,
     since_last_visit: sinceLastVisit,
+    ...pins,
   });
 }
 

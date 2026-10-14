@@ -7,6 +7,7 @@ import { getDocumentFacts, patchFact, checkFactRoute, signOffFact, reopenFact, s
 import { getDocumentCheckSummary, getLabCheckSummary } from "./routes/checks";
 import { getConflict, annotateConflict, resolveConflict } from "./routes/conflicts";
 import { getPatientPlan, addPlanItem, setPlanItemMatch } from "./routes/plan";
+import { pinMarker, suggestPin, dismissPinSuggestion } from "./routes/pins";
 import { requireRole } from "./middleware/roles";
 import { cors } from "./middleware/cors";
 
@@ -43,6 +44,15 @@ const server = Bun.serve({
     "/patients/:id/plan": cors({
       GET: requireRole(["staff", "oncologist"], getPatientPlan),
       POST: requireRole(["staff", "oncologist"], addPlanItem),
+    }),
+    "/tracked-markers/:id/pin": cors({
+      POST: requireRole(["oncologist"], pinMarker),
+    }),
+    "/tracked-markers/:id/suggest-pin": cors({
+      POST: requireRole(["staff", "oncologist"], suggestPin),
+    }),
+    "/tracked-markers/:id/dismiss-suggestion": cors({
+      POST: requireRole(["oncologist"], dismissPinSuggestion),
     }),
     "/plan-items/:id/match": cors({
       POST: requireRole(["staff", "oncologist"], setPlanItemMatch),
