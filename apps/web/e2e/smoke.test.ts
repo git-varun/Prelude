@@ -2604,3 +2604,27 @@ test("review screen: an 'other' document says 'Not extracted in this version', n
   expect(await page.getByText(PENDING_TEXT).count()).toBe(0);
   await page.close();
 }, 30_000);
+
+for (const ocrStatus of ["failed", "pending"]) {
+  test(`review screen: an 'other' document with ocr_status ${ocrStatus} still says 'Not extracted in this version' and links the file`, async () => {
+    const { page } = await openRoutedPage("/documents/doc1/review", (path) => {
+      if (path === "/documents/doc1/file") return {};
+      if (path === "/documents/doc1/facts") {
+        return {
+          document: {
+            id: "doc1", patient_id: "p1", visit_id: "v1", file_ref: "local://x.pdf", document_type: "other",
+            source_origin: "own_hospital", uploaded_by: "u1", uploaded_at: "2026-01-01T00:00:00Z",
+            ocr_status: ocrStatus, ocr_text_ref: null, needs_manual_date: false,
+            extraction_status: "not_extracted", extraction_error: null,
+          },
+          facts: [], tracked_markers: [], check_summary: checkSummaryFor([]),
+        };
+      }
+      return undefined;
+    });
+    await page.getByText("Not extracted in this version.").waitFor();
+    expect(await page.getByText(/OCR status is/).count()).toBe(0);
+    expect(await page.getByRole("heading", { name: "Uploaded file" }).count()).toBe(1);
+    await page.close();
+  }, 30_000);
+}

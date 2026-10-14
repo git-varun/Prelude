@@ -3,6 +3,7 @@ import { api, ApiError, type DocumentFileCheck, type DocumentReview } from "../a
 import { FactCard } from "../components/FactCard";
 import { MarkerDisclaimerFooter } from "../components/MarkerDisclaimerFooter";
 import { IdentityDecision, IdentityNames, type IdentityOutcome } from "../components/IdentityDecision";
+import { documentTypeLabel } from "../lib/documentTypeLabel";
 import { sortByRisk } from "../lib/riskOrder";
 import { navigate } from "../router";
 import { OriginalDocument } from "./SourceView";
@@ -57,11 +58,11 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
       // probing it unconditionally fires a 404 (logged as a console error
       // by the browser regardless of try/catch) for documents with no file.
       const needsFileFallback =
-        result.document.ocr_status === "done" &&
-        (result.document.extraction_status === "not_extracted" ||
-          result.document.extraction_status === "failed" ||
-          result.document.extraction_status === "pending" ||
-          result.facts.length === 0);
+        result.document.document_type === "other" ||
+        (result.document.ocr_status === "done" &&
+          (result.document.extraction_status === "failed" ||
+            result.document.extraction_status === "pending" ||
+            result.facts.length === 0));
       if (needsFileFallback) {
         const fc = await api.checkDocumentFile(documentId);
         if (token === latestLoad.current) setFileCheck(fc);
@@ -214,7 +215,7 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
         <div>
           <h1>Extraction review</h1>
           <p className="muted" style={{ margin: 0 }}>
-            {document.document_type === "other" ? "Other" : document.document_type}
+            {documentTypeLabel(document.document_type)}
             {document.imaging_modality && ` (${document.imaging_modality.replace(/_/g, " ")})`} ·{" "}
             {document.source_origin.replace(/_/g, " ")}
           </p>
@@ -263,13 +264,7 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
         </div>
       )}
 
-      {document.ocr_status !== "done" ? (
-        <div className="card">
-          <p className="muted">
-            OCR status is "{document.ocr_status}", so there are no extracted facts to review for this document.
-          </p>
-        </div>
-      ) : document.extraction_status === "not_extracted" ? (
+      {document.document_type === "other" || document.extraction_status === "not_extracted" ? (
         <>
           <div className="empty-state">Not extracted in this version.</div>
           {fileCheck?.ok && (
@@ -279,6 +274,12 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
             </div>
           )}
         </>
+      ) : document.ocr_status !== "done" ? (
+        <div className="card">
+          <p className="muted">
+            OCR status is "{document.ocr_status}", so there are no extracted facts to review for this document.
+          </p>
+        </div>
       ) : document.extraction_status === "failed" ? (
         <>
           <div className="error-banner">

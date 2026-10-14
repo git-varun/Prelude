@@ -1,5 +1,6 @@
-import { test, expect, beforeAll, afterAll } from "bun:test";
-import { uploadDocument, runExtraction, runOcrForTest, extractWithFallback, setDocumentIdentityStatus } from "./documents";
+import { test, expect, beforeAll, afterAll, spyOn } from "bun:test";
+import * as providerFactory from "../services/providerFactory";
+import { getDocumentFile, uploadDocument, runExtraction, runOcrForTest, extractWithFallback, setDocumentIdentityStatus } from "./documents";
 import type { ExtractedFactCandidate, ExtractionProvider, FieldType } from "@prelude/shared";
 import { createOrOpenVisit } from "./visits";
 import { sql } from "../db/client";
@@ -597,21 +598,61 @@ test("OCR reuse is off in the default (llm) mode: the same bytes re-uploaded run
   }
 });
 
-test("an 'other' upload is accepted and stored with no facts, and extraction never calls a provider (status not_extracted)", async () => {
+function otherUpload() {
   const form = new FormData();
   form.set("visit_id", visitId);
   form.set("document_type", "other");
   form.set("source_origin", "own_hospital");
   form.set("file", new File(["data"], "a.pdf", { type: "application/pdf" }));
-  const res = await uploadDocument(uploadRequest(form), asAuthedUser(staff));
+  return uploadRequest(form);
+}
+
+async function expectOtherStored(res: Response) {
   expect(res.status).toBe(201);
   const body = (await res.json()) as any;
   expect(body.document_type).toBe("other");
-  expect(body.extraction_status).not.toBe("failed");
+  expect(body.extraction_status).toBe("not_extracted");
+  const [row] = await sql`SELECT extraction_status FROM documents WHERE id = ${body.id}`;
+  expect(row.extraction_status).toBe("not_extracted");
   const [{ count }] = await sql`SELECT count(*)::int AS count FROM facts WHERE document_id = ${body.id}`;
   expect(count).toBe(0);
+  const fileReq = new Request(`http://localhost/documents/${body.id}/file`) as Request & { params: { id: string } };
+  fileReq.params = { id: body.id };
+  expect((await getDocumentFile(fileReq)).status).toBe(200);
+}
 
-  // Even with a provider injected, an 'other' document is never sent to it.
+test("an 'other' upload with no OCR provider configured ends not_extracted, no facts, file retrievable, no provider built", async () => {
+  delete process.env.OCR_PROVIDER;
+  const ocrSpy = spyOn(providerFactory, "getOcrProvider");
+  const extractionSpy = spyOn(providerFactory, "getExtractionProvider");
+  const llmSpy = spyOn(providerFactory, "getLlmExtractionProvider");
+  try {
+    await expectOtherStored(await uploadDocument(otherUpload(), asAuthedUser(staff)));
+    expect(ocrSpy).not.toHaveBeenCalled();
+    expect(extractionSpy).not.toHaveBeenCalled();
+    expect(llmSpy).not.toHaveBeenCalled();
+  } finally {
+    ocrSpy.mockRestore();
+    extractionSpy.mockRestore();
+    llmSpy.mockRestore();
+  }
+});
+
+test("an 'other' upload whose OCR would throw is not failed: not_extracted, no facts, file retrievable", async () => {
+  const ocrSpy = spyOn(providerFactory, "getOcrProvider").mockImplementation(() => {
+    throw new Error("OCR must not run for 'other'");
+  });
+  try {
+    await expectOtherStored(await uploadDocument(otherUpload(), asAuthedUser(staff)));
+    expect(ocrSpy).not.toHaveBeenCalled();
+  } finally {
+    ocrSpy.mockRestore();
+  }
+});
+
+test("runExtraction never sends an 'other' document to an injected provider", async () => {
+  const res = await uploadDocument(otherUpload(), asAuthedUser(staff));
+  const body = (await res.json()) as any;
   let calls = 0;
   const spy: ExtractionProvider = {
     name: "spy",

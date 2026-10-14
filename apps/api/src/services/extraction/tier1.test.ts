@@ -27,6 +27,7 @@ function raw(overrides: Partial<RawCandidate> = {}): RawCandidate {
 const ocr = (text: string): OcrResult => ({ fullText: text, pages: [], providerName: "test", providerRaw: null });
 
 test("each document type that can state a tier 1 field is asked for it", () => {
+  expect(FIELD_TYPES_BY_DOCUMENT_TYPE.other).toEqual([]); // M3-10: stored, never extracted
   expect(FIELD_TYPES_BY_DOCUMENT_TYPE.pathology).toEqual(["diagnosis", "histology_ihc", "stage", "surgery_procedure"]);
   expect(FIELD_TYPES_BY_DOCUMENT_TYPE.discharge).toEqual(
     expect.arrayContaining(["diagnosis", "stage", "surgery_procedure", "treatment_regimen", "next_review_date", "tests_advised", "procedures_planned"]),

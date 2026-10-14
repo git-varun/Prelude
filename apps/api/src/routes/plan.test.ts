@@ -129,6 +129,17 @@ test("a report dated on or before the advice is not suggested; the document date
   expect(itemByText(await plan(), "MRI brain")).toMatchObject({ status: "report_suggested", suggested_document: { id: undated } });
 });
 
+test("an 'other' document is never suggested for a plan item and cannot be matched (400)", async () => {
+  const item = await add({ type: "test", text: "MRI spine", advised_at: "2034-01-01" });
+  const itemId = ((await item.json()) as any).id as string;
+  const other = await newDocument({ type: "other", modality: "mri", reportedOn: "2034-02-01" });
+  const p = itemByText(await plan(), "MRI spine");
+  expect(p).toMatchObject({ status: "planned", suggested_document: null });
+  expect((await match(itemId, other)).status).toBe(400);
+  const [stored] = await sql`SELECT matched_document_id FROM care_plan_items WHERE id = ${itemId}`;
+  expect(stored.matched_document_id).toBeNull();
+});
+
 test("lab report suggested by marker name from its live facts", async () => {
   await add({ type: "test", text: "CEA repeat", advised_at: "2032-01-01" });
   const lab = await newDocument({ type: "blood", reportedOn: "2032-01-20" });

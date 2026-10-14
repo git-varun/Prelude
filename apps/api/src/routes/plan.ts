@@ -123,9 +123,10 @@ export async function setPlanItemMatch(req: Request & { params: { id: string } }
   }
 
   const [doc] = await sql`
-    SELECT id, identity_status FROM documents WHERE id = ${documentId} AND patient_id = ${item.patient_id}
+    SELECT id, identity_status, document_type FROM documents WHERE id = ${documentId} AND patient_id = ${item.patient_id}
   `;
   if (!doc) return jsonError(400, "bad_request", "document_id does not belong to this patient.");
+  if (doc.document_type === "other") return jsonError(400, "bad_request", "An 'Other' document cannot be matched to a plan item.");
   if (doc.identity_status === "mismatch" || doc.identity_status === "rejected") {
     return jsonError(409, "conflict", "This document is held for an identity check and cannot be matched.");
   }

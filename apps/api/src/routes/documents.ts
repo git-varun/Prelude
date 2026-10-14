@@ -159,8 +159,8 @@ export async function uploadDocument(req: Request & { params: { id: string } }, 
         `;
       }
       const [doc] = await tx`
-        INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, imaging_modality, uploaded_by, ocr_status, file_sha256, outside_encounter_id)
-        VALUES (${patientId}, ${visitId}, ${file_ref}, ${documentType}, ${sourceOrigin}, ${documentType === "radiology" ? (imagingModality as string) : null}, ${user.id}, 'pending', ${fileSha256}, ${outsideEncounterId})
+        INSERT INTO documents (patient_id, visit_id, file_ref, document_type, source_origin, imaging_modality, uploaded_by, ocr_status, extraction_status, file_sha256, outside_encounter_id)
+        VALUES (${patientId}, ${visitId}, ${file_ref}, ${documentType}, ${sourceOrigin}, ${documentType === "radiology" ? (imagingModality as string) : null}, ${user.id}, 'pending', ${documentType === "other" ? "not_extracted" : "pending"}::extraction_status, ${fileSha256}, ${outsideEncounterId})
         RETURNING *
       `;
       await tx`
@@ -175,6 +175,11 @@ export async function uploadDocument(req: Request & { params: { id: string } }, 
     await deleteDocumentFile(file_ref);
     throw err;
   }
+
+  // M3-10: an 'other' document is stored for viewing only. OCR is skipped (no paid call, its text never leaves) and
+  // extraction_status is already 'not_extracted'. ocr_status stays 'pending' (the enum has no "not applicable"); nothing
+  // reads it for an 'other' document, so it neither gates viewing nor means "OCR failed".
+  if (documentType === "other") return Response.json(document, { status: 201 });
 
   document = await runOcr(document, file, documentType as (typeof DOCUMENT_TYPES)[number], user.id, patient.name ?? null);
 

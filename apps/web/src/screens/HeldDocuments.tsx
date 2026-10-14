@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type IdentityDocument, type PatientIdentityDocuments } from "../api/client";
 import { IdentityDecision, IdentityNames, type IdentityOutcome } from "../components/IdentityDecision";
+import { documentTypeLabel } from "../lib/documentTypeLabel";
 import { navigate } from "../router";
 
 const OUTCOME_MESSAGES: Record<IdentityOutcome, string> = {
@@ -12,7 +13,7 @@ const OUTCOME_MESSAGES: Record<IdentityOutcome, string> = {
 function DocMeta({ doc }: { doc: IdentityDocument }) {
   return (
     <p className="muted" style={{ margin: "0 0 4px" }}>
-      {doc.document_type} · {doc.lab_name ?? "lab not read"} · uploaded {doc.uploaded_at.slice(0, 10)}
+      {documentTypeLabel(doc.document_type)} · {doc.lab_name ?? "lab not read"} · uploaded {doc.uploaded_at.slice(0, 10)}
     </p>
   );
 }
@@ -70,7 +71,7 @@ export function HeldDocuments({ patientId }: { patientId: string }) {
 
   function decided(doc: IdentityDocument, outcome: IdentityOutcome) {
     setResults((prev) => [
-      { id: `${doc.id}-${prev.length}`, text: `${doc.lab_name ?? doc.document_type}: ${OUTCOME_MESSAGES[outcome]}` },
+      { id: `${doc.id}-${prev.length}`, text: `${doc.lab_name ?? documentTypeLabel(doc.document_type)}: ${OUTCOME_MESSAGES[outcome]}` },
       ...prev,
     ]);
     // Drop the row immediately so a second click cannot reach it, then reload for the server's truth.

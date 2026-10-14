@@ -8,10 +8,10 @@ import {
   type PatientDetail,
   type Visit,
 } from "../api/client";
+import { documentTypeLabel } from "../lib/documentTypeLabel";
 import { navigate } from "../router";
 
 const DOCUMENT_TYPES = ["prescription", "blood", "radiology", "pathology", "discharge", "other"] as const;
-const DOCUMENT_TYPE_LABELS: Record<string, string> = { other: "Other" };
 const SOURCE_ORIGINS = ["own_hospital", "outside_paper", "outside_cd", "whatsapp_pdf"] as const;
 
 // m1-backlog B8: createOrOpenVisit is idempotent per patient/day, but the
@@ -166,7 +166,7 @@ export function Upload({ patientId }: { patientId: string }) {
             >
               {DOCUMENT_TYPES.map((t) => (
                 <option key={t} value={t}>
-                  {DOCUMENT_TYPE_LABELS[t] ?? t}
+                  {documentTypeLabel(t)}
                 </option>
               ))}
             </select>
@@ -240,7 +240,7 @@ export function Upload({ patientId }: { patientId: string }) {
           {uploaded.map((doc) => (
             <div key={doc.id} className="patient-row">
               <span>
-                {DOCUMENT_TYPE_LABELS[doc.document_type] ?? doc.document_type}
+                {documentTypeLabel(doc.document_type)}
                 {doc.imaging_modality && ` (${doc.imaging_modality.replace(/_/g, " ")})`} · {doc.source_origin.replace(/_/g, " ")}
                 {doc.outside_encounter_id && ` · visit elsewhere`}
               </span>

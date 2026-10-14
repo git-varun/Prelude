@@ -32,7 +32,7 @@ const MODALITY_LABELS: Record<string, string> = {
 };
 const TYPE_LABELS: Record<string, string> = {
   blood: "Blood report", radiology: "Radiology report", prescription: "Prescription", pathology: "Pathology report",
-  discharge: "Discharge summary", other: "Other",
+  discharge: "Discharge summary",
 };
 
 // Documents of the patient that could be a report for a plan item: not held or rejected for identity, with a
