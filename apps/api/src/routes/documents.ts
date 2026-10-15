@@ -276,6 +276,75 @@ async function runOcr(
   }
 }
 
+const MIME_BY_EXTENSION: Record<string, string> = {
+  pdf: "application/pdf", jpg: "image/jpeg", jpeg: "image/jpeg", png: "image/png", heic: "image/heic",
+};
+
+// Run OCR and extraction again for a document whose OCR or extraction failed, from what is already stored: the original
+// file (and the stored OCR text, when extraction alone failed), never a new upload. Only a failed document qualifies: a
+// 'partial' or 'done' one already has facts, and re-running would duplicate them. The claim (failed -> pending) is one
+// atomic UPDATE with its audit row, so two clicks cannot start two runs.
+export async function reprocessDocument(req: Request & { params: { id: string } }, user: AuthedUser): Promise<Response> {
+  const documentId = req.params.id;
+  if (!isUuid(documentId)) return jsonError(404, "not_found", "Document not found.");
+
+  const [document] = await sql`SELECT * FROM documents WHERE id = ${documentId}`;
+  if (!document) return jsonError(404, "not_found", "Document not found.");
+
+  const documentType = document.document_type as (typeof DOCUMENT_TYPES)[number];
+  const ocrFailed = document.ocr_status === "failed";
+  const extractionFailed = document.ocr_status === "done" && document.extraction_status === "failed";
+  if (documentType === "other" || document.identity_status === "rejected" || (!ocrFailed && !extractionFailed)) {
+    return jsonError(409, "conflict", "Only a document whose OCR or extraction failed can be reprocessed.");
+  }
+
+  // Stored OCR text saves a paid OCR call when only extraction failed; if it cannot be read, OCR runs again.
+  let ocr: OcrResult | null = null;
+  if (extractionFailed && document.ocr_text_ref) {
+    try {
+      ocr = await readOcrResult(document.ocr_text_ref);
+    } catch (err) {
+      console.error(`Stored OCR for document ${documentId} unreadable; reprocessing will run OCR again:`, err);
+    }
+  }
+
+  const stored = documentFile(document.file_ref);
+  if (!ocr && !(await stored.exists())) {
+    return jsonError(404, "not_found", "The original file is no longer stored, so this document cannot be reprocessed. Upload it again.");
+  }
+
+  const claimed = await sql.begin(async (tx) => {
+    const [row] = ocrFailed
+      ? await tx`UPDATE documents SET ocr_status = 'pending' WHERE id = ${documentId} AND ocr_status = 'failed' RETURNING *`
+      : await tx`
+          UPDATE documents SET extraction_status = 'pending', extraction_error = NULL
+          WHERE id = ${documentId} AND ocr_status = 'done' AND extraction_status = 'failed' RETURNING *`;
+    if (!row) return null;
+    await tx`
+      INSERT INTO audit_log (actor_id, action, entity_type, entity_id, before_value, after_value)
+      VALUES (${user.id}, 'reprocess', 'document', ${documentId},
+              ${JSON.stringify({ ocr_status: document.ocr_status, extraction_status: document.extraction_status })}::jsonb,
+              ${JSON.stringify({ rerun: ocrFailed || !ocr ? "ocr_and_extraction" : "extraction" })}::jsonb)
+    `;
+    return row;
+  });
+  if (!claimed) return jsonError(409, "conflict", "This document is already being reprocessed.");
+
+  const [patient] = await sql`SELECT name FROM patients WHERE id = ${document.patient_id}`;
+  const patientName: string | null = patient?.name ?? null;
+
+  if (ocr) {
+    await runExtraction(claimed, documentType, ocr, user.id, patientName);
+    const [final] = await sql`SELECT * FROM documents WHERE id = ${documentId}`;
+    return Response.json(final);
+  }
+
+  const filename = String(document.file_ref).split("/").pop() ?? "document";
+  const mime = MIME_BY_EXTENSION[filename.split(".").pop()?.toLowerCase() ?? ""] ?? "application/pdf";
+  const file = new File([await stored.arrayBuffer()], filename, { type: mime });
+  return Response.json(await runOcr(claimed, file, documentType, user.id, patientName));
+}
+
 // Test-only: documents.test.ts exercises OCR reuse directly, since uploadDocument's multipart path can't inject a
 // pre-existing same-hash document deterministically.
 export const runOcrForTest = runOcr;

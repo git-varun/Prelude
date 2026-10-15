@@ -8,6 +8,7 @@ import { FlagForm, FlaggedTag } from "../components/HeldReport";
 import { documentTypeLabel } from "../lib/documentTypeLabel";
 import { sortByRisk } from "../lib/riskOrder";
 import { navigate } from "../router";
+import { ReprocessPanel } from "../components/ReprocessPanel";
 import { OriginalDocument } from "./SourceView";
 
 export function ExtractionReview({ documentId }: { documentId: string }) {
@@ -288,11 +289,15 @@ export function ExtractionReview({ documentId }: { documentId: string }) {
           <p className="muted">
             OCR status is "{document.ocr_status}", so there are no extracted facts to review for this document.
           </p>
+          <ReprocessPanel document={document} onDone={() => void load()} />
         </div>
       ) : document.extraction_status === "failed" ? (
         <>
           <div className="error-banner">
             Fact extraction failed for this document — it was not analyzed. This is different from "nothing found".
+          </div>
+          <div className="card">
+            <ReprocessPanel document={document} onDone={() => void load()} />
           </div>
           {fileCheck?.ok && (
             <div className="card">
