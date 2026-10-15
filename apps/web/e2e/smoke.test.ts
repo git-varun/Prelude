@@ -50,8 +50,11 @@ beforeAll(async () => {
 }, 30_000);
 
 // M3-11: every patient screen now sits in the patient shell, which also reads GET /patients/:id and
-// GET /patients/:id/documents. Older fixtures answer unknown paths with a 404 (a console error), so a 404 on exactly
-// those two paths becomes the default below; a test that answers them itself is untouched.
+// GET /patients/:id/documents. The default answer below is registered first, i.e. at the LOWEST priority (Playwright
+// tries the last-registered route first), so it is used only when no test route handled the request. Older fixtures
+// end their catch-all `/**` handler with a 404 for "paths I did not stub"; on exactly these two GET paths that 404
+// means "not stubbed" and falls through to the default. A test that deliberately fails them registers the exact URL
+// (not a `/**` catch-all) and gets its 404/500 untouched.
 const SHELL_PATIENT = {
   id: "p1", name: "Test Patient", cancer_type: "Breast", sex: "female", date_of_birth: "1970-01-01", mrn: null,
   diagnosis_text: "Invasive ductal carcinoma", regimen_text: null, tracked_markers: [],
@@ -60,25 +63,30 @@ const SHELL_DOCUMENTS = [
   { id: "doc1", document_type: "blood", source_origin: "own_hospital", lab_name: "Metro Labs", identity_status: null, extraction_status: "done",
     uploaded_at: "2026-02-01T10:00:00Z", has_text: true, collected_on: "2026-02-01", reported_on: null, outside_facility: null },
 ];
+const SHELL_CORS = { "Access-Control-Allow-Origin": BASE, "Access-Control-Allow-Credentials": "true" };
+const SHELL_PATH = /^\/patients\/[^/]+(\/documents)?$/;
 function shimShellRequests(b: Browser) {
   const newPage = b.newPage.bind(b);
   b.newPage = (async (...args: Parameters<Browser["newPage"]>) => {
     const page = await newPage(...args);
     const route = page.route.bind(page);
+    await route(`${API}/patients/**`, (r) => {
+      const path = new URL(r.request().url()).pathname;
+      if (r.request().method() === "OPTIONS") return r.fulfill({ status: 204, headers: { ...SHELL_CORS, "Access-Control-Allow-Headers": "content-type", "Access-Control-Allow-Methods": "GET,POST,OPTIONS" } });
+      if (r.request().method() !== "GET" || !SHELL_PATH.test(path)) return r.fallback();
+      return r.fulfill({
+        status: 200, contentType: "application/json", headers: SHELL_CORS,
+        body: JSON.stringify(path.endsWith("/documents") ? { documents: SHELL_DOCUMENTS } : SHELL_PATIENT),
+      });
+    });
     page.route = ((url: Parameters<typeof route>[0], handler: (r: any, q: any) => unknown, opts?: any) =>
       route(url, (r, q) => {
-        const path = new URL(q.url()).pathname;
-        const shell = q.method() === "GET" && /^\/patients\/[^/]+(\/documents)?$/.test(path);
+        const catchAll = typeof url === "string" && url.endsWith("**");
+        const shell = catchAll && q.method() === "GET" && SHELL_PATH.test(new URL(q.url()).pathname);
         const wrapped = new Proxy(r, {
           get(target, prop) {
             if (prop === "fulfill" && shell) {
-              return (o: { status?: number; headers?: Record<string, string> }) =>
-                o.status === 404
-                  ? target.fulfill({
-                      status: 200, contentType: "application/json", headers: o.headers,
-                      body: JSON.stringify(path.endsWith("/documents") ? { documents: SHELL_DOCUMENTS } : SHELL_PATIENT),
-                    })
-                  : target.fulfill(o);
+              return (o: { status?: number }) => (o.status === 404 ? target.fallback() : target.fulfill(o as any));
             }
             const v = (target as any)[prop];
             return typeof v === "function" ? v.bind(target) : v;
@@ -3099,10 +3107,10 @@ test("pane: collapsed by default; a fact opens it at the highlight with the exac
   await page.close();
 }, 30_000);
 
-test("pane: a snippet not found on the page shows the page without highlight and the Document tag", async () => {
+test("pane: a snippet not found on the page shows the page without highlight and the Page tag", async () => {
   const { page, errors } = await openSnapshot("staff", oneFact(), {}, paneRoutes({}, { source_snippet: "not on this page" }));
   await page.getByRole("button", { name: "View uploaded document" }).click();
-  await page.getByTestId("pane-provenance").getByText("Document · page 3").waitFor();
+  await page.getByTestId("pane-provenance").getByText("Page · page 3", { exact: true }).waitFor();
   expect(await page.getByTestId("source-highlight").count()).toBe(0);
   await page.getByTestId("pane-page").getByText("CA-125 30 U/mL", { exact: false }).waitFor();
   expect(errors).toEqual([]);
@@ -3165,10 +3173,13 @@ test("pane: the sidebar shows the patient and the document count; the tree group
   await page.close();
 }, 30_000);
 
-test("pane: below 1180px it is an overlay with a backdrop; Escape and the backdrop close it; above 1180px there is no backdrop", async () => {
+test("pane: below 1180px it is an overlay with a backdrop opened from the sidebar; Escape and the backdrop close it; above 1180px there is no backdrop", async () => {
   const { page, errors } = await openSnapshot("staff", oneFact(), {}, paneRoutes());
   await page.setViewportSize({ width: 1000, height: 800 });
-  await page.getByRole("button", { name: "Open documents panel" }).click();
+  const sideButton = page.getByRole("navigation", { name: "Patient" }).getByRole("button", { name: /^Documents/ });
+  // No rail (and no reserved third column) below 1180px; the sidebar button is the way in.
+  expect(await page.getByRole("button", { name: "Open documents panel" }).isVisible()).toBe(false);
+  await sideButton.click();
   const pane = page.getByTestId("doc-pane");
   await pane.getByRole("heading", { name: "Documents · all" }).waitFor();
   const box = (await pane.boundingBox())!;
@@ -3177,22 +3188,188 @@ test("pane: below 1180px it is an overlay with a backdrop; Escape and the backdr
   expect(await pane.evaluate((el) => getComputedStyle(el).position)).toBe("fixed");
   expect(await page.getByTestId("doc-pane-backdrop").isVisible()).toBe(true);
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: "Open documents panel" }).waitFor();
+  await pane.getByRole("heading", { name: "Documents · all" }).waitFor({ state: "detached" });
 
-  await page.getByRole("button", { name: "Open documents panel" }).click();
+  await sideButton.click();
   await page.mouse.click(100, 400);
-  await page.getByRole("button", { name: "Open documents panel" }).waitFor();
+  await pane.getByRole("heading", { name: "Documents · all" }).waitFor({ state: "detached" });
 
   await page.setViewportSize({ width: 1400, height: 800 });
   await page.getByRole("button", { name: "Open documents panel" }).click();
   await pane.getByRole("heading", { name: "Documents · all" }).waitFor();
   expect(await pane.evaluate((el) => getComputedStyle(el).position)).not.toBe("fixed");
   expect(await page.getByTestId("doc-pane-backdrop").isVisible()).toBe(false);
+  expect(await pane.getAttribute("role")).toBeNull();
   await page.keyboard.press("Escape");
   expect(await pane.getAttribute("data-open")).toBe("true");
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);
+
+test("pane overlay: it is a modal dialog, Tab and Shift+Tab stay inside, the rest is inert, focus returns to the opener", async () => {
+  const { page, errors } = await openSnapshot("staff", oneFact(), {}, (path) => (path === "/patients/p1/documents" ? { documents: TREE_DOCS } : paneRoutes()(path)));
+  await page.setViewportSize({ width: 1000, height: 800 });
+  const opener = page.getByRole("navigation", { name: "Patient" }).getByRole("button", { name: /^Documents/ });
+  await opener.focus();
+  await page.keyboard.press("Enter");
+  const pane = page.getByTestId("doc-pane");
+  await pane.getByRole("heading", { name: "Documents · all" }).waitFor();
+  expect(await pane.getAttribute("role")).toBe("dialog");
+  expect(await pane.getAttribute("aria-modal")).toBe("true");
+  expect(await pane.getAttribute("aria-label")).toBe("Documents");
+  expect(await page.evaluate(() => (document.querySelector(".patient-shell__main") as any).inert)).toBe(true);
+  expect(await page.evaluate(() => (document.querySelector(".patient-shell__side") as any).inert)).toBe(true);
+  expect(await page.locator(".patient-shell__main").getAttribute("aria-hidden")).toBe("true");
+
+  const inside = () => page.evaluate(() => !!document.activeElement?.closest("[data-testid=doc-pane]"));
+  for (let i = 0; i < 14; i++) { await page.keyboard.press("Tab"); expect(await inside()).toBe(true); }
+  for (let i = 0; i < 14; i++) { await page.keyboard.press("Shift+Tab"); expect(await inside()).toBe(true); }
+  // Shift+Tab from the first control wraps to the last item.
+  await page.getByRole("button", { name: "Close documents panel" }).focus();
+  await page.keyboard.press("Shift+Tab");
+  expect(await page.evaluate(() => document.activeElement?.getAttribute("data-testid"))).toBe("pane-item");
+
+  await page.keyboard.press("Escape");
+  await pane.getByRole("heading", { name: "Documents · all" }).waitFor({ state: "detached" });
+  expect(await page.evaluate(() => (document.querySelector(".patient-shell__main") as any).inert)).toBe(false);
+  expect(await opener.evaluate((el) => el === document.activeElement)).toBe(true);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("pane: a held document in the tree shows only the notice, requests nothing about it, and the oncologist gets a Snapshot link", async () => {
+  const held = { ...TREE_DOCS[0]!, id: "h1", identity_status: "awaiting_oncologist" };
+  const sneaky = { ...TREE_DOCS[1]!, id: "h2" };
+  const routes = paneRoutes();
+  const stub = (path: string) => {
+    if (path === "/patients/p1/documents") return { documents: [held, sneaky] };
+    // The server withholds the text of a held document and says so.
+    if (path === "/documents/h2") return { document: (routes(path) as any).document, ocr: null, held: true };
+    return routes(path);
+  };
+  for (const role of ["staff", "oncologist"] as const) {
+    const { page, errors } = await openSnapshot(role, oneFact(), {}, stub);
+    const requested: string[] = [];
+    page.on("request", (r) => requested.push(new URL(r.url()).pathname));
+    await page.getByRole("navigation", { name: "Patient" }).getByRole("button", { name: /^Documents/ }).click();
+    expect(await page.getByTestId("pane-item").first().textContent()).toContain("held for identity");
+    for (const index of [0, 1]) {
+      await page.getByTestId("pane-item").nth(index).click();
+      await page.getByTestId("pane-held").getByText("Held for identity check. Not part of the record until the oncologist decides.").waitFor();
+      expect(await page.getByTestId("pane-page").count()).toBe(0);
+      expect(await page.getByTestId("source-highlight").count()).toBe(0);
+      expect(await page.getByTestId("pane-provenance").count()).toBe(0);
+      expect(await page.getByRole("link", { name: "Open original file" }).count()).toBe(0);
+      expect(await page.getByRole("link", { name: "Open full page" }).count()).toBe(0);
+      expect(await page.getByText("CEA 4.2 ng/mL").count()).toBe(0);
+      expect(await page.getByRole("link", { name: "Review on the Snapshot" }).count()).toBe(role === "oncologist" ? 1 : 0);
+    }
+    expect(requested).not.toContain("/documents/h1");
+    expect(requested).not.toContain("/documents/h1/file");
+    expect(requested).not.toContain("/documents/h2/file");
+    if (role === "oncologist") expect(await page.getByRole("link", { name: "Review on the Snapshot" }).getAttribute("href")).toBe("#/patients/p1/snapshot");
+    expect(errors).toEqual([]);
+    await page.close();
+  }
+}, 30_000);
+
+test("pane: opening at a fact scrolls the highlight into view", async () => {
+  const lines = Array.from({ length: 300 }, (_, i) => `line ${i} filler text`);
+  lines[250] = "PSA 1.1 ng/mL";
+  const long = lines.join("\n");
+  const base = paneRoutes();
+  const { page, errors } = await openSnapshot("staff", oneFact(), {}, (path) => {
+    if (path === "/documents/doc1") return { document: (base(path) as any).document, ocr: { fullText: long, pages: [{ pageNumber: 3, text: long }] }, held: false };
+    return base(path);
+  });
+  await page.getByRole("button", { name: "View uploaded document" }).click();
+  await page.getByTestId("pane-provenance").getByText("Exact match · page 3").waitFor();
+  await page.waitForFunction(() => {
+    const m = document.querySelector("[data-testid=source-highlight]")!.getBoundingClientRect();
+    return m.top >= 0 && m.bottom <= window.innerHeight;
+  });
+  const m = (await page.getByTestId("source-highlight").boundingBox())!;
+  const pane = (await page.getByTestId("doc-pane").boundingBox())!;
+  expect(m.y).toBeGreaterThanOrEqual(pane.y);
+  expect(m.y + m.height).toBeLessThanOrEqual(pane.y + pane.height);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("pane: a snippet that repeats on the page marks the occurrence nearest the stored location and says how many similar lines", async () => {
+  const text = "PSA 1.1 ng/mL\nCEA 4\nPSA 1.1 ng/mL\nCEA 5";
+  const base = paneRoutes({}, { source_location: "chars 22-35" });
+  const { page, errors } = await openSnapshot("staff", oneFact(), {}, (path) =>
+    path === "/documents/doc1" ? { document: (base(path) as any).document, ocr: { fullText: text, pages: [{ pageNumber: 3, text }] }, held: false } : base(path));
+  await page.getByRole("button", { name: "View uploaded document" }).click();
+  await page.getByTestId("pane-provenance").getByText("Page · page 3 · 2 similar lines").waitFor();
+  const before = await page.evaluate(() => document.querySelector("[data-testid=source-highlight]")!.previousSibling!.textContent!.length);
+  expect(before).toBe(20);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("pane: a fact whose page is not in the OCR shows 'Document' alone, with no highlight and no invented page", async () => {
+  const { page, errors } = await openSnapshot("staff", oneFact(), {}, paneRoutes({}, { source_page: 7 }));
+  await page.getByRole("button", { name: "View uploaded document" }).click();
+  await page.getByTestId("pane-provenance").getByText("Document", { exact: true }).waitFor();
+  expect(await page.getByTestId("source-highlight").count()).toBe(0);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("responsive: at 375px the shell stacks and the screen is full width; at 1000px there is no third column even with the pane open", async () => {
+  const { page, errors } = await openSnapshot("staff", oneFact(), {}, paneRoutes());
+  const noSideScroll = () => page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth);
+  const columns = () => page.locator(".patient-shell").evaluate((el) => getComputedStyle(el).gridTemplateColumns.split(" ").length);
+  await page.setViewportSize({ width: 375, height: 800 });
+  const main = page.locator(".patient-shell__main");
+  expect((await main.boundingBox())!.width).toBeGreaterThanOrEqual(300);
+  expect((await page.locator(".patient-shell__side").boundingBox())!.y).toBeLessThan((await main.boundingBox())!.y);
+  expect(await columns()).toBe(1);
+  expect(await noSideScroll()).toBe(true);
+  await page.getByRole("navigation", { name: "Patient" }).getByRole("button", { name: /^Documents/ }).click();
+  await page.getByTestId("doc-pane").getByRole("heading", { name: "Documents · all" }).waitFor();
+  expect(await noSideScroll()).toBe(true);
+  await page.keyboard.press("Escape");
+
+  await page.setViewportSize({ width: 1000, height: 800 });
+  expect(await columns()).toBe(2);
+  const wide = (await main.boundingBox())!.width;
+  await page.getByRole("navigation", { name: "Patient" }).getByRole("button", { name: /^Documents/ }).click();
+  await page.getByTestId("doc-pane").getByRole("heading", { name: "Documents · all" }).waitFor();
+  expect(await columns()).toBe(2);
+  expect((await main.boundingBox())!.width).toBe(wide);
+  expect(wide).toBeGreaterThanOrEqual(600);
+  expect(await noSideScroll()).toBe(true);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+// A test that fails these two GETs on purpose really gets the failure (the default only fills in unstubbed paths).
+for (const status of [500, 404]) {
+  test(`sidebar: when the patient request returns ${status} it says the details could not be loaded, offers Retry, and the screen still works`, async () => {
+    const { page, errors } = await openSnapshot("staff", oneFact(), {}, paneRoutes());
+    let calls = 0;
+    await page.route(`${API}/patients/p1`, (route) =>
+      ++calls === 1
+        ? route.fulfill({ status, contentType: "application/json", headers: { "Access-Control-Allow-Origin": BASE, "Access-Control-Allow-Credentials": "true" }, body: JSON.stringify({ error: "x", message: "nope" }) })
+        : route.fallback());
+    errors.length = 0;
+    await page.reload();
+    const side = page.getByRole("navigation", { name: "Patient" });
+    await side.getByText("Patient details could not be loaded.").waitFor();
+    expect(await side.getByText("(unnamed patient)").count()).toBe(0);
+    await page.getByRole("heading", { name: "Test Patient" }).waitFor();
+    await side.getByRole("button", { name: "Retry" }).click();
+    await side.getByText("Test Patient").waitFor();
+    expect(await side.getByText("Patient details could not be loaded.").count()).toBe(0);
+    // Only the deliberately failed request is logged.
+    expect(errors.length).toBeGreaterThan(0);
+    expect(errors.filter((e) => !e.includes(`status of ${status}`))).toEqual([]);
+    await page.close();
+  }, 30_000);
+}
 
 test("pane: a failed document list shows Retry and does not block the screen; Retry loads it", async () => {
   const { page } = await openSnapshot("staff", oneFact(), {}, (path) => (path === "/patients/p1/documents" ? { documents: TREE_DOCS } : paneRoutes()(path)));

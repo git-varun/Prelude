@@ -10,6 +10,7 @@ import {
 } from "../api/client";
 import { documentTypeLabel } from "../lib/documentTypeLabel";
 import { navigate } from "../router";
+import { usePane } from "../components/PaneContext";
 
 const DOCUMENT_TYPES = ["prescription", "blood", "radiology", "pathology", "discharge", "other"] as const;
 const SOURCE_ORIGINS = ["own_hospital", "outside_paper", "outside_cd", "whatsapp_pdf"] as const;
@@ -39,6 +40,7 @@ function visitCacheKey(patientId: string): string {
 }
 
 export function Upload({ patientId }: { patientId: string }) {
+  const pane = usePane();
   const [patient, setPatient] = useState<PatientDetail | null>(null);
   const [visit, setVisit] = useState<Visit | null>(null);
   const [loadingPatient, setLoadingPatient] = useState(true);
@@ -115,6 +117,7 @@ export function Upload({ patientId }: { patientId: string }) {
         file,
       });
       setUploaded((prev) => [doc, ...prev]);
+      pane?.refresh();
       if (fileInputRef.current) fileInputRef.current.value = "";
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "Upload failed.");

@@ -1,8 +1,8 @@
 import { locateSnippet } from "../lib/documentPane";
 
-// Shared by the Source view and the document pane: the page text with the first match of the fact's snippet marked.
-export function HighlightedText({ text, snippet }: { text: string; snippet: string | null }) {
-  const hit = locateSnippet(text, snippet);
+// Shared by the Source view and the document pane: the page text with the fact's snippet marked (the occurrence nearest its stored location when there are several).
+export function HighlightedText({ text, snippet, location = null }: { text: string; snippet: string | null; location?: string | null }) {
+  const hit = locateSnippet(text, snippet, location);
   if (!hit) {
     return <pre className="source-text">{text}</pre>;
   }

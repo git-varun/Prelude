@@ -411,15 +411,20 @@ export async function listPatientDocuments(req: Request & { params: { id: string
 // For the Source view (apps/web SourceView.tsx): document metadata plus its OCR text, so the
 // screen can pick a page's text to search a fact's source_snippet against. providerRaw is
 // dropped — it's internal OCR-vendor payload, never meant for the browser.
-export async function getDocument(req: Request & { params: { id: string } }): Promise<Response> {
+//
+// M3-11: a document held for an identity decision (mismatch / awaiting_oncologist / rejected) is not part of the
+// record, so its text is withheld from everyone but the oncologist who decides; the response says `held: true`.
+// The held-review screens read /documents/:id/identity-preview and the file, not this endpoint.
+export async function getDocument(req: Request & { params: { id: string } }, user?: AuthedUser): Promise<Response> {
   const documentId = req.params.id;
   if (!isUuid(documentId)) return jsonError(404, "not_found", "Document not found.");
 
   const [document] = await sql`SELECT * FROM documents WHERE id = ${documentId}`;
   if (!document) return jsonError(404, "not_found", "Document not found.");
 
+  const held = ["mismatch", "awaiting_oncologist", "rejected"].includes(document.identity_status);
   let ocr: { fullText: string; pages: { pageNumber: number; text: string }[] } | null = null;
-  if (document.ocr_text_ref) {
+  if (document.ocr_text_ref && (!held || user?.role === "oncologist")) {
     try {
       const result = await readOcrResult(document.ocr_text_ref);
       ocr = { fullText: result.fullText, pages: result.pages };
@@ -428,7 +433,7 @@ export async function getDocument(req: Request & { params: { id: string } }): Pr
     }
   }
 
-  return Response.json({ document: { ...document, outside_encounter: await outsideRefForDocument(document.outside_encounter_id) }, ocr });
+  return Response.json({ document: { ...document, outside_encounter: await outsideRefForDocument(document.outside_encounter_id) }, ocr, held });
 }
 
 // Streams the original uploaded file back, for the Source view to render (or probe for

@@ -10,7 +10,7 @@ import { PaneProvider, usePane } from "./PaneContext";
 // patient heading stays the only one.
 function ShellBody({ patientId, route, children }: { patientId: string; route: string; children: ReactNode }) {
   const pane = usePane()!;
-  const [patient, setPatient] = useState<PatientDetail | null>(null);
+  const [patient, setPatient] = useState<{ status: "loading" } | { status: "error" } | { status: "ready"; patient: PatientDetail }>({ status: "loading" });
   const [docs, setDocs] = useState<DocsState>({ status: "loading" });
   const latestDocs = useRef(0);
 
@@ -27,25 +27,45 @@ function ShellBody({ patientId, route, children }: { patientId: string; route: s
     }
   }, [patientId]);
 
-  // The patient and the document list are re-read when the screen changes (an upload or an edit may have changed them).
-  useEffect(() => {
+  const loadPatient = useCallback(() => {
     let live = true;
-    api.getPatient(patientId).then((p) => live && setPatient(p)).catch(() => {});
+    api.getPatient(patientId)
+      .then((p) => live && setPatient({ status: "ready", patient: p }))
+      .catch(() => live && setPatient({ status: "error" }));
+    return () => { live = false; };
+  }, [patientId]);
+
+  // The patient and the document list are re-read only when the patient changes or an upload / edit signals it
+  // (pane.refreshKey) -- not on every route or query change.
+  useEffect(() => {
+    const stop = loadPatient();
     void loadDocs();
-    return () => { live = false; latestDocs.current++; };
-  }, [patientId, route, loadDocs]);
+    return () => { stop(); latestDocs.current++; };
+  }, [loadPatient, loadDocs, pane.refreshKey]);
 
   const current = activeNav(route);
+  // The list API leaves out rejected documents; held ones (identity mismatch / awaiting the oncologist) are listed,
+  // so they are counted here and marked in the pane.
   const count = docs.status === "ready" ? docs.documents.length : null;
-  const demographics = patient ? demographicsLine(patient) : "";
+  const loaded = patient.status === "ready" ? patient.patient : null;
+  const demographics = loaded ? demographicsLine(loaded) : "";
 
   return (
     <div className="patient-shell">
       <nav className="patient-shell__side" aria-label="Patient">
         <div className="patient-shell__id">
-          <div className="patient-shell__name">{patient?.name || (patient ? "(unnamed patient)" : "")}</div>
-          {demographics && <div className="muted">{demographics}</div>}
-          {patient?.diagnosis_text && <div className="patient-shell__dx">{patient.diagnosis_text}</div>}
+          {patient.status === "error" ? (
+            <div className="error-banner">
+              Patient details could not be loaded.{" "}
+              <button className="btn btn--ghost" type="button" onClick={() => { setPatient({ status: "loading" }); loadPatient(); }}>Retry</button>
+            </div>
+          ) : (
+            <>
+              <div className="patient-shell__name">{loaded?.name ?? ""}</div>
+              {demographics && <div className="muted">{demographics}</div>}
+              {loaded?.diagnosis_text && <div className="patient-shell__dx">{loaded.diagnosis_text}</div>}
+            </>
+          )}
         </div>
         {NAV_ITEMS.map((item) => {
           const path = `/patients/${patientId}/${item.path}`;
@@ -69,7 +89,7 @@ function ShellBody({ patientId, route, children }: { patientId: string; route: s
         })}
       </nav>
       <div className="patient-shell__main">{children}</div>
-      <DocumentPane docs={docs} onRetry={() => { setDocs({ status: "loading" }); void loadDocs(); }} />
+      <DocumentPane patientId={patientId} docs={docs} onRetry={() => { setDocs({ status: "loading" }); void loadDocs(); }} />
     </div>
   );
 }

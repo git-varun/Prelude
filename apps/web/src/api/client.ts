@@ -331,6 +331,8 @@ export interface DocumentOcr {
 export interface DocumentWithOcr {
   document: DocumentRecord;
   ocr: DocumentOcr | null;
+  /** True for a document held for an identity decision: its text is withheld (null) unless the caller is the oncologist. */
+  held: boolean;
 }
 
 // Whether the original file is renderable, found via a direct probe request rather than relying

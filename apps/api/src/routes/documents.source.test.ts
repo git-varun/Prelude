@@ -68,6 +68,35 @@ test("getDocument returns ocr: null when ocr_text_ref is null", async () => {
   expect(body.ocr).toBeNull();
 });
 
+test("getDocument withholds the OCR text of a held document from staff and flags it held; the oncologist still gets it", async () => {
+  const { file_ref } = await saveDocumentFile(patientId, "scan.pdf", new Blob(["pdf bytes"]));
+  const onc = await createTestUser("oncologist", "documents-source-onc");
+  try {
+    for (const status of ["mismatch", "awaiting_oncologist", "rejected"]) {
+      const docId = await newDocument(file_ref, null);
+      const { file_ref: ocrRef } = await saveOcrResult(patientId, docId, {
+        fullText: "SECRET TEXT", pages: [{ pageNumber: 1, text: "SECRET TEXT" }], providerName: "test", providerRaw: {},
+      });
+      await sql`UPDATE documents SET ocr_text_ref = ${ocrRef}, identity_status = ${status}::identity_status WHERE id = ${docId}`;
+
+      const forStaff = await getDocument(getReq(docId), staff as any);
+      const staffBody = (await forStaff.json()) as any;
+      expect(staffBody.held).toBe(true);
+      expect(staffBody.ocr).toBeNull();
+      expect(JSON.stringify(staffBody)).not.toContain("SECRET TEXT");
+      expect(((await (await getDocument(getReq(docId))).json()) as any).ocr).toBeNull();
+
+      const forOnc = (await (await getDocument(getReq(docId), onc as any)).json()) as any;
+      expect(forOnc.held).toBe(true);
+      expect(forOnc.ocr.fullText).toBe("SECRET TEXT");
+    }
+    const live = await newDocument(file_ref, null);
+    expect(((await (await getDocument(getReq(live), staff as any)).json()) as any).held).toBe(false);
+  } finally {
+    await deleteTestUsers(onc.id);
+  }
+});
+
 test("getDocumentFile 404s for an unknown or malformed document id", async () => {
   expect((await getDocumentFile(getReq("00000000-0000-0000-0000-000000000000"))).status).toBe(404);
   expect((await getDocumentFile(getReq("not-a-uuid"))).status).toBe(404);

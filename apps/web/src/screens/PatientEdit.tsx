@@ -11,6 +11,7 @@ import {
   type PatientOrigin,
 } from "../api/client";
 import { navigate } from "../router";
+import { usePane } from "../components/PaneContext";
 
 const PATIENT_ORIGIN_LABELS: Record<PatientOrigin, string> = {
   own_hospital: "Own patient",
@@ -18,6 +19,7 @@ const PATIENT_ORIGIN_LABELS: Record<PatientOrigin, string> = {
 };
 
 export function PatientEdit({ patientId }: { patientId: string }) {
+  const pane = usePane();
   const [patient, setPatient] = useState<PatientDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -80,6 +82,7 @@ export function PatientEdit({ patientId }: { patientId: string }) {
         referring_physician: referringPhysician || undefined,
         patient_origin: patientOrigin,
       });
+      pane?.refresh();
       navigate(`/patients/${patientId}/snapshot`);
     } catch (err) {
       setSaveError(err instanceof ApiError ? err.message : "Failed to save patient.");

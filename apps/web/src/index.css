@@ -1026,8 +1026,13 @@ select {
 }
 
 @media (max-width: 1179.98px) {
+  /* No third column: the rail is hidden (the sidebar's Documents button opens the pane) and the open pane floats. */
   .patient-shell {
-    grid-template-columns: 220px minmax(0, 1fr) 48px;
+    grid-template-columns: 220px minmax(0, 1fr);
+  }
+
+  .doc-pane[data-open="false"] {
+    display: none;
   }
 
   .doc-pane--open {
@@ -1048,5 +1053,31 @@ select {
     inset: 0;
     z-index: 10;
     background: rgba(38, 34, 32, 0.35);
+  }
+}
+
+/* Narrow screens: the sidebar becomes a row above the screen, which takes the full width. */
+@media (max-width: 899.98px) {
+  .patient-shell {
+    grid-template-columns: minmax(0, 1fr);
+    gap: var(--space-3);
+  }
+
+  .patient-shell__side {
+    position: static;
+    flex-direction: row;
+    flex-wrap: wrap;
+    align-items: center;
+    column-gap: var(--space-4);
+  }
+
+  .patient-shell__id {
+    flex-basis: 100%;
+    padding-bottom: var(--space-1);
+  }
+
+  .patient-shell__nav {
+    width: auto;
+    border-top: 0;
   }
 }
