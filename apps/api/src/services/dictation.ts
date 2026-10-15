@@ -10,11 +10,14 @@ export const DICTATION_MAX_SECONDS = 1800;
  * Read per call so the flag can be changed without code changes.
  */
 export function isDictationEnabledFor(
-  user: { id: string; role: string } | null | undefined,
+  user: { id: string; role: string; email?: string | null } | null | undefined,
   flag: string | undefined = process.env.DICTATION_PILOT_USER_ID,
+  emailFlag: string | undefined = process.env.DICTATION_PILOT_EMAIL,
 ): boolean {
-  if (!user || user.role !== "oncologist" || !flag) return false;
-  return flag.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean).includes(user.id.trim().toLowerCase());
+  if (!user || user.role !== "oncologist") return false;
+  const list = (v: string | undefined) => (v ?? "").split(",").map((s) => s.trim().toLowerCase()).filter(Boolean);
+  // Either setting enables the account; the email form needs no id lookup (handy on a fresh database).
+  return list(flag).includes(user.id.trim().toLowerCase()) || (!!user.email && list(emailFlag).includes(user.email.trim().toLowerCase()));
 }
 
 /** The base mime type of a Content-Type value ("audio/webm;codecs=opus" -> "audio/webm"), if it is on the allowlist. */

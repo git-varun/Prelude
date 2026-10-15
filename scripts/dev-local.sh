@@ -9,9 +9,9 @@ cd "$(dirname "$0")/.."
 [ -f .env ] || { echo "missing .env at the repo root" >&2; exit 1; }
 set -a; . ./.env; set +a
 
-if [ -z "${DICTATION_PILOT_USER_ID:-}" ]; then
-  id=$(psql "$DATABASE_URL" -tAc "select id from users where email='oncologist@opd.local'" 2>/dev/null || true)
-  if [ -n "$id" ]; then export DICTATION_PILOT_USER_ID="$id"; echo "dictation pilot enabled for oncologist@opd.local"; fi
+if [ -z "${DICTATION_PILOT_USER_ID:-}" ] && [ -z "${DICTATION_PILOT_EMAIL:-}" ]; then
+  export DICTATION_PILOT_EMAIL="oncologist@opd.local"
+  echo "dictation pilot enabled for $DICTATION_PILOT_EMAIL"
 fi
 
 bun apps/api/src/index.ts & api=$!
