@@ -24,12 +24,15 @@ export async function destroySession(token: string): Promise<void> {
   await sql`DELETE FROM sessions WHERE token = ${token}`;
 }
 
+// Production is only ever served over HTTPS (Caddy), so the cookie is Secure there; local http://localhost keeps working.
+const secureFlag = () => (process.env.NODE_ENV === "production" ? "; Secure" : "");
+
 export function sessionCookieHeader(token: string, expiresAt: Date): string {
-  return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Expires=${expiresAt.toUTCString()}`;
+  return `${SESSION_COOKIE}=${token}; Path=/; HttpOnly; SameSite=Lax; Expires=${expiresAt.toUTCString()}${secureFlag()}`;
 }
 
 export function clearedCookieHeader(): string {
-  return `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+  return `${SESSION_COOKIE}=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureFlag()}`;
 }
 
 function readCookie(req: Request, name: string): string | null {
