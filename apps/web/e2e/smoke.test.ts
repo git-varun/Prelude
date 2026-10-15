@@ -2906,6 +2906,38 @@ test("Today: four groups by state, each ordered by name, with the change summary
   await page.close();
 }, 30_000);
 
+test("Today: a patient whose last visit is old but has facts to check sits under Staff preparing, not Nothing new", async () => {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  const cors = { "Access-Control-Allow-Origin": BASE, "Access-Control-Allow-Credentials": "true" };
+  const base = {
+    cancer_type: "Breast", created_at: "2026-01-01", created_by: "u1", mrn: null, patient_origin: "own_hospital", date_of_birth: null, stage: null,
+    sex: null, needs_attention_count: 0, held_document_count: 0, unchecked_fact_count: 0, latest_elsewhere: null, diagnosis_text: null, regimen_text: null,
+    last_visit_date: "2026-03-02", prep_status: "preparing", current_visit_document_count: 0, sign_off_count: 0, change_summary_items: [],
+    first_pinned_sparkline: null, has_plan_items_expected: false,
+  };
+  await page.route(`${API}/**`, (route) => {
+    const path = new URL(route.request().url()).pathname;
+    const json = (b: unknown) => route.fulfill({ status: 200, contentType: "application/json", headers: cors, body: JSON.stringify(b) });
+    if (path === "/auth/me") return json({ id: "u1", name: "Test", email: "t@opd.local", role: "oncologist" });
+    if (path === "/patients") {
+      return json([
+        { ...base, id: "p1", name: "Old Visit Checks", unchecked_fact_count: 2, current_visit_document_count: 1 },
+        { ...base, id: "p2", name: "Old Visit Quiet", prep_status: null },
+      ]);
+    }
+    return route.fulfill({ status: 404, contentType: "application/json", headers: cors, body: "{}" });
+  });
+  await page.goto(`${BASE}/#/patients`);
+  await page.getByRole("heading", { name: "Staff preparing · 1" }).waitFor();
+  await page.getByRole("heading", { name: "Nothing new · 1" }).waitFor();
+  const preparing = page.getByRole("region", { name: "Staff preparing" });
+  expect(await preparing.getByText("Old Visit Checks").count()).toBe(1);
+  expect(await preparing.getByText("2 to check").count()).toBe(1);
+  expect(await page.getByRole("region", { name: "Nothing new" }).getByText("Old Visit Quiet").count()).toBe(1);
+  await page.close();
+}, 30_000);
+
 test("Mark ready: blocked with the reasons while a check fails, then ready and back to preparing", async () => {
   let prep = prepBody({
     can_mark_ready: false,

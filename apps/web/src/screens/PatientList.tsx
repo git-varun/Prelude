@@ -16,6 +16,9 @@ function withToday(p: PatientSummary): PatientSummary {
     sign_off_count: p.sign_off_count ?? 0,
     change_summary_items: p.change_summary_items ?? [],
     first_pinned_sparkline: p.first_pinned_sparkline ?? null,
+    held_document_count: p.held_document_count ?? 0,
+    unchecked_fact_count: p.unchecked_fact_count ?? 0,
+    needs_attention_count: p.needs_attention_count ?? 0,
     has_plan_items_expected: p.has_plan_items_expected ?? false,
   };
 }
@@ -136,7 +139,7 @@ export function PatientList() {
     return () => clearTimeout(handle);
   }, [search]);
 
-  const groups = useMemo(() => (patients ? groupPatients(patients, today) : null), [patients, today]);
+  const groups = useMemo(() => (patients ? groupPatients(patients) : null), [patients]);
 
   return (
     <div className="today">
