@@ -234,13 +234,23 @@ export function toExtractedFactCandidate(fieldType: FieldType, candidate: RawCan
   };
 }
 
-export class AnthropicExtractionProvider implements ExtractionProvider {
-  readonly name = "anthropic";
+// The narrowest surface extraction needs; both Anthropic and AnthropicBedrock satisfy it.
+export type MessageParser = { messages: { parse: Anthropic["messages"]["parse"] } };
 
-  constructor(private readonly apiKey: string) {}
+export class AnthropicExtractionProvider implements ExtractionProvider {
+  readonly name: string = "anthropic";
+
+  constructor(
+    private readonly apiKey: string,
+    protected readonly model: string = MODEL,
+  ) {}
+
+  protected makeClient(): MessageParser {
+    return new Anthropic({ apiKey: this.apiKey });
+  }
 
   async extractFacts(ocr: OcrResult, documentType: DocumentType): Promise<ExtractionResult> {
-    const client = new Anthropic({ apiKey: this.apiKey });
+    const client = this.makeClient();
     const ocrText = pageAnnotatedText(ocr);
     const fieldTypes = FIELD_TYPES_BY_DOCUMENT_TYPE[documentType];
 
@@ -268,14 +278,14 @@ export class AnthropicExtractionProvider implements ExtractionProvider {
   }
 
   protected async extractForFieldType(
-    client: Anthropic,
+    client: MessageParser,
     fieldType: FieldType,
     documentType: DocumentType,
     ocrText: string,
     ocr: OcrResult,
   ): Promise<ExtractedFactCandidate[]> {
     const response = await client.messages.parse({
-      model: MODEL,
+      model: this.model,
       max_tokens: 16000,
       messages: [{ role: "user", content: promptFor(fieldType, documentType, ocrText) }],
       output_config: { format: zodOutputFormat(ExtractionResultSchema) },
