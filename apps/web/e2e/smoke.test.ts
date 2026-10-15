@@ -3430,6 +3430,7 @@ async function openDictationPage(
   hash: string,
   features: { dictation: boolean } | undefined,
   visits: unknown[] = [{ id: "v2", visit_date: "2026-02-01", document_count: 1, fact_count: 1, signed_off_count: 0 }],
+  opts: { notes?: unknown[]; postStatus?: number } = {},
 ) {
   const page = await browser.newPage();
   page.setDefaultTimeout(5000);
@@ -3440,13 +3441,37 @@ async function openDictationPage(
   });
   // A fake microphone and recorder: start() then stop() yields one 100-byte audio/webm chunk.
   await page.addInitScript(() => {
-    (navigator.mediaDevices as any).getUserMedia = async () => ({ getTracks: () => [{ stop() {} }] });
-    (window as any).MediaRecorder = class {
+    // Every fake track is counted: __tracks.opened vs __tracks.stopped. __gum.calls counts getUserMedia calls and
+    // __gum.delay holds each one open (a pending permission prompt). __chunkBytes > 0 makes a recording emit a chunk
+    // of that size every 20 ms (a long take); __recorderOptions keeps what the page passed to the recorder.
+    const w = window as any;
+    w.__tracks = { opened: 0, stopped: 0 };
+    w.__gum = { calls: 0, delay: 0 };
+    w.__chunkBytes = 0;
+    w.__recorderOptions = null;
+    (navigator.mediaDevices as any).getUserMedia = async () => {
+      w.__gum.calls++;
+      if (w.__gum.delay) await new Promise((r) => setTimeout(r, w.__gum.delay));
+      w.__tracks.opened++;
+      let stopped = false;
+      return { getTracks: () => [{ stop() { if (!stopped) { stopped = true; w.__tracks.stopped++; } } }] };
+    };
+    w.MediaRecorder = class {
       static isTypeSupported(t: string) { return t === "audio/webm"; }
-      mimeType = "audio/webm"; state = "inactive"; ondataavailable: any = null; onstop: any = null;
-      start() { this.state = "recording"; }
+      mimeType = "audio/webm"; state = "inactive"; ondataavailable: any = null; onstop: any = null; timer: any = null;
+      constructor(_stream: unknown, options: unknown) { w.__recorderOptions = options; }
+      start() {
+        this.state = "recording";
+        if (w.__chunkBytes > 0) {
+          this.timer = setInterval(() => {
+            if (this.state === "recording") this.ondataavailable?.({ data: new Blob([new Uint8Array(w.__chunkBytes)], { type: "audio/webm" }) });
+          }, 20);
+        }
+      }
       stop() {
+        if (this.state !== "recording") return;
         this.state = "inactive";
+        clearInterval(this.timer);
         this.ondataavailable?.({ data: new Blob([new Uint8Array(100)], { type: "audio/webm" }) });
         this.onstop?.();
       }
@@ -3468,8 +3493,11 @@ async function openDictationPage(
     if (path === "/patients/p1/documents") return json({ documents: SHELL_DOCUMENTS });
     if (path === "/patients/p1/visits") return json(visits);
     if (path === "/patients/p1/outside-encounters") return json([]);
-    if (path === "/visits/v2/dictation" && req.method() === "POST") return json({ id: "d2", duration_seconds: 1 }, 201);
-    if (path === "/visits/v2/dictations") return json([{ id: "d1", duration_seconds: 75, created_at: "2026-02-01T10:00:00Z", recorded_by_name: "Test" }]);
+    if (path === "/visits/v2/dictation" && req.method() === "POST") {
+      if (opts.postStatus && opts.postStatus !== 201) return json({ error: "too_large", message: "The recording is larger than 25 MB." }, opts.postStatus);
+      return json({ id: "d2", duration_seconds: 1 }, 201);
+    }
+    if (path === "/visits/v2/dictations") return json(opts.notes ?? [{ id: "d1", duration_seconds: 75, created_at: "2026-02-01T10:00:00Z", recorded_by_name: "Test" }]);
     if (path === "/dictations/d1/audio") return route.fulfill({ status: 200, contentType: "audio/wav", headers: cors, body: TINY_WAV });
     if (path === "/patients/p1/snapshot") return json(snapshotBody());
     if (path === "/patients/p1/summary") return json(EMPTY_SUMMARY);
@@ -3488,7 +3516,12 @@ test("Dictation: record, stop, play the take, save to the visit; History shows t
   const { page, errors, requests } = await openDictationPage("/patients/p1/history", { dictation: true }, [
     { id: "v2", visit_date: "2026-02-01", document_count: 1, fact_count: 1, signed_off_count: 0, dictated_note_seconds: 75 },
     { id: "v1", visit_date: "2026-01-01", document_count: 0, fact_count: 0, signed_off_count: 0, dictated_note_seconds: null },
-  ]);
+  ], {
+    notes: [
+      { id: "d1", duration_seconds: 75, created_at: "2026-02-01T10:00:00Z", recorded_by_name: "Test" },
+      { id: "d0", duration_seconds: 20, created_at: "2026-02-01T09:00:00Z", recorded_by_name: "Test" },
+    ],
+  });
   const side = page.getByRole("navigation", { name: "Patient" });
   await side.getByText("Dictation pilot · your own note only · no transcript is made").waitFor();
   expect(await side.getByText(/Record consult/).count()).toBe(0);
@@ -3515,10 +3548,92 @@ test("Dictation: record, stop, play the take, save to the visit; History shows t
   await page.getByText("Dictated note 1:15").waitFor();
   expect(await page.getByText(/Dictated note/).count()).toBe(1);
   expect(requests.some((r) => r.path === "/dictations/d1/audio")).toBe(false);
+  // The list of the visit's notes is fetched only when "Notes" is clicked.
+  expect(requests.some((r) => r.path === "/visits/v2/dictations")).toBe(false);
+  await page.getByRole("button", { name: "Notes" }).click();
+  await page.getByText("Dictated note 0:20").waitFor();
+  expect(await page.getByRole("button", { name: "Play", exact: true }).count()).toBe(2);
+  expect(requests.some((r) => /\/audio$/.test(r.path))).toBe(false);
   const audioRequest = page.waitForRequest((r) => new URL(r.url()).pathname === "/dictations/d1/audio");
-  await page.getByRole("button", { name: "Play note" }).click();
+  await page.getByRole("button", { name: "Play", exact: true }).first().click();
   await audioRequest;
   expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+// The page's tracks, and how many it opened: used to prove the microphone is always released.
+const tracks = (page: import("playwright").Page) => page.evaluate(() => (window as any).__tracks as { opened: number; stopped: number });
+
+test("Dictation: the recorder asks for a low bitrate, stops tracks on stop, discard and save, and the size limit auto-stops a long take", async () => {
+  const { page, errors, requests } = await openDictationPage("/patients/p1/history", { dictation: true });
+  const side = page.getByRole("navigation", { name: "Patient" });
+  const record = side.getByRole("button", { name: "Record dictated note" });
+  await record.waitFor();
+
+  // Stop: tracks stopped, options carry the bitrate.
+  await record.click();
+  await side.getByRole("button", { name: "Stop" }).click();
+  await side.locator("audio").waitFor();
+  expect(await tracks(page)).toEqual({ opened: 1, stopped: 1 });
+  const opts = await page.evaluate(() => (window as any).__recorderOptions);
+  expect(opts.audioBitsPerSecond).toBe(32000);
+  expect(opts.bitsPerSecond).toBe(32000);
+  await side.getByRole("button", { name: "Discard" }).click();
+
+  // Size limit: 12 MB chunks pass 23 MB on the second one; recording stops by itself with a plain message.
+  await page.evaluate(() => { (window as any).__chunkBytes = 12 * 1024 * 1024; });
+  await record.click();
+  await side.getByText("Stopped at the size limit. Save this note and start another.").waitFor();
+  await side.getByRole("button", { name: "Save to this visit" }).waitFor();
+  expect(await tracks(page)).toEqual({ opened: 2, stopped: 2 });
+  await side.getByRole("button", { name: "Save to this visit" }).click();
+  await side.getByText("Saved to this visit.").waitFor();
+  expect(requests.filter((r) => r.method === "POST").length).toBe(1);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Dictation: a too-large response says so and offers no retry", async () => {
+  const { page, errors } = await openDictationPage("/patients/p1/history", { dictation: true }, undefined, { postStatus: 413 });
+  const side = page.getByRole("navigation", { name: "Patient" });
+  await side.getByRole("button", { name: "Record dictated note" }).click();
+  await side.getByRole("button", { name: "Stop" }).click();
+  await side.getByRole("button", { name: "Save to this visit" }).click();
+  await side.getByText("This recording is too large to save. Record a shorter note.").waitFor();
+  expect(await side.getByRole("button", { name: "Save to this visit" }).count()).toBe(0);
+  await side.getByRole("button", { name: "Record dictated note" }).waitFor();
+  expect(errors.filter((e) => !/413/.test(e))).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Dictation: a second click while the permission prompt is pending starts nothing more, and leaving the screen releases the microphone", async () => {
+  const { page } = await openDictationPage("/patients/p1/history", { dictation: true });
+  const side = page.getByRole("navigation", { name: "Patient" });
+  const record = side.getByRole("button", { name: "Record dictated note" });
+  await record.waitFor();
+  await page.evaluate(() => { (window as any).__gum.delay = 600; });
+  await record.click();
+  expect(await record.isDisabled()).toBe(true);
+  await record.click({ force: true, noWaitAfter: true, timeout: 500 }).catch(() => {});
+  // Leave before the prompt resolves: the stream that arrives late is stopped at once and no recorder starts.
+  await page.evaluate(() => { location.hash = "#/patients"; });
+  await page.waitForTimeout(1000);
+  expect(await page.evaluate(() => (window as any).__gum.calls)).toBe(1);
+  expect(await tracks(page)).toEqual({ opened: 1, stopped: 1 });
+  await page.close();
+}, 30_000);
+
+test("Dictation: leaving while recording stops the tracks, and a beforeunload warning is armed while a take is held", async () => {
+  const { page } = await openDictationPage("/patients/p1/history", { dictation: true });
+  const side = page.getByRole("navigation", { name: "Patient" });
+  await side.getByRole("button", { name: "Record dictated note" }).click();
+  await side.getByRole("timer").waitFor();
+  const prevented = () => page.evaluate(() => { const e = new Event("beforeunload", { cancelable: true }); window.dispatchEvent(e); return e.defaultPrevented; });
+  expect(await prevented()).toBe(true);
+  await page.evaluate(() => { location.hash = "#/patients"; });
+  await page.waitForTimeout(300);
+  expect(await tracks(page)).toEqual({ opened: 1, stopped: 1 });
+  expect(await prevented()).toBe(false);
   await page.close();
 }, 30_000);
 

@@ -33,6 +33,7 @@ services:
       - ../apps/api/src/db/migrations/017_held_staff_flag.sql:/docker-entrypoint-initdb.d/18-held-staff-flag.sql:ro
       - ../apps/api/src/db/migrations/018_prep_status.sql:/docker-entrypoint-initdb.d/19-prep-status.sql:ro
       - ../apps/api/src/db/migrations/019_visit_dictations.sql:/docker-entrypoint-initdb.d/20-visit-dictations.sql:ro
+      - ../apps/api/src/db/migrations/020_dictation_log_durable.sql:/docker-entrypoint-initdb.d/21-dictation-log-durable.sql:ro
       - ../apps/api/src/db/migrations/010_fact_spot_check.sql:/docker-entrypoint-initdb.d/11-fact-spot-check.sql:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U prelude -d prelude_dev"]

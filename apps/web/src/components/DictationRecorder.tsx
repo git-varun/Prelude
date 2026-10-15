@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { api, ApiError } from "../api/client";
-import { formatDuration, MAX_DICTATION_SECONDS, microphoneMessage, pickRecorderMime } from "../lib/dictation";
+import {
+  DICTATION_BITS_PER_SECOND, formatDuration, MAX_DICTATION_SECONDS, microphoneMessage, pickRecorderMime,
+  reachedSizeLimit, SIZE_LIMIT_MESSAGE, TOO_LARGE_MESSAGE,
+} from "../lib/dictation";
 import { usePane } from "./PaneContext";
 
 // AM-02 pilot: the oncologist's own dictated note, audio only. Renders nothing (and makes no request) unless the
@@ -12,7 +15,7 @@ export function DictationRecorder({ patientId }: { patientId: string }) {
   return <Recorder patientId={patientId} />;
 }
 
-type Phase = "idle" | "recording" | "recorded" | "saving";
+type Phase = "idle" | "starting" | "recording" | "recorded" | "saving";
 
 function Recorder({ patientId }: { patientId: string }) {
   const pane = usePane();
@@ -27,6 +30,18 @@ function Recorder({ patientId }: { patientId: string }) {
   const startedAt = useRef(0);
   const timer = useRef<ReturnType<typeof setInterval> | null>(null);
   const takeUrl = useRef<string | null>(null);
+  const mounted = useRef(true);
+  const recordedBytes = useRef(0);
+  const sizeStopped = useRef(false);
+  const holdingAudio = phase === "recording" || phase === "recorded" || phase === "saving";
+
+  // Closing the tab while recording or holding an unsaved take would lose the note.
+  useEffect(() => {
+    if (!holdingAudio) return;
+    const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ""; };
+    window.addEventListener("beforeunload", warn);
+    return () => window.removeEventListener("beforeunload", warn);
+  }, [holdingAudio]);
 
   function release() {
     if (timer.current) clearInterval(timer.current);
@@ -39,30 +54,58 @@ function Recorder({ patientId }: { patientId: string }) {
     takeUrl.current = null;
     setTake(null);
   }
-  useEffect(() => () => {
-    release();
-    if (recorder.current?.state === "recording") { recorder.current.onstop = null; recorder.current.stop(); }
-    if (takeUrl.current) URL.revokeObjectURL(takeUrl.current);
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+      if (recorder.current?.state === "recording") { recorder.current.onstop = null; recorder.current.stop(); }
+      release();
+      if (takeUrl.current) URL.revokeObjectURL(takeUrl.current);
+      takeUrl.current = null;
+    };
   }, []);
 
   async function start() {
+    if (phase !== "idle") return;
     setMessage(null);
     setSaved(false);
     if (typeof MediaRecorder === "undefined" || !navigator.mediaDevices?.getUserMedia) {
       setMessage("This browser cannot record audio.");
       return;
     }
+    setPhase("starting");
+    let acquired: MediaStream;
     try {
-      stream.current = await navigator.mediaDevices.getUserMedia({ audio: true });
+      acquired = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (err) {
-      setMessage(microphoneMessage(err));
+      if (mounted.current) { setMessage(microphoneMessage(err)); setPhase("idle"); }
       return;
     }
+    if (!mounted.current) {
+      // Left the screen while the permission prompt was open: release the microphone, start nothing.
+      acquired.getTracks().forEach((t) => t.stop());
+      return;
+    }
+    stream.current = acquired;
     try {
       const mime = pickRecorderMime();
-      const rec = new MediaRecorder(stream.current, mime ? { mimeType: mime } : undefined);
+      const rec = new MediaRecorder(acquired, {
+        ...(mime ? { mimeType: mime } : {}),
+        audioBitsPerSecond: DICTATION_BITS_PER_SECOND,
+        bitsPerSecond: DICTATION_BITS_PER_SECOND,
+      });
       chunks.current = [];
-      rec.ondataavailable = (e) => { if (e.data.size > 0) chunks.current.push(e.data); };
+      recordedBytes.current = 0;
+      sizeStopped.current = false;
+      rec.ondataavailable = (e) => {
+        if (e.data.size === 0) return;
+        chunks.current.push(e.data);
+        recordedBytes.current += e.data.size;
+        if (!sizeStopped.current && reachedSizeLimit(recordedBytes.current)) {
+          sizeStopped.current = true;
+          if (rec.state === "recording") rec.stop();
+        }
+      };
       rec.onstop = () => {
         const seconds = Math.min(MAX_DICTATION_SECONDS, Math.max(1, Math.round((Date.now() - startedAt.current) / 1000)));
         const blob = new Blob(chunks.current, { type: rec.mimeType || mime || "audio/webm" });
@@ -72,10 +115,11 @@ function Recorder({ patientId }: { patientId: string }) {
         setTake({ blob, seconds, url });
         setElapsed(seconds);
         setPhase("recorded");
+        if (sizeStopped.current) setMessage(SIZE_LIMIT_MESSAGE);
       };
       recorder.current = rec;
       startedAt.current = Date.now();
-      rec.start();
+      rec.start(1000);
       setElapsed(0);
       setPhase("recording");
       timer.current = setInterval(() => {
@@ -86,6 +130,7 @@ function Recorder({ patientId }: { patientId: string }) {
     } catch {
       release();
       setMessage("This browser cannot record audio.");
+      setPhase("idle");
     }
   }
 
@@ -94,6 +139,7 @@ function Recorder({ patientId }: { patientId: string }) {
   }
 
   function discard() {
+    release();
     dropTake();
     setElapsed(0);
     setMessage(null);
@@ -109,12 +155,21 @@ function Recorder({ patientId }: { patientId: string }) {
       const visit = visits[0];
       if (!visit) throw new Error("no visit");
       await api.recordDictation(visit.id, take.blob, take.seconds);
+      release();
       dropTake();
       setElapsed(0);
       setSaved(true);
       setPhase("idle");
       pane?.refresh();
     } catch (err) {
+      if (err instanceof ApiError && err.status === 413) {
+        // Retrying cannot help: drop the take and say so.
+        dropTake();
+        setElapsed(0);
+        setMessage(TOO_LARGE_MESSAGE);
+        setPhase("idle");
+        return;
+      }
       setMessage(err instanceof ApiError ? err.message : "The note could not be saved. Your recording is still here; try again.");
       setPhase("recorded");
     }
@@ -122,8 +177,8 @@ function Recorder({ patientId }: { patientId: string }) {
 
   return (
     <div className="dictation" aria-label="Dictated note">
-      {phase === "idle" && (
-        <button className="btn btn--ghost" type="button" onClick={() => void start()}>Record dictated note</button>
+      {(phase === "idle" || phase === "starting") && (
+        <button className="btn btn--ghost" type="button" disabled={phase === "starting"} onClick={() => void start()}>Record dictated note</button>
       )}
       {phase === "recording" && (
         <>

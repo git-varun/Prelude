@@ -68,7 +68,7 @@ export async function listVisitDictations(req: Request & { params: { id: string 
   return Response.json(rows.map((r: any) => ({ ...r, created_at: new Date(r.created_at).toISOString() })));
 }
 
-const NO_STORE = { "Cache-Control": "private, no-store", "Accept-Ranges": "bytes" };
+const NO_STORE = { "Cache-Control": "private, no-store", "Accept-Ranges": "bytes", "X-Content-Type-Options": "nosniff" };
 
 // GET /dictations/:id/audio -- writes the 'play' access-log row BEFORE any byte is streamed. A request for a file that
 // is missing from storage is a 404 and is not logged (nothing was played). Seek requests (Range) are requests too and

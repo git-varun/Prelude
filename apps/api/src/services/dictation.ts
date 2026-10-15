@@ -14,7 +14,7 @@ export function isDictationEnabledFor(
   flag: string | undefined = process.env.DICTATION_PILOT_USER_ID,
 ): boolean {
   if (!user || user.role !== "oncologist" || !flag) return false;
-  return flag.split(",").map((s) => s.trim()).filter(Boolean).includes(user.id);
+  return flag.split(",").map((s) => s.trim().toLowerCase()).filter(Boolean).includes(user.id.trim().toLowerCase());
 }
 
 /** The base mime type of a Content-Type value ("audio/webm;codecs=opus" -> "audio/webm"), if it is on the allowlist. */

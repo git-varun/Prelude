@@ -1,6 +1,6 @@
 import { test, expect, beforeAll, afterAll, spyOn } from "bun:test";
 import { resolve } from "node:path";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync } from "node:fs";
 import { sql } from "../db/client";
 import * as providerFactory from "../services/providerFactory";
 import { resolveLocalPath } from "../services/storage";
@@ -8,7 +8,14 @@ import { isDictationEnabledFor, allowedDictationMime, validDuration } from "../s
 import { recordDictation } from "./dictation";
 import { createTestUser, deleteTestUsers, createTestPatient, deleteTestPatients, asAuthedUser, requestWithCookie, type TestUser } from "../test-helpers";
 
-const PORT = 4200 + Math.floor(Math.random() * 300);
+// Free ports come from binding port 0 and reading what the OS chose.
+function freePort(): number {
+  const s = Bun.serve({ port: 0, fetch: () => new Response("") });
+  const port = s.port as number;
+  void s.stop(true);
+  return port;
+}
+const PORT = freePort();
 const BASE = `http://localhost:${PORT}`;
 const MISSING_ID = "00000000-0000-0000-0000-000000000000";
 
@@ -19,7 +26,7 @@ let otherOnc: TestUser;
 let patientId: string;
 let visitId: string;
 let flaglessServer: ReturnType<typeof Bun.spawn>;
-const FLAGLESS_PORT = PORT + 1000;
+const FLAGLESS_PORT = freePort();
 
 async function waitFor(base: string) {
   for (let i = 0; i < 50; i++) {
@@ -28,6 +35,7 @@ async function waitFor(base: string) {
     } catch {}
     await Bun.sleep(100);
   }
+  throw new Error(`API server at ${base} did not come up`);
 }
 
 const audio = (size = 2048) => new Uint8Array(size).fill(7);
@@ -57,8 +65,11 @@ beforeAll(async () => {
 afterAll(async () => {
   server?.kill();
   flaglessServer?.kill();
+  await Promise.all([server?.exited, flaglessServer?.exited]);
   const rows = await sql`SELECT file_ref FROM visit_dictations WHERE patient_id = ${patientId}`;
   for (const r of rows) await Bun.file(resolveLocalPath(r.file_ref)).delete().catch(() => {});
+  // The access log outlives recordings (ON DELETE RESTRICT), so test cleanup removes its rows explicitly.
+  await sql`DELETE FROM dictation_access_log WHERE dictation_id IN (SELECT id FROM visit_dictations WHERE patient_id = ${patientId})`;
   await sql`DELETE FROM visit_dictations WHERE patient_id = ${patientId}`;
   await sql`DELETE FROM audit_log WHERE entity_type = 'visit' AND entity_id = ${visitId}`;
   await deleteTestPatients(patientId);
@@ -76,6 +87,8 @@ test("isDictationEnabledFor: only an oncologist whose id is listed", () => {
   expect(isDictationEnabledFor(null, "u1")).toBe(false);
   expect(isDictationEnabledFor(o, "u1")).toBe(true);
   expect(isDictationEnabledFor(o, "u2, u1")).toBe(true);
+  expect(isDictationEnabledFor({ id: "ABC-1", role: "oncologist" }, "abc-1")).toBe(true);
+  expect(isDictationEnabledFor({ id: "abc-1", role: "oncologist" }, " ABC-1 ")).toBe(true);
 });
 
 test("mime allowlist ignores parameters; duration must be a whole number 1..1800", () => {
@@ -89,11 +102,21 @@ test("mime allowlist ignores parameters; duration must be a whole number 1..1800
 
 // ---- through the router ----
 
-test("auth/me: features.dictation is true only for the flagged oncologist", async () => {
-  const feat = async (cookie: string) => ((await (await fetch(`${BASE}/auth/me`, { headers: { cookie } })).json()) as any).features;
-  expect(await feat(onc.cookie)).toEqual({ dictation: true });
-  expect(await feat(otherOnc.cookie)).toEqual({ dictation: false });
-  expect(await feat(staff.cookie)).toEqual({ dictation: false });
+test("auth/me and login: `features` exists only for the flagged oncologist; everyone else gets no such key", async () => {
+  const me = async (cookie: string, base = BASE) => (await (await fetch(`${base}/auth/me`, { headers: { cookie } })).json()) as any;
+  expect((await me(onc.cookie)).features).toEqual({ dictation: true });
+  for (const cookie of [otherOnc.cookie, staff.cookie]) {
+    const body = await me(cookie);
+    expect("features" in body).toBe(false);
+    expect(JSON.stringify(body)).not.toContain("dictat");
+  }
+  expect("features" in (await me(onc.cookie, `http://localhost:${FLAGLESS_PORT}`))).toBe(false);
+  const login = async (u: TestUser) => {
+    const [{ email }] = await sql`SELECT email FROM users WHERE id = ${u.id}`;
+    return (await (await fetch(`${BASE}/auth/login`, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password: "test-password" }) })).json()) as any;
+  };
+  expect((await login(onc)).features).toEqual({ dictation: true });
+  expect("features" in (await login(staff))).toBe(false);
 });
 
 test("routes: no session 401; staff and other oncologists 404 (never 403); flag off 404 even for the oncologist", async () => {
@@ -168,6 +191,7 @@ test("audio: streams with content type and no-store, logs one 'play' per request
   expect(res.status).toBe(200);
   expect(res.headers.get("content-type")).toBe("audio/webm");
   expect(res.headers.get("cache-control")).toBe("private, no-store");
+  expect(res.headers.get("x-content-type-options")).toBe("nosniff");
   expect((await res.arrayBuffer()).byteLength).toBe(2048);
   expect(await plays()).toBe(1);
   expect((await (await get()).arrayBuffer()).byteLength).toBe(2048);
@@ -212,6 +236,64 @@ test("visits list: dictated_note_seconds only for the flagged oncologist; staff 
   }
 });
 
+test("post-blob size check: a chunked body without Content-Length over the cap is 413 and stores nothing", async () => {
+  const chunk = new Uint8Array(1024 * 1024).fill(3);
+  let sent = 0;
+  const body = new ReadableStream<Uint8Array>({
+    pull(c) {
+      if (sent > 25) return c.close();
+      sent++;
+      c.enqueue(chunk);
+    },
+  });
+  const res = await fetch(`${BASE}/visits/${visitId}/dictation?duration_seconds=5`, {
+    method: "POST",
+    headers: { cookie: onc.cookie, "content-type": "audio/webm" },
+    body,
+    duplex: "half",
+  } as RequestInit);
+  expect(res.status).toBe(413);
+  const [{ count }] = await sql`SELECT count(*)::int FROM visit_dictations WHERE visit_id = ${visitId} AND size_bytes > 25 * 1024 * 1024`;
+  expect(count).toBe(0);
+});
+
+const dictationDir = () => resolveLocalPath(`local://dictations/${visitId}`);
+const filesInDir = () => (existsSync(dictationDir()) ? readdirSync(dictationDir()).length : 0);
+
+test("a failed access-log insert prevents streaming, and a DB failure after the file is stored removes the file", async () => {
+  await sql`
+    CREATE OR REPLACE FUNCTION test_fail_dictation_log() RETURNS trigger AS $$ BEGIN RAISE EXCEPTION 'forced log failure'; END; $$ LANGUAGE plpgsql`;
+  await sql`CREATE TRIGGER test_fail_dictation_log BEFORE INSERT ON dictation_access_log FOR EACH ROW EXECUTE FUNCTION test_fail_dictation_log()`;
+  try {
+    const before = filesInDir();
+    const dictationsBefore = (await sql`SELECT 1 FROM visit_dictations WHERE visit_id = ${visitId}`).length;
+    // Recording: the transaction rolls back and the stored file is removed.
+    const rec = await post(onc.cookie, { seconds: "4" });
+    expect(rec.status).toBeGreaterThanOrEqual(500);
+    expect(filesInDir()).toBe(before);
+    expect((await sql`SELECT 1 FROM visit_dictations WHERE visit_id = ${visitId}`).length).toBe(dictationsBefore);
+    // Playing: no bytes are streamed when the log row cannot be written.
+    const play = await fetch(`${BASE}/dictations/${firstId}/audio`, { headers: { cookie: onc.cookie } });
+    expect(play.status).toBeGreaterThanOrEqual(500);
+    expect(play.headers.get("content-type") ?? "").not.toContain("audio/");
+    expect((await play.arrayBuffer()).byteLength).toBeLessThan(2048);
+  } finally {
+    await sql`DROP TRIGGER IF EXISTS test_fail_dictation_log ON dictation_access_log`;
+    await sql`DROP FUNCTION IF EXISTS test_fail_dictation_log()`;
+  }
+});
+
+test("the access log outlives recordings: deleting a dictation or its visit with log rows fails", async () => {
+  expect((await sql`SELECT 1 FROM dictation_access_log WHERE dictation_id = ${firstId}`).length).toBeGreaterThan(0);
+  const fails = async (run: () => Promise<unknown>) => {
+    try { await run(); } catch { return true; }
+    return false;
+  };
+  expect(await fails(async () => { await sql`DELETE FROM visit_dictations WHERE id = ${firstId}`; })).toBe(true);
+  expect(await fails(async () => { await sql`DELETE FROM visits WHERE id = ${visitId}`; })).toBe(true);
+  expect((await sql`SELECT 1 FROM visit_dictations WHERE id = ${firstId}`).length).toBe(1);
+});
+
 // ---- no transcription ----
 
 test("recording calls no OCR, extraction or LLM provider", async () => {
@@ -238,6 +320,14 @@ test("recording calls no OCR, extraction or LLM provider", async () => {
     if (prev === undefined) delete process.env.DICTATION_PILOT_USER_ID;
     else process.env.DICTATION_PILOT_USER_ID = prev;
   }
+});
+
+test("migration 020 is applied: both foreign keys are ON DELETE RESTRICT", async () => {
+  const r = await sql`
+    SELECT conrelid::regclass::text AS tbl, confdeltype FROM pg_constraint
+    WHERE conname IN ('dictation_access_log_dictation_id_fkey', 'visit_dictations_visit_id_fkey')`;
+  expect(r.length).toBe(2);
+  for (const c of r) expect(c.confdeltype).toBe("r");
 });
 
 test("migration 019 is applied: both tables and the visit index exist", async () => {

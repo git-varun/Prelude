@@ -5,7 +5,7 @@ import { formatDuration } from "../lib/dictation";
 import { usePane } from "./PaneContext";
 
 // One native player for a recording. preload="none": nothing is requested (so nothing is logged) until Play.
-export function DictationAudio({ dictationId, autoPlay }: { dictationId: string; autoPlay?: boolean }) {
+export function DictationAudio({ dictationId }: { dictationId: string }) {
   const [src, setSrc] = useState<string | null>(null);
   useEffect(() => {
     let live = true;
@@ -13,7 +13,7 @@ export function DictationAudio({ dictationId, autoPlay }: { dictationId: string;
     return () => { live = false; };
   }, [dictationId]);
   if (!src) return null;
-  return <audio controls preload="none" autoPlay={autoPlay} src={src} aria-label="Dictated note" />;
+  return <audio controls preload="none" src={src} aria-label="Dictated note" />;
 }
 
 // The visit's dictated notes (AM-02), on the Snapshot header area. Renders nothing, and requests nothing, unless

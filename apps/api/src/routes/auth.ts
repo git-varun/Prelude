@@ -2,6 +2,8 @@ import { sql } from "../db/client";
 import { isDictationEnabledFor } from "../services/dictation";
 import { createSession, destroySession, sessionCookieHeader, clearedCookieHeader, getAuthedUser, jsonError } from "../middleware/auth";
 
+const featuresFor = (u: { id: string; role: string }) => (isDictationEnabledFor(u) ? { features: { dictation: true } } : {});
+
 interface LoginBody {
   email?: string;
   password?: string;
@@ -70,7 +72,7 @@ export async function login(req: Request): Promise<Response> {
   clearAttempts(email);
   const { token, expiresAt } = await createSession(row.id);
   return Response.json(
-    { id: row.id, name: row.name, email: row.email, role: row.role, features: { dictation: isDictationEnabledFor(row) } },
+    { id: row.id, name: row.name, email: row.email, role: row.role, ...featuresFor(row) },
     { status: 200, headers: { "Set-Cookie": sessionCookieHeader(token, expiresAt) } },
   );
 }
@@ -93,6 +95,7 @@ export async function me(req: Request): Promise<Response> {
   if (!user) {
     return jsonError(401, "unauthenticated", "Sign in required.");
   }
-  // M3-13: `features.dictation` is true only for the one flagged oncologist.
-  return Response.json({ ...user, features: { dictation: isDictationEnabledFor(user) } });
+  // M3-13: `features` is present only for the one flagged oncologist; for everyone else the key is absent, so the
+  // existence of the feature is not visible.
+  return Response.json({ ...user, ...featuresFor(user) });
 }

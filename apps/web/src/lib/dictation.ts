@@ -19,3 +19,16 @@ export function microphoneMessage(err: unknown): string {
   if (name === "NotFoundError" || name === "OverconstrainedError") return "No microphone was found on this device.";
   return "The microphone could not be started.";
 }
+
+/** 32 kbps speech audio: 30 minutes is about 7 MB, well under the 25 MB server cap. */
+export const DICTATION_BITS_PER_SECOND = 32000;
+/** Recording stops by itself near this size, leaving headroom under the server's 25 MB cap. */
+export const DICTATION_SOFT_LIMIT_BYTES = 23 * 1024 * 1024;
+
+/** True once the recorded chunks together reach the soft size limit. */
+export function reachedSizeLimit(totalBytes: number, limit: number = DICTATION_SOFT_LIMIT_BYTES): boolean {
+  return totalBytes >= limit;
+}
+
+export const SIZE_LIMIT_MESSAGE = "Stopped at the size limit. Save this note and start another.";
+export const TOO_LARGE_MESSAGE = "This recording is too large to save. Record a shorter note.";

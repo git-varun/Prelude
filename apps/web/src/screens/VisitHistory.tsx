@@ -1,29 +1,49 @@
-import { useEffect, useState } from "react";
-import { api, ApiError, type OutsideEncounterEntry, type VisitHistoryEntry } from "../api/client";
+import { useEffect, useRef, useState } from "react";
+import { api, ApiError, dictationAudioUrl, type DictationEntry, type OutsideEncounterEntry, type VisitHistoryEntry } from "../api/client";
 import { navigate } from "../router";
 import { ElsewhereTag } from "../components/SummaryBits";
 import { useAuth } from "../auth/AuthContext";
-import { DictationAudio } from "../components/DictationNotes";
 import { formatDuration } from "../lib/dictation";
 
-// AM-02: the tag and an inline play button. Play looks up the visit's newest note, then mounts the player, so
-// nothing is requested from the audio endpoint (and nothing is logged) until the oncologist asks.
+// AM-02: one note with its own Play button. The audio element exists (preload="none", so nothing is requested or
+// logged yet) and Play calls play() straight from the click, with no await in between.
+function NoteRow({ note }: { note: DictationEntry }) {
+  const [src, setSrc] = useState<string | null>(null);
+  const audio = useRef<HTMLAudioElement>(null);
+  useEffect(() => {
+    let live = true;
+    void dictationAudioUrl(note.id).then((u) => live && setSrc(u)).catch(() => {});
+    return () => { live = false; };
+  }, [note.id]);
+  return (
+    <span className="dictation-notes__row">
+      <span>Dictated note {formatDuration(note.duration_seconds)}</span>
+      <span className="muted">{new Date(note.created_at).toLocaleString([], { dateStyle: "medium", timeStyle: "short" })}</span>
+      <button className="btn btn--ghost" type="button" disabled={!src} onClick={() => void audio.current?.play().catch(() => {})}>Play</button>
+      {src && <audio ref={audio} controls preload="none" src={src} aria-label="Dictated note" />}
+    </span>
+  );
+}
+
+// The tag shows the newest note's length. The list of ALL the visit's notes is fetched only when "Notes" is clicked.
 function DictatedNoteTag({ visitId, seconds }: { visitId: string; seconds: number }) {
-  const [noteId, setNoteId] = useState<string | null>(null);
+  const [notes, setNotes] = useState<DictationEntry[] | null>(null);
   const [failed, setFailed] = useState(false);
-  function play() {
+  function open() {
+    if (notes) return setNotes(null);
     setFailed(false);
-    api.listVisitDictations(visitId).then((n) => (n[0] ? setNoteId(n[0].id) : setFailed(true))).catch(() => setFailed(true));
+    api.listVisitDictations(visitId).then(setNotes).catch(() => setFailed(true));
   }
   return (
     <>
       <span className="tag">Dictated note {formatDuration(seconds)}</span>
-      {noteId ? (
-        <DictationAudio dictationId={noteId} autoPlay />
-      ) : (
-        <button className="btn btn--ghost" type="button" onClick={play}>Play note</button>
+      <button className="btn btn--ghost" type="button" aria-expanded={!!notes} onClick={open}>Notes</button>
+      {failed && <span className="muted">The notes could not be loaded.</span>}
+      {notes && (
+        <span className="dictation-notes">
+          {notes.map((n) => <NoteRow key={n.id} note={n} />)}
+        </span>
       )}
-      {failed && <span className="muted">The note could not be loaded.</span>}
     </>
   );
 }
