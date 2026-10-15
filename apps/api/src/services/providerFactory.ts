@@ -2,6 +2,7 @@ import type { ExtractionProvider, OcrProvider } from "@prelude/shared";
 import { AzureDocIntelligenceProvider } from "./ocr/azureDocIntelligence";
 import { GoogleDocumentAiProvider } from "./ocr/googleDocumentAi";
 import { AnthropicExtractionProvider } from "./extraction/anthropicExtraction";
+import { BedrockExtractionProvider } from "./extraction/bedrockExtraction";
 import { GeminiExtractionProvider } from "./extraction/geminiExtraction";
 import { DeterministicExtractionProvider } from "./extraction/deterministic/provider";
 
@@ -62,6 +63,23 @@ function buildExtractionProvider(): ExtractionProvider {
     return new AnthropicExtractionProvider(apiKey);
   }
 
+  if (providerName === "bedrock") {
+    // Patient text must never leave India: pin the region and the model's inference profile at startup. A `global.`
+    // or `us.` profile (or a bare model id) would route to commercial regions elsewhere. No API key: the AWS
+    // default credential chain supplies credentials (instance role in production).
+    const region = process.env.AWS_REGION;
+    const model = process.env.EXTRACTION_MODEL;
+    if (region !== "ap-south-1" && region !== "ap-south-2") {
+      throw new Error(`AWS_REGION must be ap-south-1 or ap-south-2 for EXTRACTION_PROVIDER=bedrock (got ${region ? `'${region}'` : "nothing"}).`);
+    }
+    if (!model || !model.startsWith("in.anthropic.")) {
+      throw new Error(
+        `EXTRACTION_MODEL must start with 'in.anthropic.' (the India inference profile, e.g. in.anthropic.claude-sonnet-5) for EXTRACTION_PROVIDER=bedrock (got ${model ? `'${model}'` : "nothing"}).`,
+      );
+    }
+    return new BedrockExtractionProvider(region, model);
+  }
+
   if (providerName === "gemini") {
     // Decisions Log, "Staging/production hosting": Gemini on the live
     // server is scoped to pilot-testing the pipeline against Varun's own
@@ -83,9 +101,9 @@ function buildExtractionProvider(): ExtractionProvider {
   }
 
   if (providerName === undefined) {
-    throw new Error("EXTRACTION_PROVIDER is not set. Expected 'anthropic' or 'gemini'.");
+    throw new Error("EXTRACTION_PROVIDER is not set. Expected 'bedrock', 'anthropic' or 'gemini'.");
   }
-  throw new Error(`Unrecognized EXTRACTION_PROVIDER: ${providerName}. Expected 'anthropic' or 'gemini'.`);
+  throw new Error(`Unrecognized EXTRACTION_PROVIDER: ${providerName}. Expected 'bedrock', 'anthropic' or 'gemini'.`);
 }
 
 let cachedDeterministicProvider: ExtractionProvider | undefined;
