@@ -1,37 +1,45 @@
+@import "@fontsource/archivo/latin-400.css";
+@import "@fontsource/archivo/latin-600.css";
+@import "@fontsource/archivo/latin-800.css";
+
 :root {
   --color-bg: #f7f4ec;
   --color-surface: #ffffff;
   --color-surface-sunken: #f1ede2;
   --color-border: #e4dfd1;
+  /* Section and group rules: stronger than a row hairline (design handoff: 2px section rules). */
+  --color-rule: #bdb6a3;
   --color-text: #262220;
-  --color-text-muted: #6f6a5e;
-  --color-accent: #bf5b3d;
-  --color-accent-hover: #a54c31;
+  /* 4.6:1 or better on the page background and on the sunken fill. */
+  --color-text-muted: #66614f;
+  /* Accent fills and accent-coloured text: 5.7:1 against white, 5.2:1 against the page background,
+     4.6:1 against --color-accent-soft (the previous #bf5b3d was 4.0:1 as text). */
+  --color-accent: #a54c31;
+  --color-accent-hover: #8f4028;
   --color-accent-soft: #f3e3da;
   --color-role-staff: #3f6e63;
   --color-role-staff-soft: #e2ede9;
-  --color-role-oncologist: #bf5b3d;
+  --color-role-oncologist: #a54c31;
   --color-role-oncologist-soft: #f3e3da;
   --color-danger: #a13d2e;
   --color-success: #3f6e63;
   /* Out-of-reference-range indicator only — a muted ochre neutral, deliberately distinct
      from --color-accent (terracotta) and --color-danger (red): the Decisions Log's clinical
-     input is explicit that this indicator must never read as a clinical alarm. */
-  --color-range-flag: #8a6d2e;
+     input is explicit that this indicator must never read as a clinical alarm. 5.0:1 on its soft fill. */
+  --color-range-flag: #7a5f22;
   --color-range-flag-soft: #f1e9d6;
   /* Trend chart line/dots only — a neutral slate, deliberately not --color-success
      or --color-danger: a value's trajectory carries no good/bad judgment here. */
   --color-chart-line: #5b6472;
 
-  --radius-sm: 6px;
-  --radius-md: 10px;
-  --radius-lg: 16px;
+  --radius-sm: 2px;
+  --radius-md: 4px;
+  --radius-lg: 4px;
   --shadow-sm: 0 1px 2px rgba(38, 34, 32, 0.06);
   --shadow-md: 0 4px 16px rgba(38, 34, 32, 0.08);
 
-  --font-sans:
-    -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-  --font-serif: "Iowan Old Style", "Palatino Linotype", Georgia, serif;
+  --font-sans: "Archivo", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --font-heading: var(--font-sans);
 
   --space-1: 4px;
   --space-2: 8px;
@@ -64,21 +72,34 @@ body {
 
 h1,
 h2,
-h3 {
-  font-family: var(--font-serif);
-  font-weight: 600;
+h3,
+h4,
+h5,
+h6 {
+  font-family: var(--font-heading);
+  font-weight: 800;
+  line-height: 1.15;
+  letter-spacing: -0.015em;
   margin: 0 0 var(--space-2);
   color: var(--color-text);
 }
 
 h1 {
-  font-size: 26px;
+  font-size: 30px;
 }
 h2 {
-  font-size: 20px;
+  font-size: 22px;
 }
 h3 {
-  font-size: 16px;
+  font-size: 17px;
+}
+
+/* Small caps-style labels (design handoff: 11-12px uppercase, 0.08em tracking). */
+h6 {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
 }
 
 p {
@@ -91,7 +112,8 @@ a {
 
 button,
 input,
-select {
+select,
+textarea {
   font-family: inherit;
   font-size: inherit;
 }
@@ -110,13 +132,14 @@ select {
   justify-content: space-between;
   padding: var(--space-3) var(--space-5);
   background: var(--color-surface);
-  border-bottom: 1px solid var(--color-border);
+  border-bottom: 2px solid var(--color-rule);
 }
 
 .app-header__brand {
-  font-family: var(--font-serif);
-  font-size: 18px;
-  font-weight: 600;
+  font-family: var(--font-heading);
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: -0.015em;
   color: var(--color-text);
   display: flex;
   align-items: baseline;
@@ -149,7 +172,7 @@ select {
   display: inline-flex;
   align-items: center;
   padding: 2px 10px;
-  border-radius: 999px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
   font-weight: 600;
   letter-spacing: 0.02em;
@@ -172,8 +195,12 @@ select {
   background: var(--color-surface);
   border: 1px solid var(--color-border);
   border-radius: var(--radius-lg);
-  box-shadow: var(--shadow-sm);
-  padding: var(--space-5);
+  padding: var(--space-4) var(--space-5);
+}
+
+/* Rows that sit directly on the page between rules (Summary, History, Plan, delta rows): no box, no fill. */
+.rows {
+  border-top: 1px solid var(--color-border);
 }
 
 .card[aria-current="true"] {
@@ -248,7 +275,8 @@ select {
 .fact-value {
   font-size: 22px;
   font-weight: 600;
-  font-family: var(--font-serif);
+  font-family: var(--font-heading);
+  font-variant-numeric: tabular-nums;
 }
 
 /* Value + its out-of-range flag as aligned flex siblings, not inline text --
@@ -313,7 +341,8 @@ select {
 }
 
 .delta-row__value {
-  font-family: var(--font-serif);
+  font-family: var(--font-heading);
+  font-variant-numeric: tabular-nums;
   font-weight: 600;
 }
 
@@ -341,8 +370,16 @@ select {
   transition: background-color 0.15s ease, border-color 0.15s ease;
 }
 
+/* Buttons never wrap (design handoff). */
+.btn {
+  white-space: nowrap;
+}
+
+/* Disabled reads as "not available yet", not as a faded live button: neutral fill, muted text, no hover. */
 .btn:disabled {
-  opacity: 0.5;
+  background: var(--color-surface-sunken);
+  border-color: var(--color-border);
+  color: var(--color-text-muted);
   cursor: not-allowed;
 }
 
@@ -351,13 +388,18 @@ select {
   color: #fff;
 }
 
+.btn--primary:disabled {
+  background: var(--color-surface-sunken);
+  color: var(--color-text-muted);
+}
+
 .btn--primary:hover:not(:disabled) {
   background: var(--color-accent-hover);
 }
 
 .btn--secondary {
   background: var(--color-surface);
-  border-color: var(--color-border);
+  border-color: var(--color-rule);
   color: var(--color-text);
 }
 
@@ -373,6 +415,19 @@ select {
 
 .btn--ghost:hover:not(:disabled) {
   color: var(--color-text);
+}
+
+.btn--ghost:disabled {
+  background: transparent;
+  border-color: transparent;
+}
+
+.btn:focus-visible,
+a:focus-visible,
+summary:focus-visible,
+[role="button"]:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
 }
 
 /* Forms */
@@ -459,6 +514,7 @@ select {
 /* Today (M3-09): groups by state, rows are name + change summary | sparkline | tag. */
 .today {
   max-width: 1200px;
+  margin: 0 auto;
 }
 
 .today-group {
@@ -546,27 +602,33 @@ select {
 
 /* Tags for markers / document status */
 
+/* Three tag types: neutral (default), accent (needs the reader's attention) and outline. The out-of-range
+   flag keeps its own muted ochre (Decisions Log: never an alarm colour). */
 .tag {
   display: inline-flex;
   align-items: center;
-  padding: 2px 9px;
-  border-radius: 999px;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
   font-size: 12px;
+  line-height: 1.4;
+  white-space: nowrap;
   background: var(--color-surface-sunken);
   color: var(--color-text-muted);
   border: 1px solid var(--color-border);
 }
 
+.tag--accent,
 .tag--custom {
   background: var(--color-accent-soft);
   color: var(--color-accent);
   border-color: transparent;
 }
 
+.tag--outline,
 .tag--pending {
-  background: var(--color-role-staff-soft);
-  color: var(--color-role-staff);
-  border-color: transparent;
+  background: transparent;
+  color: var(--color-text);
+  border-color: var(--color-rule);
 }
 
 .tag--range-flag {
@@ -1119,4 +1181,477 @@ select {
   flex-wrap: wrap;
   align-items: center;
   gap: var(--space-3);
+}
+
+/* ---------------------------------------------------------------------------------------------
+   Design-handoff pass: section rules, Snapshot fact rows, segmented control, tabs, journey strip.
+   Flush-left rows between rules; boxes only where there is something to edit.
+   --------------------------------------------------------------------------------------------- */
+
+.section-title {
+  margin: 0 0 var(--space-3);
+  padding-bottom: var(--space-2);
+  border-bottom: 2px solid var(--color-rule);
+}
+
+.snapshot-section {
+  margin-bottom: var(--space-6);
+}
+
+.section-heading {
+  align-items: center;
+  margin-bottom: 0;
+  padding-bottom: var(--space-2);
+  border-bottom: 2px solid var(--color-rule);
+}
+
+.section-heading .section-title {
+  padding: 0;
+  border: 0;
+}
+
+.snapshot-heading {
+  align-items: flex-end;
+  margin-bottom: var(--space-5);
+}
+
+.snapshot-heading h1 {
+  margin-bottom: var(--space-1);
+}
+
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  border: 0;
+}
+
+.how-ordered {
+  margin-top: var(--space-3);
+}
+
+.fold {
+  margin-top: var(--space-4);
+}
+
+.fold > .btn--ghost {
+  padding-left: 0;
+}
+
+.delta-row__name {
+  flex: 1 1 0;
+}
+
+.delta-row__value {
+  flex: 0 0 160px;
+}
+
+/* Segmented control (compare with, history tabs): one outlined group, the pressed option filled. */
+.seg {
+  display: inline-flex;
+  border: 1px solid var(--color-rule);
+  border-radius: var(--radius-md);
+  overflow: hidden;
+}
+
+.seg__opt {
+  border: 0;
+  background: var(--color-surface);
+  color: var(--color-text);
+  padding: 7px 12px;
+  font-size: 13px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.seg__opt + .seg__opt {
+  border-left: 1px solid var(--color-rule);
+}
+
+.seg__opt:hover:not([aria-pressed="true"]):not([aria-selected="true"]) {
+  background: var(--color-surface-sunken);
+}
+
+.seg__opt[aria-pressed="true"],
+.seg__opt[aria-selected="true"] {
+  background: var(--color-accent);
+  color: #fff;
+  font-weight: 600;
+}
+
+.seg__opt:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: -2px;
+}
+
+/* Snapshot fact row: checkbox | title, value, meta | rule tag, tags, action. */
+.fact-row {
+  display: grid;
+  grid-template-columns: 20px minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--space-3);
+  padding: 16px 0;
+  border-bottom: 1px solid var(--color-border);
+}
+
+.fact-row:hover {
+  background: color-mix(in srgb, var(--color-text) 4%, transparent);
+}
+
+.snapshot-field--selected .fact-row {
+  background: var(--color-accent-soft);
+}
+
+.fact-row--signed {
+  opacity: 0.75;
+}
+
+.fact-row__lead input {
+  width: 18px;
+  height: 18px;
+  margin: 3px 0 0;
+  accent-color: var(--color-accent);
+}
+
+.fact-row__line {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+}
+
+.fact-row__title {
+  margin: 0;
+  font-size: 16px;
+}
+
+.fact-row__value {
+  font-size: 22px;
+  font-weight: 800;
+  letter-spacing: -0.01em;
+  font-variant-numeric: tabular-nums;
+}
+
+.fact-row__value--missing {
+  color: var(--color-text-muted);
+}
+
+.fact-row__unit {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
+.fact-row__meta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-1) var(--space-3);
+  margin-top: var(--space-1);
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.fact-row__meta .source-link {
+  padding: 1px 8px;
+}
+
+.fact-row__aside {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: var(--space-2);
+  min-width: 150px;
+  text-align: right;
+}
+
+.fact-row__aside .rule-tag {
+  margin: 0;
+}
+
+.fact-row__tags {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+}
+
+.fact-row__blocked {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.fact-row .fact-correction,
+.fact-row .fact-trend {
+  margin-top: var(--space-2);
+}
+
+.fact-trend summary {
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--color-text-muted);
+  list-style: none;
+}
+
+.fact-trend summary::-webkit-details-marker {
+  display: none;
+}
+
+.fact-trend summary::before {
+  content: "▸ ";
+}
+
+.fact-trend[open] summary::before {
+  content: "▾ ";
+}
+
+.fact-trend .card {
+  margin-top: var(--space-2);
+  border-left: 0;
+  border-right: 0;
+  border-radius: 0;
+  padding-left: 0;
+}
+
+.fact-correction__grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+  margin-top: var(--space-3);
+}
+
+.fact-action {
+  margin-top: var(--space-4);
+}
+
+.source-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Rows that sit on the page between rules. */
+.rows > .delta-row,
+.rows > .plan-row,
+.rows > .summary-row,
+.rows > .summary-prescription {
+  padding-left: 0;
+  padding-right: 0;
+}
+
+.delta-row {
+  border-bottom: 1px solid var(--color-border);
+}
+
+.delta-row + .delta-row,
+.plan-row + .plan-row,
+.summary-row + .summary-row,
+.summary-prescription + .summary-prescription {
+  border-top: 0;
+}
+
+.plan-row,
+.summary-row,
+.summary-prescription {
+  border-bottom: 1px solid var(--color-border);
+}
+
+/* Summary / Plan section titles: the same label-over-2px-rule as the Snapshot. */
+.summary-section > h2 {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  border-bottom: 2px solid var(--color-rule);
+}
+
+.summary-section > .rows,
+.summary-section > .card.rows {
+  border: 0;
+  border-radius: 0;
+  background: transparent;
+  box-shadow: none;
+}
+
+.today-group__title {
+  border-bottom-color: var(--color-rule);
+}
+
+/* History: tabs and the journey strip. */
+.journey {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  border-top: 2px solid var(--color-rule);
+  border-bottom: 2px solid var(--color-rule);
+  margin-bottom: var(--space-5);
+}
+
+.journey__cell {
+  padding: var(--space-3) var(--space-3) var(--space-3) 0;
+  min-width: 0;
+}
+
+.journey__cell + .journey__cell {
+  padding-left: var(--space-3);
+  border-left: 1px solid var(--color-border);
+}
+
+.journey__date {
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.journey__text {
+  margin: var(--space-1) 0;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+
+.visit-row {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr);
+  gap: var(--space-4);
+  padding: var(--space-4) 0;
+  border-bottom: 1px solid var(--color-border);
+  align-items: baseline;
+}
+
+.visit-row__date {
+  font-weight: 800;
+}
+
+.visit-row__tags {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--space-2);
+  margin-top: var(--space-2);
+}
+
+.patient-shell__back {
+  display: block;
+  margin-bottom: var(--space-3);
+  font-size: 13px;
+  color: var(--color-text-muted);
+  text-decoration: none;
+}
+
+.patient-shell__back:hover {
+  color: var(--color-accent);
+}
+
+.doc-pane__rail-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--color-text);
+}
+
+a.app-header__brand {
+  text-decoration: none;
+}
+
+.today-row__counts {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+@media (max-width: 700px) {
+  .fact-row {
+    grid-template-columns: 20px minmax(0, 1fr);
+  }
+
+  .fact-row__aside {
+    grid-column: 2;
+    align-items: flex-start;
+    text-align: left;
+    min-width: 0;
+  }
+
+  .fact-row__tags {
+    justify-content: flex-start;
+  }
+
+  .fact-correction__grid {
+    grid-template-columns: 1fr;
+  }
+
+  .delta-row {
+    flex-direction: column;
+    align-items: flex-start;
+  }
+
+  .delta-row__meta {
+    justify-content: flex-start;
+  }
+
+  .visit-row {
+    grid-template-columns: 1fr;
+    gap: var(--space-1);
+  }
+
+  .today-row {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .today-row__tag {
+    justify-self: start;
+  }
+}
+
+/* Visits elsewhere keep their dashed rule (AM-03) whatever row layout carries it. */
+.is-elsewhere,
+.rows > .is-elsewhere {
+  border-bottom: 1px dashed var(--color-text-muted);
+}
+
+/* Reprocess (failed OCR / extraction): the explanation, the action and any message on one wrapping line. */
+.reprocess {
+  display: inline-flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+}
+
+.reprocess__message {
+  font-size: 13px;
+  color: var(--color-text);
+}
+
+/* Conflict: two equal columns (no sibling-card offset), the value at reading size. */
+.conflict-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: var(--space-4);
+}
+
+.conflict-grid > .card {
+  margin-top: 0;
+}
+
+.conflict-value {
+  font-size: 36px;
+  font-weight: 800;
+  line-height: 1.1;
+  letter-spacing: -0.015em;
+  font-variant-numeric: tabular-nums;
+  margin: var(--space-2) 0 var(--space-3);
+}
+
+.conflict-value .muted {
+  font-size: 16px;
+  font-weight: 400;
+}
+
+@media (max-width: 700px) {
+  .conflict-grid {
+    grid-template-columns: 1fr;
+  }
 }

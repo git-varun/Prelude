@@ -5,6 +5,7 @@ import { flagForRange } from "../lib/referenceRange";
 import { navigate } from "../router";
 import { FactCheck } from "./FactCheck";
 import { usePane } from "./PaneContext";
+import { FileTextIcon } from "./icons";
 import { ElsewhereTag } from "./SummaryBits";
 
 const RANGE_FLAG_LABEL: Record<"above" | "below", string> = {
@@ -42,6 +43,18 @@ const FIELD_LABELS: Record<string, string> = {
   lesion_size: "Lesion size",
 };
 
+const CHECK_LABELS: Record<ReviewFact["check_state"], string> = {
+  correct: "staff checked",
+  unchecked: "not yet checked by staff",
+  incorrect: "marked incorrect by staff",
+};
+
+const SOURCE_LEVEL_LABELS: Record<ReviewFact["fallback_level"], string> = {
+  exact: "source exact",
+  page: "source page",
+  document: "source document",
+};
+
 interface Props {
   fact: ReviewFact;
   trackedMarkers: TrackedMarker[];
@@ -52,9 +65,19 @@ interface Props {
   check?: { active: boolean; open: boolean; onOpenChange: (open: boolean) => void; onChecked?: () => void };
   /** Called after this card's own Sign off succeeds (the Snapshot shows its Undo toast from it). */
   onSignedOff?: (factId: string) => void;
+  /** "row" is the Snapshot's fact row (checkbox | title, value, meta | tags and action); "card" is the default. */
+  variant?: "card" | "row";
+  /** Row only: the batch checkbox column. */
+  lead?: ReactNode;
+  /** Row only: the AM-05 rule tag shown above the row's tags. */
+  ruleTag?: ReactNode;
+  /** Row only: extra content under the meta line (e.g. the lazily loaded trend chart). */
+  below?: ReactNode;
+  /** Row only: why this fact cannot be signed off right now (AM-01 wording); shown in place of the Sign off button. */
+  blockedReason?: string | null;
 }
 
-export function FactCard({ fact, trackedMarkers, onChanged, badge, check, onSignedOff }: Props) {
+export function FactCard({ fact, trackedMarkers, onChanged, badge, check, onSignedOff, variant = "card", lead, ruleTag, below, blockedReason }: Props) {
   const [value, setValue] = useState(fact.value ?? "");
   const [markerId, setMarkerId] = useState("");
   const [customName, setCustomName] = useState("");
@@ -94,41 +117,261 @@ export function FactCard({ fact, trackedMarkers, onChanged, badge, check, onSign
           : fact.excluded_at
             ? "Excluded from this document"
             : null;
+  const flag = flagForRange(fact.value, fact.reference_range);
+
+  const viewSource = fact.document_id ? (
+    <button
+      className="btn btn--ghost source-link"
+      type="button"
+      onClick={() => (pane ? pane.openAtFact(fact.id, fact.document_id) : navigate(`/documents/${fact.document_id}/source?fact=${fact.id}`))}
+    >
+      <FileTextIcon /> View source
+    </button>
+  ) : null;
+
+  const correction = (
+    <details className="fact-correction">
+      <summary>Correct this value</summary>
+      <div className="fact-correction__grid">
+        <div>
+          <h3 style={{ marginTop: 0 }}>Raw text from document</h3>
+          {fact.source_snippet ? <blockquote style={{ margin: 0 }}>{fact.source_snippet}</blockquote> : <p className="muted">Source detail unavailable</p>}
+          {(fact.source_page !== null || fact.source_location) && (
+            <p className="field-hint">
+              {fact.source_page !== null && `Page ${fact.source_page}`}
+              {fact.source_page !== null && fact.source_location && " · "}
+              {fact.source_location}
+            </p>
+          )}
+        </div>
+        <div>
+          <form
+            className="field"
+            onSubmit={(e) => {
+              e.preventDefault();
+              void run("value", () => api.patchFact(fact.id, { value }));
+            }}
+          >
+            <label htmlFor={`value-${fact.id}`}>Correct value (saving confirms it)</label>
+            <div style={{ display: "flex", gap: 8 }}>
+              <input id={`value-${fact.id}`} value={value} onChange={(e) => setValue(e.target.value)} />
+              <button className="btn btn--secondary" type="submit" disabled={busy !== null || value.trim() === ""}>
+                {busy === "value" ? "Saving..." : "Save value"}
+              </button>
+            </div>
+            {check && fact.check_state !== "unchecked" && <p className="field-hint">Saving clears the check mark, so you will need to check this fact again.</p>}
+          </form>
+        </div>
+      </div>
+    </details>
+  );
+
+  const mapForm = fact.raw_marker_label && (
+    <div className="field" style={{ marginTop: 16 }}>
+      <label>
+        Marker "{fact.raw_marker_label}" isn't mapped to a tracked marker
+      </label>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
+        <select value={markerId} onChange={(e) => setMarkerId(e.target.value)} aria-label="Existing tracked marker">
+          <option value="">Map to existing marker...</option>
+          {trackedMarkers.map((m) => (
+            <option key={m.id} value={m.id}>
+              {m.marker_name}
+            </option>
+          ))}
+        </select>
+        <button
+          className="btn btn--secondary"
+          type="button"
+          disabled={busy !== null || !markerId}
+          onClick={() => void run("map", () => api.patchFact(fact.id, { tracked_marker_id: markerId }))}
+        >
+          {busy === "map" ? "Mapping..." : "Map"}
+        </button>
+      </div>
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <input
+          value={customName}
+          onChange={(e) => setCustomName(e.target.value)}
+          placeholder="Or add as a new marker"
+          aria-label="New custom marker name"
+        />
+        <button
+          className="btn btn--secondary"
+          type="button"
+          disabled={busy !== null || customName.trim() === ""}
+          onClick={() =>
+            void run("add", async () => {
+              let newMarker: { id: string; marker_name: string } | null = null;
+              let markerId: string;
+
+              if (createdMarker && createdMarker.marker_name === customName.trim()) {
+                markerId = createdMarker.id;
+              } else {
+                const created = await api.addMarker(fact.patient_id, customName.trim());
+                newMarker = { id: created.id, marker_name: created.marker_name };
+                setCreatedMarker(newMarker);
+                markerId = created.id;
+              }
+
+              try {
+                await api.patchFact(fact.id, { tracked_marker_id: markerId });
+              } catch (err) {
+                // If marker was just created, reload parent before re-throwing
+                if (newMarker) {
+                  onChanged();
+                }
+                throw err;
+              }
+            })
+          }
+        >
+          {busy === "add" ? "Adding..." : "Add and map"}
+        </button>
+      </div>
+    </div>
+  );
+
+  const dateForm = fact.needs_manual_date && (
+    <form
+      className="field"
+      style={{ marginTop: 16 }}
+      onSubmit={(e) => {
+        e.preventDefault();
+        void run("date", () => api.patchFact(fact.id, { as_of_date: date }));
+      }}
+    >
+      <label htmlFor={`date-${fact.id}`}>As-of date (not found in the document)</label>
+      <div style={{ display: "flex", gap: 8 }}>
+        <input id={`date-${fact.id}`} type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
+        <button className="btn btn--secondary" type="submit" disabled={busy !== null || !date}>
+          {busy === "date" ? "Saving..." : "Save date"}
+        </button>
+      </div>
+    </form>
+  );
+
+  const signOff = (
+    <RoleGate roles={["oncologist"]}>
+      {fact.verification_state === "oncologist_signed_off" ? (
+        <div className="fact-action">
+          <button className="btn btn--secondary" type="button" disabled={busy !== null} onClick={() => void run("reopen", () => api.reopenFact(fact.id))}>
+            {busy === "reopen" ? "Reopening..." : "Reopen"}
+          </button>
+        </div>
+      ) : (
+        <div className="fact-action">
+          <button
+            className={signOffBlockedReason === null ? "btn btn--primary" : "btn"}
+            type="button"
+            disabled={busy !== null || signOffBlockedReason !== null}
+            onClick={() => void run("signoff", async () => {
+              await api.signOffFact(fact.id);
+              onSignedOff?.(fact.id);
+            })}
+          >
+            {busy === "signoff" ? "Signing off..." : "Sign off"}
+          </button>
+          {signOffBlockedReason && <p className="field-hint">{signOffBlockedReason}</p>}
+        </div>
+      )}
+    </RoleGate>
+  );
+
+  const conflictButton = fact.has_blocking_conflict && fact.blocking_conflict_id && (
+    <button
+      className="tag tag--range-flag"
+      type="button"
+      style={{ cursor: "pointer" }}
+      onClick={() => navigate(`/conflicts/${fact.blocking_conflict_id}`)}
+    >
+      Conflicting sources — review
+    </button>
+  );
+
+  if (variant === "row") {
+    const signed = fact.verification_state === "oncologist_signed_off";
+    return (
+      <div className={`fact-row${signed ? " fact-row--signed" : ""}`} data-fact-id={fact.id}>
+        <div className="fact-row__lead">{lead}</div>
+        <div className="fact-row__main">
+          <div className="fact-row__line">
+            <h3 className="fact-row__title">{heading}</h3>
+            <span className="fact-row__value">{fact.value ?? <span className="muted">(no value)</span>}</span>
+            {(fact.unit || fact.reference_range) && (
+              <span className="fact-row__unit">
+                {[fact.unit, fact.reference_range ? `ref ${fact.reference_range}` : null].filter(Boolean).join(" · ")}
+              </span>
+            )}
+            {flag && (
+              <span className="tag tag--range-flag" title={rangeFlagTooltip(fact.reference_range)}>
+                {RANGE_FLAG_LABEL[flag]}
+              </span>
+            )}
+          </div>
+          <div className="fact-row__meta">
+            <span>
+              {fact.as_of_date ? `as of ${fact.as_of_date}` : "no as-of date"} · {signed ? "signed off" : fact.verification_state.replace(/_/g, " ")} ·{" "}
+              {CHECK_LABELS[fact.check_state]} · {SOURCE_LEVEL_LABELS[fact.fallback_level]}
+            </span>
+            {viewSource}
+          </div>
+          {error && <div className="error-banner">{error}</div>}
+          {correction}
+          {mapForm}
+          {dateForm}
+          {below}
+        </div>
+        <div className="fact-row__aside">
+          {ruleTag}
+          <span className="fact-row__tags">
+            {signed && <span className="tag">Signed off</span>}
+            {needsReview && <span className="tag tag--accent">{COVERAGE_LABELS[fact.coverage_status]}</span>}
+            <ElsewhereTag encounter={fact.outside_encounter} />
+            {badge}
+            {conflictButton}
+          </span>
+          <RoleGate roles={["oncologist"]}>
+            {signed ? (
+              <button className="btn btn--secondary" type="button" disabled={busy !== null} onClick={() => void run("reopen", () => api.reopenFact(fact.id))}>
+                {busy === "reopen" ? "Reopening..." : "Reopen"}
+              </button>
+            ) : (blockedReason ?? signOffBlockedReason) !== null ? (
+              <span className="fact-row__blocked">{blockedReason ?? signOffBlockedReason}</span>
+            ) : (
+              <button
+                className="btn btn--primary" type="button" disabled={busy !== null}
+                onClick={() => void run("signoff", async () => {
+                  await api.signOffFact(fact.id);
+                  onSignedOff?.(fact.id);
+                })}
+              >
+                {busy === "signoff" ? "Signing off..." : "Sign off"}
+              </button>
+            )}
+          </RoleGate>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="card" aria-current={check?.active ? "true" : undefined} data-fact-id={fact.id}>
       <div className="page-heading" style={{ marginBottom: 8 }}>
         <h2 style={{ margin: 0 }}>{heading}</h2>
         <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <span className={`tag ${needsReview ? "tag--pending" : ""}`}>{COVERAGE_LABELS[fact.coverage_status] ?? fact.coverage_status}</span>
+          <span className={`tag ${needsReview ? "tag--accent" : ""}`}>{COVERAGE_LABELS[fact.coverage_status] ?? fact.coverage_status}</span>
           <ElsewhereTag encounter={fact.outside_encounter} />
           {badge}
         </span>
-        {fact.has_blocking_conflict && fact.blocking_conflict_id && (
-          <button
-            className="tag tag--range-flag"
-            type="button"
-            style={{ marginLeft: 8, cursor: "pointer" }}
-            onClick={() => navigate(`/conflicts/${fact.blocking_conflict_id}`)}
-          >
-            Conflicting sources — review
-          </button>
-        )}
+        {conflictButton}
       </div>
       <p className="muted" style={{ marginTop: 0, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
         <span>
           {FIELD_LABELS[fact.field_type] ?? fact.field_type} · {fact.verification_state.replace(/_/g, " ")} ·{" "}
           {fact.as_of_date ? `as of ${fact.as_of_date}` : "no as-of date"}
         </span>
-        {fact.document_id && (
-          <button
-            className="btn btn--ghost source-link"
-            type="button"
-            onClick={() => (pane ? pane.openAtFact(fact.id, fact.document_id) : navigate(`/documents/${fact.document_id}/source?fact=${fact.id}`))}
-          >
-            📄 View uploaded document
-          </button>
-        )}
+        {viewSource}
       </p>
 
       {error && <div className="error-banner">{error}</div>}
@@ -139,14 +382,11 @@ export function FactCard({ fact, trackedMarkers, onChanged, badge, check, onSign
           {fact.unit && ` ${fact.unit}`}
           {fact.reference_range && <span className="muted"> · ref {fact.reference_range}</span>}
         </p>
-        {(() => {
-          const flag = flagForRange(fact.value, fact.reference_range);
-          return flag ? (
-            <span className="tag tag--range-flag" title={rangeFlagTooltip(fact.reference_range)}>
-              {RANGE_FLAG_LABEL[flag]}
-            </span>
-          ) : null;
-        })()}
+        {flag && (
+          <span className="tag tag--range-flag" title={rangeFlagTooltip(fact.reference_range)}>
+            {RANGE_FLAG_LABEL[flag]}
+          </span>
+        )}
       </div>
 
       {check && (
@@ -161,150 +401,10 @@ export function FactCard({ fact, trackedMarkers, onChanged, badge, check, onSign
         />
       )}
 
-      <details className="fact-correction">
-        <summary>Correct this value</summary>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16, marginTop: 12 }}>
-          <div>
-            <h3 style={{ marginTop: 0 }}>Raw text from document</h3>
-            {fact.source_snippet ? <blockquote style={{ margin: 0 }}>{fact.source_snippet}</blockquote> : <p className="muted">Source detail unavailable</p>}
-            {(fact.source_page !== null || fact.source_location) && (
-              <p className="field-hint">
-                {fact.source_page !== null && `Page ${fact.source_page}`}
-                {fact.source_page !== null && fact.source_location && " · "}
-                {fact.source_location}
-              </p>
-            )}
-          </div>
-          <div>
-            <form
-              className="field"
-              onSubmit={(e) => {
-                e.preventDefault();
-                void run("value", () => api.patchFact(fact.id, { value }));
-              }}
-            >
-              <label htmlFor={`value-${fact.id}`}>Correct value (saving confirms it)</label>
-              <div style={{ display: "flex", gap: 8 }}>
-                <input id={`value-${fact.id}`} value={value} onChange={(e) => setValue(e.target.value)} />
-                <button className="btn btn--secondary" type="submit" disabled={busy !== null || value.trim() === ""}>
-                  {busy === "value" ? "Saving..." : "Save value"}
-                </button>
-              </div>
-              {check && fact.check_state !== "unchecked" && <p className="field-hint">Saving clears the check mark, so you will need to check this fact again.</p>}
-            </form>
-          </div>
-        </div>
-      </details>
-
-      {fact.raw_marker_label && (
-        <div className="field" style={{ marginTop: 16 }}>
-          <label>
-            Marker "{fact.raw_marker_label}" isn't mapped to a tracked marker
-          </label>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
-            <select value={markerId} onChange={(e) => setMarkerId(e.target.value)} aria-label="Existing tracked marker">
-              <option value="">Map to existing marker...</option>
-              {trackedMarkers.map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.marker_name}
-                </option>
-              ))}
-            </select>
-            <button
-              className="btn btn--secondary"
-              type="button"
-              disabled={busy !== null || !markerId}
-              onClick={() => void run("map", () => api.patchFact(fact.id, { tracked_marker_id: markerId }))}
-            >
-              {busy === "map" ? "Mapping..." : "Map"}
-            </button>
-          </div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <input
-              value={customName}
-              onChange={(e) => setCustomName(e.target.value)}
-              placeholder="Or add as a new marker"
-              aria-label="New custom marker name"
-            />
-            <button
-              className="btn btn--secondary"
-              type="button"
-              disabled={busy !== null || customName.trim() === ""}
-              onClick={() =>
-                void run("add", async () => {
-                  let newMarker: { id: string; marker_name: string } | null = null;
-                  let markerId: string;
-
-                  if (createdMarker && createdMarker.marker_name === customName.trim()) {
-                    markerId = createdMarker.id;
-                  } else {
-                    const created = await api.addMarker(fact.patient_id, customName.trim());
-                    newMarker = { id: created.id, marker_name: created.marker_name };
-                    setCreatedMarker(newMarker);
-                    markerId = created.id;
-                  }
-
-                  try {
-                    await api.patchFact(fact.id, { tracked_marker_id: markerId });
-                  } catch (err) {
-                    // If marker was just created, reload parent before re-throwing
-                    if (newMarker) {
-                      onChanged();
-                    }
-                    throw err;
-                  }
-                })
-              }
-            >
-              {busy === "add" ? "Adding..." : "Add and map"}
-            </button>
-          </div>
-        </div>
-      )}
-
-      {fact.needs_manual_date && (
-        <form
-          className="field"
-          style={{ marginTop: 16 }}
-          onSubmit={(e) => {
-            e.preventDefault();
-            void run("date", () => api.patchFact(fact.id, { as_of_date: date }));
-          }}
-        >
-          <label htmlFor={`date-${fact.id}`}>As-of date (not found in the document)</label>
-          <div style={{ display: "flex", gap: 8 }}>
-            <input id={`date-${fact.id}`} type="date" value={date} onChange={(e) => setDate(e.target.value)} required />
-            <button className="btn btn--secondary" type="submit" disabled={busy !== null || !date}>
-              {busy === "date" ? "Saving..." : "Save date"}
-            </button>
-          </div>
-        </form>
-      )}
-
-      <RoleGate roles={["oncologist"]}>
-        {fact.verification_state === "oncologist_signed_off" ? (
-          <div style={{ marginTop: 16 }}>
-            <button className="btn btn--secondary" type="button" disabled={busy !== null} onClick={() => void run("reopen", () => api.reopenFact(fact.id))}>
-              {busy === "reopen" ? "Reopening..." : "Reopen"}
-            </button>
-          </div>
-        ) : (
-          <div style={{ marginTop: 16 }}>
-            <button
-              className={signOffBlockedReason === null ? "btn btn--primary" : "btn"}
-              type="button"
-              disabled={busy !== null || signOffBlockedReason !== null}
-              onClick={() => void run("signoff", async () => {
-                await api.signOffFact(fact.id);
-                onSignedOff?.(fact.id);
-              })}
-            >
-              {busy === "signoff" ? "Signing off..." : "Sign off"}
-            </button>
-            {signOffBlockedReason && <p className="field-hint">{signOffBlockedReason}</p>}
-          </div>
-        )}
-      </RoleGate>
+      {correction}
+      {mapForm}
+      {dateForm}
+      {signOff}
     </div>
   );
 }

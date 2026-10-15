@@ -21,7 +21,7 @@ export function demographicsLine(p: { date_of_birth: string | null; sex: Sex | n
   return [head, p.mrn ? `MRN ${p.mrn}` : ""].filter(Boolean).join(" · ");
 }
 
-export type NavKey = "summary" | "snapshot" | "history" | "plan" | "markers" | "edit";
+export type NavKey = "summary" | "snapshot" | "history" | "plan" | "markers" | "upload" | "edit";
 
 export const NAV_ITEMS: { key: NavKey; label: string; path: string }[] = [
   { key: "summary", label: "Summary", path: "summary" },
@@ -29,6 +29,7 @@ export const NAV_ITEMS: { key: NavKey; label: string; path: string }[] = [
   { key: "history", label: "History", path: "history" },
   { key: "plan", label: "Plan", path: "plan" },
   { key: "markers", label: "Markers", path: "markers" },
+  { key: "upload", label: "Upload report", path: "upload" },
   { key: "edit", label: "Edit info", path: "edit" },
 ];
 
@@ -42,6 +43,7 @@ export function activeNav(route: string): NavKey | null {
     case "timeline": return "history";
     case "plan": return "plan";
     case "markers": return "markers";
+    case "upload": return "upload";
     case "edit": return "edit";
     default: return null;
   }

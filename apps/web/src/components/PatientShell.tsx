@@ -4,7 +4,7 @@ import { activeNav, demographicsLine, NAV_ITEMS } from "../lib/patientShell";
 import { navigate } from "../router";
 import { DictationRecorder } from "./DictationRecorder";
 import { DocumentPane, type DocsState } from "./DocumentPane";
-import { PaneProvider, usePane } from "./PaneContext";
+import { OVERLAY_QUERY, PaneProvider, usePane } from "./PaneContext";
 
 // Layout of every patient screen (README section 2): sidebar, the screen, and the document pane. The pane starts
 // collapsed to a rail. The sidebar's name is styled like an h4 but is not a heading element, so the screen's own
@@ -44,6 +44,13 @@ function ShellBody({ patientId, route, children }: { patientId: string; route: s
     return () => { stop(); latestDocs.current++; };
   }, [loadPatient, loadDocs, pane.refreshKey]);
 
+  // Below the overlay breakpoint the pane covers the screen, so moving to another screen closes it.
+  const closePane = useRef(pane.close);
+  closePane.current = pane.close;
+  useEffect(() => {
+    if (window.matchMedia(OVERLAY_QUERY).matches) closePane.current();
+  }, [route]);
+
   const current = activeNav(route);
   // The list API leaves out rejected documents; held ones (identity mismatch / awaiting the oncologist) are listed,
   // so they are counted here and marked in the pane.
@@ -54,6 +61,9 @@ function ShellBody({ patientId, route, children }: { patientId: string; route: s
   return (
     <div className="patient-shell">
       <nav className="patient-shell__side" aria-label="Patient">
+        <a className="patient-shell__back" href="#/patients" onClick={(e) => { e.preventDefault(); navigate("/patients"); }}>
+          ← All patients
+        </a>
         <div className="patient-shell__id">
           {patient.status === "error" ? (
             <div className="error-banner">

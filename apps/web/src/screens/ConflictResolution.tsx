@@ -25,7 +25,7 @@ type LoadState = { status: "loading" } | { status: "error"; message: string } | 
 function FactPane({ fact, label, authoritative }: { fact: ConflictFact; label: string; authoritative: boolean }) {
   const heading = fact.tracked_marker_name ?? FIELD_LABELS[fact.field_type] ?? fact.field_type;
   return (
-    <div className="card">
+    <div className="card conflict-pane">
       <div className="page-heading" style={{ marginBottom: 8 }}>
         <h3 style={{ margin: 0 }}>{label}</h3>
         <span style={{ display: "flex", gap: 8 }}>
@@ -36,7 +36,7 @@ function FactPane({ fact, label, authoritative }: { fact: ConflictFact; label: s
       <p className="muted" style={{ marginTop: 0 }}>
         {heading} · {fact.as_of_date ? `as of ${fact.as_of_date}` : "no as-of date"}
       </p>
-      <p>
+      <p className="conflict-value">
         {fact.value ?? <span className="muted">(no value)</span>}
         {fact.unit && ` ${fact.unit}`}
         {fact.reference_range && <span className="muted"> · ref {fact.reference_range}</span>}
@@ -120,7 +120,7 @@ export function ConflictResolution({ conflictId }: { conflictId: string }) {
 
       {actionError && <div className="error-banner">{actionError}</div>}
 
-      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 16 }}>
+      <div className="conflict-grid">
         <FactPane fact={factA} label="Fact A" authoritative={conflict.authoritative_fact_id === factA.id} />
         <FactPane fact={factB} label="Fact B" authoritative={conflict.authoritative_fact_id === factB.id} />
       </div>

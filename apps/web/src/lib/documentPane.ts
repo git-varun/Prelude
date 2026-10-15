@@ -15,6 +15,16 @@ export function paneGroupOf(documentType: string): PaneGroup {
   }
 }
 
+/** How a document is named in the pane's tree ("Blood report", not just "Blood"). */
+const PANE_LABELS: Record<string, string> = {
+  blood: "Blood report", radiology: "Radiology report", prescription: "Prescription", pathology: "Pathology report",
+  discharge: "Discharge summary", other: "Other document",
+};
+
+export function paneItemLabel(documentType: string): string {
+  return PANE_LABELS[documentType] ?? documentType;
+}
+
 /** Non-empty groups in README order; documents keep the order the API gave them (newest first). */
 export function groupDocuments(docs: PatientDocumentEntry[]): { group: PaneGroup; docs: PatientDocumentEntry[] }[] {
   return PANE_GROUPS

@@ -33,22 +33,6 @@ function rowTag(p: PatientSummary, group: TodayGroup): string | null {
   return null;
 }
 
-function RowButton({ to, children }: { to: string; children: string }) {
-  return (
-    <button
-      className="btn btn--ghost"
-      type="button"
-      onClick={(e) => {
-        e.stopPropagation();
-        e.preventDefault();
-        navigate(to);
-      }}
-    >
-      {children}
-    </button>
-  );
-}
-
 function PatientRow({ p, group, today }: { p: PatientSummary; group: TodayGroup; today: string }) {
   const age = ageOn(p.date_of_birth, today);
   const sex = p.sex ? SEX_LETTER[p.sex] : undefined;
@@ -58,6 +42,11 @@ function PatientRow({ p, group, today }: { p: PatientSummary; group: TodayGroup;
   const line = changeSummaryLine(p.change_summary_items);
   const spark = p.first_pinned_sparkline;
   const tag = rowTag(p, group);
+  // Staff-facing counts sit quietly under the change summary; the right-hand tag stays the one status.
+  const counts = [
+    p.needs_attention_count > 0 ? `${p.needs_attention_count} need${p.needs_attention_count === 1 ? "s" : ""} review` : null,
+    p.unchecked_fact_count > 0 ? `${p.unchecked_fact_count} to check` : null,
+  ].filter(Boolean).join(" · ");
   return (
     <a
       className="today-row"
@@ -74,12 +63,6 @@ function PatientRow({ p, group, today }: { p: PatientSummary; group: TodayGroup;
           {who && <span className="today-row__meta">{who}</span>}
           {p.patient_origin === "referral" && <span className="tag">Referral</span>}
           {p.stage && <span className="tag">Stage {p.stage}</span>}
-          {p.needs_attention_count > 0 && (
-            <span className="tag tag--range-flag">
-              {p.needs_attention_count} need{p.needs_attention_count === 1 ? "s" : ""} review
-            </span>
-          )}
-          {p.unchecked_fact_count > 0 && <span className="tag tag--pending">{p.unchecked_fact_count} to check</span>}
           {p.held_document_count > 0 && (
             <button
               type="button"
@@ -99,13 +82,7 @@ function PatientRow({ p, group, today }: { p: PatientSummary; group: TodayGroup;
         <span className="today-row__summary" data-testid="change-summary">
           {line || (p.last_visit_date ? `Last visit ${p.last_visit_date}` : "No visits yet")}
         </span>
-        <span className="today-row__actions">
-          <RowButton to={`/patients/${p.id}/snapshot`}>Snapshot</RowButton>
-          <RowButton to={`/patients/${p.id}/summary`}>Summary</RowButton>
-          <RowButton to={`/patients/${p.id}/plan`}>Plan</RowButton>
-          <RowButton to={`/patients/${p.id}/markers`}>Markers</RowButton>
-          <RowButton to={`/patients/${p.id}/upload`}>Upload</RowButton>
-        </span>
+        {counts && <span className="today-row__counts">{counts}</span>}
       </span>
       <span className="today-row__spark">
         {spark && (
@@ -144,7 +121,13 @@ export function PatientList() {
   return (
     <div className="today">
       <div className="page-heading">
-        <h1>Patients</h1>
+        <div>
+          <h6 className="muted" style={{ margin: 0 }}>
+            {new Date(`${today}T00:00:00`).toLocaleDateString("en-GB", { weekday: "long", day: "numeric", month: "long" })}
+            {patients ? ` · ${patients.length} ${patients.length === 1 ? "patient" : "patients"}` : ""}
+          </h6>
+          <h1>Patients</h1>
+        </div>
         <button className="btn btn--primary" onClick={() => navigate("/patients/new")}>
           New patient
         </button>

@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type DocumentFileCheck, type DocumentOcr, type PatientDocumentEntry, type ReviewFact } from "../api/client";
-import { documentTypeLabel } from "../lib/documentTypeLabel";
-import { documentMetaLine, groupDocuments, HELD_NOTICE, isHeldIdentity, paneView } from "../lib/documentPane";
+import { documentMetaLine, groupDocuments, HELD_NOTICE, isHeldIdentity, paneItemLabel, paneView } from "../lib/documentPane";
+import { FileTextIcon } from "./icons";
 import { HighlightedText } from "./SourceText";
 import { useAuth } from "../auth/AuthContext";
 import { OVERLAY_QUERY, useOverlayMode, usePane } from "./PaneContext";
@@ -165,7 +165,7 @@ export function DocumentPane({ patientId, docs, onRetry }: { patientId: string; 
     return (
       <aside className="doc-pane" aria-label="Documents" data-testid="doc-pane" data-open="false">
         <button ref={railRef} className="doc-pane__rail-btn" type="button" aria-label="Open documents panel" title="Documents" onClick={openList}>
-          <span aria-hidden="true">📄</span>
+          <FileTextIcon size={20} />
         </button>
       </aside>
     );
@@ -201,7 +201,7 @@ export function DocumentPane({ patientId, docs, onRetry }: { patientId: string; 
                 key={d.id} type="button" className={`doc-pane__item${d.id === paneDocId ? " doc-pane__item--selected" : ""}`}
                 aria-current={d.id === paneDocId ? "true" : undefined} data-testid="pane-item" onClick={() => openDocument(d.id)}
               >
-                <span className="doc-pane__item-label">{documentTypeLabel(d.document_type)}</span>
+                <span className="doc-pane__item-label">{paneItemLabel(d.document_type)}</span>
                 <span className="doc-pane__item-meta">
                   {documentMetaLine(d)}
                   {(d.identity_status === "mismatch" || d.identity_status === "awaiting_oncologist") && " · held for identity"}

@@ -47,7 +47,7 @@ export function SummaryStrip({ patientId }: { patientId: string }) {
   return (
     <section className="card summary-strip" aria-label="Patient summary" data-testid="summary-strip">
       <div className="page-heading" style={{ marginBottom: 12 }}>
-        <h2 style={{ margin: 0 }}>Patient summary</h2>
+        <h6 style={{ margin: 0 }}>Patient summary</h6>
         <a
           className="btn btn--ghost"
           href={`#/patients/${patientId}/summary`}

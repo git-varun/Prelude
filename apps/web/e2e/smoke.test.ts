@@ -664,7 +664,7 @@ test("Snapshot: a not_found_in_document_set marker renders as a placeholder row,
   });
   const { page, errors } = await openSnapshot("oncologist", body);
   await openFold(page);
-  const card = page.locator(".card", { has: page.getByRole("heading", { name: "AFP" }) });
+  const card = page.locator(".fact-row", { has: page.getByRole("heading", { name: "AFP" }) });
   await card.getByText("Not found in this document set").waitFor();
   expect(await card.getByRole("button", { name: "Sign off", exact: true }).count()).toBe(0);
   expect(await card.getByRole("button", { name: "Reopen", exact: true }).count()).toBe(0);
@@ -672,7 +672,7 @@ test("Snapshot: a not_found_in_document_set marker renders as a placeholder row,
   await page.close();
 }, 30_000);
 
-test("Snapshot: an open conflict on a field reaches FactCard through the adapter as a disabled, reason-labeled Sign off button", async () => {
+test("Snapshot: an open conflict on a field reaches FactCard through the adapter as a reason in place of a Sign off button", async () => {
   const body = snapshotBody({
     tumor_markers: [
       snapshotField({
@@ -682,11 +682,9 @@ test("Snapshot: an open conflict on a field reaches FactCard through the adapter
     ],
   });
   const { page, errors } = await openSnapshot("oncologist", body);
-  const card = page.locator(".card", { has: page.getByRole("heading", { name: "CEA" }) });
-  const signOff = card.getByRole("button", { name: "Sign off", exact: true });
-  await signOff.waitFor();
-  expect(await signOff.isDisabled()).toBe(true);
-  await card.getByText("Blocked by an unresolved conflict").waitFor();
+  const card = page.locator(".fact-row", { has: page.getByRole("heading", { name: "CEA" }) });
+  await card.getByText("Resolve the conflict first").waitFor();
+  expect(await card.getByRole("button", { name: "Sign off", exact: true }).count()).toBe(0);
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);
@@ -709,7 +707,7 @@ test("Snapshot: a conflicted fact shows a 'Conflicting sources — review' badge
     if (path === "/conflicts/c1" && method === "GET") return conflictDetail;
     return undefined;
   });
-  const card = page.locator(".card", { has: page.getByRole("heading", { name: "CEA" }) });
+  const card = page.locator(".fact-row", { has: page.getByRole("heading", { name: "CEA" }) });
   const badge = card.getByRole("button", { name: "Conflicting sources — review" });
   await badge.waitFor();
   await badge.click();
@@ -736,7 +734,7 @@ test("Snapshot: a marker value above its reference range shows the muted ochre p
     tumor_markers: [snapshotField({ fact_id: "f1", marker_name: "CEA", value: "9.0", reference_range: "0-5" })],
   });
   const { page, errors } = await openSnapshot("oncologist", body);
-  const card = page.locator(".card", { has: page.getByRole("heading", { name: "CEA" }) });
+  const card = page.locator(".fact-row", { has: page.getByRole("heading", { name: "CEA" }) });
   const pill = card.getByText("Above laboratory reference interval");
   await pill.waitFor();
   expect(await pill.getAttribute("title")).toBe(
@@ -752,7 +750,7 @@ test("Snapshot: a marker value within its reference range shows no indicator", a
     tumor_markers: [snapshotField({ fact_id: "f1", marker_name: "CEA", value: "3.0", reference_range: "0-5" })],
   });
   const { page, errors } = await openSnapshot("staff", body);
-  const card = page.locator(".card", { has: page.getByRole("heading", { name: "CEA" }) });
+  const card = page.locator(".fact-row", { has: page.getByRole("heading", { name: "CEA" }) });
   await card.getByText("ref 0-5").waitFor();
   expect(await card.getByText("Above laboratory reference interval").count()).toBe(0);
   expect(await card.getByText("Below laboratory reference interval").count()).toBe(0);
@@ -787,6 +785,7 @@ test("Snapshot: a tumor marker with 2+ signed-off trend points renders a chart",
   };
   const { page, errors } = await openSnapshot("staff", body, trends);
   await page.getByRole("heading", { name: "CEA" }).waitFor();
+  await page.getByText("Trend", { exact: true }).click();
   await page.locator("svg[role='img']").waitFor();
   expect(await page.getByText("Units differ").count()).toBe(0);
   expect(errors).toEqual([]);
@@ -808,6 +807,7 @@ test("Snapshot: trend points with differing reference ranges render a chart with
   };
   const { page, errors } = await openSnapshot("staff", body, trends);
   await page.getByRole("heading", { name: "CEA" }).waitFor();
+  await page.getByText("Trend", { exact: true }).click();
   const svg = page.locator("svg[role='img']");
   await svg.waitFor();
   expect(await svg.locator("rect").count()).toBe(0);
@@ -824,6 +824,7 @@ test("Snapshot: fewer than 2 trend points renders no chart", async () => {
   };
   const { page, errors } = await openSnapshot("staff", body, trends);
   await page.getByRole("heading", { name: "CEA" }).waitFor();
+  await page.getByText("Trend", { exact: true }).click();
   await page.waitForTimeout(300); // let the trend fetch settle before asserting absence
   expect(await page.locator("svg[role='img']").count()).toBe(0);
   expect(errors).toEqual([]);
@@ -844,6 +845,7 @@ test("Snapshot: mixed-unit trend points show a 'units differ' note instead of a 
     },
   };
   const { page, errors } = await openSnapshot("staff", body, trends);
+  await page.getByText("Trend", { exact: true }).click();
   await page.getByText("Units differ across these values").waitFor();
   expect(await page.locator("svg[role='img']").count()).toBe(0);
   expect(errors).toEqual([]);
@@ -863,7 +865,7 @@ test("Snapshot: Thyroglobulin renders adjacent to Anti-Tg within a group (here t
   const markersSection = page.locator("section", { has: page.getByRole("heading", { name: /For this visit/ }) });
   await openFold(page);
   await markersSection.getByRole("heading", { name: "CEA" }).waitFor();
-  const headings = await markersSection.getByRole("heading", { level: 2 }).allTextContents();
+  const headings = await markersSection.getByRole("heading", { level: 3 }).allTextContents();
   const tgIndex = headings.indexOf("Thyroglobulin (Tg)");
   expect(tgIndex).toBeGreaterThan(-1);
   expect(headings[tgIndex + 1]).toBe("Anti-Tg (TgAb)");
@@ -1169,7 +1171,7 @@ test("Snapshot: the view-uploaded-document link appears regardless of provenance
     ],
   });
   const { page, errors } = await openSnapshot("staff", body);
-  expect(await page.getByRole("button", { name: "View uploaded document" }).count()).toBe(3);
+  expect(await page.getByRole("button", { name: "View source" }).count()).toBe(3);
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);
@@ -1243,7 +1245,8 @@ test("Snapshot -> Timeline: navigates via the new button, renders the chart/lege
     return undefined;
   });
 
-  await page.getByRole("button", { name: "Timeline" }).click();
+  await page.getByRole("navigation", { name: "Patient" }).getByRole("link", { name: "History" }).click();
+  await page.getByRole("tab", { name: "Trends" }).click();
   await page.getByRole("heading", { name: "Test Patient" }).waitFor();
 
   await page.getByText("CEA — 9", { exact: false }).waitFor();
@@ -2289,7 +2292,7 @@ test("Snapshot: a single-fact Sign off shows the 'Signed off 1 fact' toast and i
   });
   const posts: string[] = [];
   page.on("request", (r) => { if (r.method() === "POST") posts.push(`${new URL(r.url()).pathname} ${r.postData()}`); });
-  await page.locator(".card", { has: page.getByRole("heading", { name: "CEA" }) }).getByRole("button", { name: "Sign off", exact: true }).click();
+  await page.locator(".fact-row", { has: page.getByRole("heading", { name: "CEA" }) }).getByRole("button", { name: "Sign off", exact: true }).click();
   await page.getByText("Signed off 1 fact").waitFor();
   await page.getByRole("button", { name: "Undo" }).click();
   await page.getByText("Signed off 1 fact").waitFor({ state: "detached" });
@@ -2312,7 +2315,7 @@ test("Snapshot: switching patient clears the sign-off toast", async () => {
     if (path === "/patients/p2/documents/identity") return json({ patient_name: "Other Patient", documents: [] });
     return route.fallback();
   });
-  await page.locator(".card", { has: page.getByRole("heading", { name: "CEA" }) }).getByRole("button", { name: "Sign off", exact: true }).click();
+  await page.locator(".fact-row", { has: page.getByRole("heading", { name: "CEA" }) }).getByRole("button", { name: "Sign off", exact: true }).click();
   await page.getByText("Signed off 1 fact").waitFor();
   await page.evaluate(() => { location.hash = "#/patients/p2/snapshot"; });
   await page.getByRole("heading", { name: "Other Patient" }).waitFor();
@@ -2326,8 +2329,8 @@ test("Snapshot batch sign-off: selected row is tinted, keeps value and source, a
   const onc = await openSnapshot("oncologist", body);
   await onc.page.getByRole("checkbox", { name: "Select CEA for sign-off" }).check();
   const row = onc.page.locator(".snapshot-field--selected");
-  await row.getByText("4.2 ng/mL").waitFor();
-  await row.getByRole("button", { name: /View uploaded document/ }).waitFor();
+  await row.getByText("4.2", { exact: true }).waitFor();
+  await row.getByRole("button", { name: /View source/ }).waitFor();
   expect(await row.count()).toBe(1);
   expect(onc.errors).toEqual([]);
   await onc.page.close();
@@ -2339,14 +2342,23 @@ test("Snapshot batch sign-off: selected row is tinted, keeps value and source, a
   await staff.page.close();
 }, 30_000);
 
-test("Snapshot: an unchecked fact reaches FactCard as a disabled Sign off with the check reason", async () => {
+test("Snapshot: an unchecked fact reaches FactCard as the check reason in place of a Sign off button", async () => {
   const body = snapshotBody({ tumor_markers: [snapshotField({ fact_id: "f1", marker_name: "CEA", check_state: "unchecked" })] });
   const { page, errors } = await openSnapshot("oncologist", body);
-  const card = page.locator(".card", { has: page.getByRole("heading", { name: "CEA" }) });
-  const signOff = card.getByRole("button", { name: "Sign off", exact: true });
-  await signOff.waitFor();
-  expect(await signOff.isDisabled()).toBe(true);
-  await card.getByText("Check this fact against the source first").waitFor();
+  const card = page.locator(".fact-row", { has: page.getByRole("heading", { name: "CEA" }) });
+  await card.getByText("Needs staff check first").waitFor();
+  expect(await card.getByRole("button", { name: "Sign off", exact: true }).count()).toBe(0);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Snapshot: a fact staff marked incorrect has no checkbox and no Sign off button, and says why", async () => {
+  const body = snapshotBody({ tumor_markers: [snapshotField({ fact_id: "f1", marker_name: "CEA", check_state: "incorrect" })] });
+  const { page, errors } = await openSnapshot("oncologist", body);
+  const row = page.locator(".fact-row", { has: page.getByRole("heading", { name: "CEA" }) });
+  await row.getByText("Marked incorrect — correct it first").waitFor();
+  expect(await row.getByRole("button", { name: "Sign off", exact: true }).count()).toBe(0);
+  expect(await row.getByRole("checkbox").count()).toBe(0);
   expect(errors).toEqual([]);
   await page.close();
 }, 30_000);
@@ -2748,6 +2760,7 @@ test("Visit history: a visit elsewhere is listed in date order with a dashed rul
         { id: "v1", visit_date: "2026-01-01", document_count: 1, fact_count: 1, signed_off_count: 0 },
       ];
     }
+    if (path === "/patients/p1/summary") return EMPTY_SUMMARY;
     if (path === "/patients/p1/outside-encounters") return [{ id: "oe1", encounter_date: "2026-02-10", facility: "Max Hospital", document_count: 2 }];
     return undefined;
   });
@@ -2758,10 +2771,53 @@ test("Visit history: a visit elsewhere is listed in date order with a dashed rul
   expect(await row.getByText("2 documents").count()).toBe(1);
   expect(await row.evaluate((el) => getComputedStyle(el).borderBottomStyle)).toBe("dashed");
   // Between 2026-03-01 and 2026-01-01, in date order, with no sign-off tag.
-  const names = await page.locator(".delta-row__name").allTextContents();
+  const names = await page.locator(".visit-row__date").allTextContents();
   expect(names).toEqual(["2026-03-01", "2026-02-10", "2026-01-01"]);
   expect(await row.getByText(/signed off/).count()).toBe(0);
   expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("History: Visits is the selected tab, Trends opens the timeline, and the journey strip quotes dated lines from the documents as written", async () => {
+  const item = (id: string, text: string, date: string) => ({
+    fact_id: id, document_id: "d1", text, as_of_date: date, facility: null, verification_state: "unverified",
+    provenance: { document_id: "d1", source_page: 1, source_location: null, source_snippet: text, fallback_level: "exact" }, outside_encounter: null,
+  });
+  const { page, errors } = await openRoutedPage("/patients/p1/history", (path) => {
+    if (path === "/patients/p1/visits") return [{ id: "v1", visit_date: "2026-01-01", document_count: 1, fact_count: 1, signed_off_count: 0 }];
+    if (path === "/patients/p1/outside-encounters") return [];
+    if (path === "/patients/p1/summary") {
+      return { ...EMPTY_SUMMARY, what_happened: [item("s1", "HGSC ovary, FIGO IIIC", "2025-02-14"), item("s2", "Carbo/Pacli C1", "2025-05-04")] };
+    }
+    return undefined;
+  });
+  const strip = page.getByTestId("journey-strip");
+  await strip.waitFor();
+  await strip.getByText("“HGSC ovary, FIGO IIIC”").waitFor();
+  expect(await strip.locator(".journey__cell").count()).toBe(2);
+  expect(await page.getByRole("tab", { name: "Visits" }).getAttribute("aria-selected")).toBe("true");
+  await page.getByRole("tab", { name: "Trends" }).click();
+  await page.waitForFunction(() => location.hash === "#/patients/p1/timeline");
+  expect(errors.filter((e) => !e.includes("404"))).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("pane overlay: moving to another screen closes the pane (below 1180px only)", async () => {
+  const { page, errors } = await openSnapshot("staff", oneFact(), {}, paneRoutes());
+  await page.setViewportSize({ width: 1000, height: 800 });
+  await page.getByRole("navigation", { name: "Patient" }).getByRole("button", { name: /^Documents/ }).click();
+  const pane = page.getByTestId("doc-pane");
+  await pane.getByRole("heading", { name: "Documents · all" }).waitFor();
+  await page.evaluate(() => { location.hash = "#/patients/p1/history"; });
+  await pane.getByRole("heading", { name: "Documents · all" }).waitFor({ state: "detached" });
+
+  // Wide screens keep the pane open across screens.
+  await page.setViewportSize({ width: 1400, height: 800 });
+  await page.getByRole("button", { name: "Open documents panel" }).click();
+  await page.evaluate(() => { location.hash = "#/patients/p1/plan"; });
+  await page.waitForFunction(() => location.hash === "#/patients/p1/plan");
+  await pane.getByRole("heading", { name: "Documents · all" }).waitFor();
+  expect(errors.filter((e) => !e.includes("404"))).toEqual([]);
   await page.close();
 }, 30_000);
 
@@ -2834,6 +2890,71 @@ for (const ocrStatus of ["failed", "pending"]) {
   }, 30_000);
 }
 
+// ---- Reprocess a failed document from the stored file ----
+
+function reviewDoc(overrides: Record<string, unknown>) {
+  return {
+    id: "doc1", patient_id: "p1", visit_id: "v1", file_ref: "local://x.pdf", document_type: "blood",
+    source_origin: "own_hospital", uploaded_by: "u1", uploaded_at: "2026-01-01T00:00:00Z",
+    ocr_status: "done", ocr_text_ref: null, needs_manual_date: false, extraction_status: "done", extraction_error: null, ...overrides,
+  };
+}
+
+test("review screen: a document whose OCR failed offers 'Reprocess from stored file', posts to /reprocess and reloads the result", async () => {
+  let doc: Record<string, unknown> = reviewDoc({ ocr_status: "failed", extraction_status: "pending" });
+  const posts: string[] = [];
+  const { page, errors } = await openRoutedPage("/documents/doc1/review", (path, method) => {
+    if (path === "/documents/doc1/facts") return { document: doc, facts: [], tracked_markers: [], check_summary: checkSummaryFor([]) };
+    if (path === "/documents/doc1/file") return {};
+    if (path === "/documents/doc1/reprocess" && method === "POST") {
+      posts.push(path);
+      doc = reviewDoc({ ocr_status: "done", extraction_status: "done" });
+      return doc;
+    }
+    return undefined;
+  });
+  await page.getByText("Reading the text (OCR) failed. The file is still on record.").waitFor();
+  await page.getByRole("button", { name: "Reprocess from stored file" }).click();
+  await page.getByText(ZERO_FACTS_TEXT).waitFor();
+  expect(posts).toEqual(["/documents/doc1/reprocess"]);
+  expect(await page.getByRole("button", { name: "Reprocess from stored file" }).count()).toBe(0);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("review screen: a reprocess that fails again says so and keeps the button for another try", async () => {
+  const doc = reviewDoc({ ocr_status: "done", extraction_status: "failed" });
+  const { page } = await openRoutedPage("/documents/doc1/review", (path, method) => {
+    if (path === "/documents/doc1/facts") return { document: doc, facts: [], tracked_markers: [], check_summary: checkSummaryFor([]) };
+    if (path === "/documents/doc1/file") return {};
+    if (path === "/documents/doc1/reprocess" && method === "POST") return doc;
+    return undefined;
+  });
+  await page.getByText("Extracting the facts failed. The file is still on record.").waitFor();
+  await page.getByRole("button", { name: "Reprocess from stored file" }).click();
+  await page.getByText("It failed again.", { exact: false }).waitFor();
+  expect(await page.getByRole("button", { name: "Reprocess from stored file" }).isEnabled()).toBe(true);
+  await page.close();
+}, 30_000);
+
+test("review screen: a finished, partial or 'other' document has no reprocess button", async () => {
+  for (const overrides of [
+    { extraction_status: "done" },
+    { extraction_status: "partial" },
+    { document_type: "other", ocr_status: "failed", extraction_status: "not_extracted" },
+  ]) {
+    const doc = reviewDoc(overrides);
+    const { page } = await openRoutedPage("/documents/doc1/review", (path) => {
+      if (path === "/documents/doc1/facts") return { document: doc, facts: [], tracked_markers: [], check_summary: checkSummaryFor([]) };
+      if (path === "/documents/doc1/file") return {};
+      return undefined;
+    });
+    await page.getByRole("heading", { name: "Extraction review" }).waitFor();
+    expect(await page.getByRole("button", { name: "Reprocess from stored file" }).count()).toBe(0);
+    await page.close();
+  }
+}, 30_000);
+
 // ---- M3-09: Today groups, Mark ready, request-report banner ----
 
 test("Today: four groups by state, each ordered by name, with the change summary line, sparkline and tag", async () => {
@@ -2899,9 +3020,10 @@ test("Today: four groups by state, each ordered by name, with the change summary
   expect(await ready.nth(1).getByText("Ready", { exact: true }).count()).toBe(1);
   expect(await page.getByRole("region", { name: "Staff preparing" }).getByText("Preparing", { exact: true }).count()).toBe(1);
   expect(await page.getByRole("region", { name: "Expected from plan, no visit opened" }).getByText("Planned", { exact: true }).count()).toBe(1);
-  // Row actions keep working.
-  await asha.getByRole("button", { name: "Plan" }).click();
-  await page.waitForURL(/#\/patients\/p1\/plan/);
+  // The whole row opens the Snapshot; there are no per-row link buttons any more.
+  expect(await asha.getByRole("button", { name: "Plan" }).count()).toBe(0);
+  await asha.click();
+  await page.waitForURL(/#\/patients\/p1\/snapshot/);
   expect(errors.filter((e) => !e.includes("404"))).toEqual([]);
   await page.close();
 }, 30_000);
@@ -3039,7 +3161,7 @@ test("Ask staff to find report: the oncologist asks once and sees 'Request sent 
     }
     return undefined;
   }, EMPTY_SUMMARY, plan);
-  await page.getByRole("button", { name: "Plan", exact: true }).click();
+  await page.getByRole("navigation", { name: "Patient" }).getByRole("link", { name: "Plan" }).click();
   await page.getByRole("heading", { name: "Plan items" }).waitFor();
   // Only the item without a report gets the button.
   expect(await page.getByRole("button", { name: "Ask staff to find report" }).count()).toBe(1);
@@ -3071,7 +3193,7 @@ test("Ask staff to find report: the oncologist asks once and sees 'Request sent 
   expect(clearPosts).toEqual(["/plan-items/i1/clear-report-request"]);
   // The same banner shows on the Plan screen.
   staffPlan.items[0] = requestedItem({ report_request: { by_id: "u2", by_name: "Rao", at: "2026-02-01T09:00:00Z" } });
-  await staffView.page.getByRole("button", { name: "Plan", exact: true }).click();
+  await staffView.page.getByRole("navigation", { name: "Patient" }).getByRole("link", { name: "Plan" }).click();
   await staffView.page.getByTestId("report-request-banner").waitFor();
   expect(staffView.errors).toEqual([]);
   await staffView.page.close();
@@ -3111,7 +3233,7 @@ test("pane: collapsed by default; a fact opens it at the highlight with the exac
   expect(await page.getByRole("heading", { name: "Documents · all" }).count()).toBe(0);
   await page.getByRole("button", { name: "Open documents panel" }).waitFor();
 
-  const opener = page.getByRole("button", { name: "View uploaded document" });
+  const opener = page.getByRole("button", { name: "View source" });
   await opener.focus();
   await page.keyboard.press("Enter");
   await page.getByTestId("pane-provenance").getByText("Exact match · page 3").waitFor();
@@ -3129,7 +3251,7 @@ test("pane: collapsed by default; a fact opens it at the highlight with the exac
 
   await page.getByRole("button", { name: "Close documents panel" }).click();
   await page.getByRole("button", { name: "Open documents panel" }).waitFor();
-  expect(await page.evaluate(() => document.activeElement?.textContent)).toContain("View uploaded document");
+  expect(await page.evaluate(() => document.activeElement?.textContent)).toContain("View source");
   expect(errors).toEqual([]);
 
   // The link really lands on the full-page view of that fact.
@@ -3142,7 +3264,7 @@ test("pane: collapsed by default; a fact opens it at the highlight with the exac
 
 test("pane: a snippet not found on the page shows the page without highlight and the Page tag", async () => {
   const { page, errors } = await openSnapshot("staff", oneFact(), {}, paneRoutes({}, { source_snippet: "not on this page" }));
-  await page.getByRole("button", { name: "View uploaded document" }).click();
+  await page.getByRole("button", { name: "View source" }).click();
   await page.getByTestId("pane-provenance").getByText("Page · page 3", { exact: true }).waitFor();
   expect(await page.getByTestId("source-highlight").count()).toBe(0);
   await page.getByTestId("pane-page").getByText("CA-125 30 U/mL", { exact: false }).waitFor();
@@ -3156,7 +3278,7 @@ test("pane: a document with no readable text says so and links the original file
     if (path === "/documents/doc1") return { document: (routes(path) as any).document, ocr: null };
     return routes(path);
   });
-  await page.getByRole("button", { name: "View uploaded document" }).click();
+  await page.getByRole("button", { name: "View source" }).click();
   await page.getByText("This document has no readable text; open the original file.").waitFor();
   expect(await page.getByRole("link", { name: "Open original file" }).getAttribute("href")).toBe(`${API}/documents/doc1/file`);
   expect(await page.getByTestId("pane-provenance").count()).toBe(0);
@@ -3189,11 +3311,11 @@ test("pane: the sidebar shows the patient and the document count; the tree group
   expect(labels).toEqual(["Reports", "Radiology", "Prescriptions", "Other"]);
   const items = page.getByTestId("pane-item");
   expect(await items.allTextContents()).toEqual([
-    "BloodMetro Labs · 2026-02-02",
-    "Radiology2026-01-20 · Apollo · elsewhere",
+    "Blood reportMetro Labs · 2026-02-02",
+    "Radiology report2026-01-20 · Apollo · elsewhere",
     "Prescription2026-01-10",
-    "OtherCity Lab · 2026-01-05 · outside",
-    "Pathology2026-01-04",
+    "Other documentCity Lab · 2026-01-05 · outside",
+    "Pathology report2026-01-04",
   ]);
 
   await items.nth(3).click();
@@ -3315,7 +3437,7 @@ test("pane: opening at a fact scrolls the highlight into view", async () => {
     if (path === "/documents/doc1") return { document: (base(path) as any).document, ocr: { fullText: long, pages: [{ pageNumber: 3, text: long }] }, held: false };
     return base(path);
   });
-  await page.getByRole("button", { name: "View uploaded document" }).click();
+  await page.getByRole("button", { name: "View source" }).click();
   await page.getByTestId("pane-provenance").getByText("Exact match · page 3").waitFor();
   await page.waitForFunction(() => {
     const m = document.querySelector("[data-testid=source-highlight]")!.getBoundingClientRect();
@@ -3334,7 +3456,7 @@ test("pane: a snippet that repeats on the page marks the occurrence nearest the 
   const base = paneRoutes({}, { source_location: "chars 22-35" });
   const { page, errors } = await openSnapshot("staff", oneFact(), {}, (path) =>
     path === "/documents/doc1" ? { document: (base(path) as any).document, ocr: { fullText: text, pages: [{ pageNumber: 3, text }] }, held: false } : base(path));
-  await page.getByRole("button", { name: "View uploaded document" }).click();
+  await page.getByRole("button", { name: "View source" }).click();
   await page.getByTestId("pane-provenance").getByText("Page · page 3 · 2 similar lines").waitFor();
   const before = await page.evaluate(() => document.querySelector("[data-testid=source-highlight]")!.previousSibling!.textContent!.length);
   expect(before).toBe(20);
@@ -3344,7 +3466,7 @@ test("pane: a snippet that repeats on the page marks the occurrence nearest the 
 
 test("pane: a fact whose page is not in the OCR shows 'Document' alone, with no highlight and no invented page", async () => {
   const { page, errors } = await openSnapshot("staff", oneFact(), {}, paneRoutes({}, { source_page: 7 }));
-  await page.getByRole("button", { name: "View uploaded document" }).click();
+  await page.getByRole("button", { name: "View source" }).click();
   await page.getByTestId("pane-provenance").getByText("Document", { exact: true }).waitFor();
   expect(await page.getByTestId("source-highlight").count()).toBe(0);
   expect(errors).toEqual([]);
@@ -3428,11 +3550,13 @@ test("sidebar: links go to the patient's screens and the current one is marked",
   const side = page.getByRole("navigation", { name: "Patient" });
   const hrefs = await side.getByRole("link").evaluateAll((els) => els.map((e) => [e.textContent, e.getAttribute("href")]));
   expect(hrefs).toEqual([
+    ["← All patients", "#/patients"],
     ["Summary", "#/patients/p1/summary"],
     ["Snapshot · this visit", "#/patients/p1/snapshot"],
     ["History", "#/patients/p1/history"],
     ["Plan", "#/patients/p1/plan"],
     ["Markers", "#/patients/p1/markers"],
+    ["Upload report", "#/patients/p1/upload"],
     ["Edit info", "#/patients/p1/edit"],
   ]);
   expect(await side.locator("[aria-current=page]").allTextContents()).toEqual(["Snapshot · this visit"]);
