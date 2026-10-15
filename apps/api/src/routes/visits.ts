@@ -2,6 +2,7 @@ import { sql } from "../db/client";
 import { jsonError } from "../middleware/auth";
 import type { AuthedUser } from "../middleware/auth";
 import { LIVE_FACT_FILTER } from "../services/delta";
+import { isDictationEnabledFor } from "../services/dictation";
 
 interface CreateVisitBody {
   visit_date?: string;
@@ -12,7 +13,7 @@ interface CreateVisitBody {
 // most recent) -- a per-visit summary count, not a full re-rendered Snapshot
 // per historical visit (that's its own larger scope: arbitrary-visit facts
 // selection, conflicts, provenance -- not something to half-build here).
-export async function listVisits(req: Request & { params: { id: string } }): Promise<Response> {
+export async function listVisits(req: Request & { params: { id: string } }, user?: AuthedUser): Promise<Response> {
   const patientId = req.params.id;
 
   const [patient] = await sql`SELECT id FROM patients WHERE id = ${patientId}`;
@@ -29,6 +30,19 @@ export async function listVisits(req: Request & { params: { id: string } }): Pro
     WHERE v.patient_id = ${patientId}
     ORDER BY v.visit_date DESC, v.id DESC
   `;
+
+  // AM-02: the latest dictated-note length is added only for the flagged oncologist. For anyone else the field is
+  // absent (not null), so the payload cannot reveal that the feature or a recording exists.
+  if (user && isDictationEnabledFor(user)) {
+    const durations = await sql`
+      SELECT DISTINCT ON (d.visit_id) d.visit_id, d.duration_seconds
+      FROM visit_dictations d JOIN visits v ON v.id = d.visit_id
+      WHERE v.patient_id = ${patientId}
+      ORDER BY d.visit_id, d.created_at DESC, d.id DESC
+    `;
+    const byVisit = new Map(durations.map((r: any) => [r.visit_id as string, r.duration_seconds as number]));
+    return Response.json(visits.map((v: any) => ({ ...v, dictated_note_seconds: byVisit.get(v.id) ?? null })));
+  }
 
   return Response.json(visits);
 }

@@ -45,7 +45,7 @@ beforeAll(async () => {
     stderr: "ignore",
   });
   await waitForServer();
-  browser = await chromium.launch();
+  browser = await chromium.launch({ args: ["--autoplay-policy=no-user-gesture-required"] });
   shimShellRequests(browser);
 }, 30_000);
 
@@ -583,6 +583,7 @@ async function openSnapshot(
   extraRoute?: (path: string, method: string) => unknown | undefined,
   summaryBody: unknown = EMPTY_SUMMARY,
   planBody: unknown = { next_review: null, items: [] },
+  features?: { dictation: boolean },
 ) {
   const page = await browser.newPage();
   page.setDefaultTimeout(5000);
@@ -599,7 +600,7 @@ async function openSnapshot(
     if (req.method() === "OPTIONS") {
       return route.fulfill({ status: 204, headers: { ...cors, "Access-Control-Allow-Headers": "content-type", "Access-Control-Allow-Methods": "GET,POST,OPTIONS" } });
     }
-    if (path === "/auth/me") return json({ id: "u1", name: "Test", email: "t@opd.local", role });
+    if (path === "/auth/me") return json({ id: "u1", name: "Test", email: "t@opd.local", role, ...(features ? { features } : {}) });
     if (isPrepPath(path)) {
       const custom = extraRoute?.(path, req.method());
       return json(custom !== undefined ? custom : prepBody());
@@ -3410,5 +3411,166 @@ test("sidebar: links go to the patient's screens and the current one is marked",
   await page.waitForFunction(() => location.hash === "#/patients/p1/plan");
   await side.locator("[aria-current=page]").getByText("Plan").waitFor();
   expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+// ---- M3-13: dictation audio pilot (AM-02) ----
+
+// A tiny valid WAV, so a played note really loads from the stubbed audio endpoint.
+const TINY_WAV = (() => {
+  const data = Buffer.alloc(800);
+  const h = Buffer.alloc(44);
+  h.write("RIFF", 0); h.writeUInt32LE(36 + data.length, 4); h.write("WAVEfmt ", 8); h.writeUInt32LE(16, 16);
+  h.writeUInt16LE(1, 20); h.writeUInt16LE(1, 22); h.writeUInt32LE(8000, 24); h.writeUInt32LE(8000, 28);
+  h.writeUInt16LE(1, 32); h.writeUInt16LE(8, 34); h.write("data", 36); h.writeUInt32LE(data.length, 40);
+  return Buffer.concat([h, data]);
+})();
+
+async function openDictationPage(
+  hash: string,
+  features: { dictation: boolean } | undefined,
+  visits: unknown[] = [{ id: "v2", visit_date: "2026-02-01", document_count: 1, fact_count: 1, signed_off_count: 0 }],
+) {
+  const page = await browser.newPage();
+  page.setDefaultTimeout(5000);
+  const errors: string[] = [];
+  page.on("pageerror", (err) => errors.push(`pageerror: ${err.message}`));
+  page.on("console", (msg) => {
+    if (msg.type() === "error") errors.push(`console: ${msg.text()}`);
+  });
+  // A fake microphone and recorder: start() then stop() yields one 100-byte audio/webm chunk.
+  await page.addInitScript(() => {
+    (navigator.mediaDevices as any).getUserMedia = async () => ({ getTracks: () => [{ stop() {} }] });
+    (window as any).MediaRecorder = class {
+      static isTypeSupported(t: string) { return t === "audio/webm"; }
+      mimeType = "audio/webm"; state = "inactive"; ondataavailable: any = null; onstop: any = null;
+      start() { this.state = "recording"; }
+      stop() {
+        this.state = "inactive";
+        this.ondataavailable?.({ data: new Blob([new Uint8Array(100)], { type: "audio/webm" }) });
+        this.onstop?.();
+      }
+    };
+  });
+  const requests: { method: string; path: string; type: string | null; search: string }[] = [];
+  const cors = { "Access-Control-Allow-Origin": BASE, "Access-Control-Allow-Credentials": "true" };
+  await page.route(`${API}/**`, (route) => {
+    const req = route.request();
+    const url = new URL(req.url());
+    const path = url.pathname;
+    if (req.method() === "OPTIONS") {
+      return route.fulfill({ status: 204, headers: { ...cors, "Access-Control-Allow-Headers": "content-type", "Access-Control-Allow-Methods": "GET,POST,OPTIONS" } });
+    }
+    requests.push({ method: req.method(), path, type: req.headers()["content-type"] ?? null, search: url.search });
+    const json = (b: unknown, status = 200) => route.fulfill({ status, contentType: "application/json", headers: cors, body: JSON.stringify(b) });
+    if (path === "/auth/me") return json({ id: "u1", name: "Test", email: "t@opd.local", role: features ? "oncologist" : "staff", ...(features ? { features } : {}) });
+    if (path === "/patients/p1") return json(SHELL_PATIENT);
+    if (path === "/patients/p1/documents") return json({ documents: SHELL_DOCUMENTS });
+    if (path === "/patients/p1/visits") return json(visits);
+    if (path === "/patients/p1/outside-encounters") return json([]);
+    if (path === "/visits/v2/dictation" && req.method() === "POST") return json({ id: "d2", duration_seconds: 1 }, 201);
+    if (path === "/visits/v2/dictations") return json([{ id: "d1", duration_seconds: 75, created_at: "2026-02-01T10:00:00Z", recorded_by_name: "Test" }]);
+    if (path === "/dictations/d1/audio") return route.fulfill({ status: 200, contentType: "audio/wav", headers: cors, body: TINY_WAV });
+    if (path === "/patients/p1/snapshot") return json(snapshotBody());
+    if (path === "/patients/p1/summary") return json(EMPTY_SUMMARY);
+    if (path === "/patients/p1/plan") return json({ next_review: null, items: [] });
+    if (isPrepPath(path)) return json(prepBody());
+    if (path === "/patients/p1/documents/identity") return json({ patient_name: "Test Patient", documents: [] });
+    return json({}, 404);
+  });
+  await page.goto(`${BASE}/#${hash}`);
+  return { page, errors, requests };
+}
+
+const dictationRequests = (reqs: { path: string }[]) => reqs.filter((r) => /dictation/.test(r.path));
+
+test("Dictation: record, stop, play the take, save to the visit; History shows the tag and the play button hits the audio endpoint", async () => {
+  const { page, errors, requests } = await openDictationPage("/patients/p1/history", { dictation: true }, [
+    { id: "v2", visit_date: "2026-02-01", document_count: 1, fact_count: 1, signed_off_count: 0, dictated_note_seconds: 75 },
+    { id: "v1", visit_date: "2026-01-01", document_count: 0, fact_count: 0, signed_off_count: 0, dictated_note_seconds: null },
+  ]);
+  const side = page.getByRole("navigation", { name: "Patient" });
+  await side.getByText("Dictation pilot · your own note only · no transcript is made").waitFor();
+  expect(await side.getByText(/Record consult/).count()).toBe(0);
+  await side.getByRole("button", { name: "Record dictated note" }).click();
+  await side.getByRole("timer").waitFor();
+  await page.waitForTimeout(1200);
+  await side.getByRole("button", { name: "Stop" }).click();
+  // The take can be heard before it is saved; nothing is sent yet.
+  await side.locator("audio").waitFor();
+  expect(requests.filter((r) => r.method === "POST")).toEqual([]);
+  await side.getByRole("button", { name: "Save to this visit" }).click();
+  await side.getByText("Saved to this visit.").waitFor();
+  const post = requests.find((r) => r.method === "POST" && r.path === "/visits/v2/dictation")!;
+  expect(post.type).toBe("audio/webm");
+  expect(Number(new URLSearchParams(post.search).get("duration_seconds"))).toBeGreaterThanOrEqual(1);
+  // Discard drops a take without sending it.
+  await side.getByRole("button", { name: "Record dictated note" }).click();
+  await side.getByRole("button", { name: "Stop" }).click();
+  await side.getByRole("button", { name: "Discard" }).click();
+  await side.getByRole("button", { name: "Record dictated note" }).waitFor();
+  expect(requests.filter((r) => r.method === "POST").length).toBe(1);
+
+  // History: the tag on the visit that has a note only, and no audio request until Play.
+  await page.getByText("Dictated note 1:15").waitFor();
+  expect(await page.getByText(/Dictated note/).count()).toBe(1);
+  expect(requests.some((r) => r.path === "/dictations/d1/audio")).toBe(false);
+  const audioRequest = page.waitForRequest((r) => new URL(r.url()).pathname === "/dictations/d1/audio");
+  await page.getByRole("button", { name: "Play note" }).click();
+  await audioRequest;
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Dictation: microphone denied and unsupported browser give plain messages", async () => {
+  const { page } = await openDictationPage("/patients/p1/history", { dictation: true });
+  const side = page.getByRole("navigation", { name: "Patient" });
+  await side.getByRole("button", { name: "Record dictated note" }).waitFor();
+  await page.evaluate(() => {
+    (navigator.mediaDevices as any).getUserMedia = async () => { throw new DOMException("no", "NotAllowedError"); };
+  });
+  await side.getByRole("button", { name: "Record dictated note" }).click();
+  await side.getByText(/Microphone access was denied/).waitFor();
+  await page.evaluate(() => { delete (window as any).MediaRecorder; });
+  await side.getByRole("button", { name: "Record dictated note" }).click();
+  await side.getByText("This browser cannot record audio.").waitFor();
+  await page.close();
+}, 30_000);
+
+test("Dictation: the Snapshot lists the visit's notes; the player requests nothing until played, then hits the audio endpoint", async () => {
+  const { page, errors, requests } = await openDictationPage("/patients/p1/snapshot", { dictation: true });
+  const notes = page.getByTestId("dictation-notes");
+  await notes.getByText("Dictated note · 1:15").waitFor();
+  expect(await notes.locator("audio").getAttribute("preload")).toBe("none");
+  await page.waitForTimeout(300);
+  expect(requests.some((r) => r.path === "/dictations/d1/audio")).toBe(false);
+  const audioRequest = page.waitForRequest((r) => new URL(r.url()).pathname === "/dictations/d1/audio");
+  await notes.locator("audio").evaluate((a: HTMLAudioElement) => a.play().catch(() => {}));
+  await audioRequest;
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("Dictation: a staff session (no features) shows none of it and makes no dictation request", async () => {
+  for (const hash of ["/patients/p1/history", "/patients/p1/snapshot"]) {
+    const { page, errors, requests } = await openDictationPage(hash, undefined);
+    await page.getByRole("navigation", { name: "Patient" }).waitFor();
+    await page.waitForLoadState("networkidle");
+    await page.waitForTimeout(300);
+    expect(await page.getByText(/dictat/i).count()).toBe(0);
+    expect(await page.getByRole("button", { name: /Record/ }).count()).toBe(0);
+    expect(await page.locator("audio").count()).toBe(0);
+    expect(dictationRequests(requests)).toEqual([]);
+    expect(errors).toEqual([]);
+    await page.close();
+  }
+}, 30_000);
+
+test("Dictation: a session whose features.dictation is false shows none of it either", async () => {
+  const { page, requests } = await openDictationPage("/patients/p1/history", { dictation: false });
+  await page.getByRole("navigation", { name: "Patient" }).waitFor();
+  await page.waitForLoadState("networkidle");
+  expect(await page.getByText(/dictat/i).count()).toBe(0);
+  expect(dictationRequests(requests)).toEqual([]);
   await page.close();
 }, 30_000);

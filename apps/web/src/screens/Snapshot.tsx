@@ -8,6 +8,7 @@ import { Watchlist } from "../components/Watchlist";
 import { SummaryStrip } from "../components/SummaryStrip";
 import { HeldReportBanner } from "../components/HeldReport";
 import { PrepPanel } from "../components/PrepPanel";
+import { DictationNotes } from "../components/DictationNotes";
 import { ReportRequestBanner } from "../components/ReportRequestBanner";
 import { MarkerTrendChart } from "../components/MarkerTrendChart";
 import { withThyroglobulinAdjacency } from "../lib/markerOrder";
@@ -483,6 +484,8 @@ export function Snapshot({ patientId }: { patientId: string }) {
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+
+      <DictationNotes visitId={data.current_visit.id} />
 
       <PrepPanel visitId={data.current_visit.id} refreshKey={data} />
 

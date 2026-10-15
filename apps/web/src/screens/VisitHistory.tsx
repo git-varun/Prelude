@@ -2,8 +2,34 @@ import { useEffect, useState } from "react";
 import { api, ApiError, type OutsideEncounterEntry, type VisitHistoryEntry } from "../api/client";
 import { navigate } from "../router";
 import { ElsewhereTag } from "../components/SummaryBits";
+import { useAuth } from "../auth/AuthContext";
+import { DictationAudio } from "../components/DictationNotes";
+import { formatDuration } from "../lib/dictation";
+
+// AM-02: the tag and an inline play button. Play looks up the visit's newest note, then mounts the player, so
+// nothing is requested from the audio endpoint (and nothing is logged) until the oncologist asks.
+function DictatedNoteTag({ visitId, seconds }: { visitId: string; seconds: number }) {
+  const [noteId, setNoteId] = useState<string | null>(null);
+  const [failed, setFailed] = useState(false);
+  function play() {
+    setFailed(false);
+    api.listVisitDictations(visitId).then((n) => (n[0] ? setNoteId(n[0].id) : setFailed(true))).catch(() => setFailed(true));
+  }
+  return (
+    <>
+      <span className="tag">Dictated note {formatDuration(seconds)}</span>
+      {noteId ? (
+        <DictationAudio dictationId={noteId} autoPlay />
+      ) : (
+        <button className="btn btn--ghost" type="button" onClick={play}>Play note</button>
+      )}
+      {failed && <span className="muted">The note could not be loaded.</span>}
+    </>
+  );
+}
 
 export function VisitHistory({ patientId }: { patientId: string }) {
+  const canDictate = !!useAuth().user?.features?.dictation;
   const [visits, setVisits] = useState<VisitHistoryEntry[] | null>(null);
   const [outside, setOutside] = useState<OutsideEncounterEntry[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -61,6 +87,9 @@ export function VisitHistory({ patientId }: { patientId: string }) {
                     <span className="tag">
                       {row.v.signed_off_count} signed off
                     </span>
+                    {canDictate && typeof row.v.dictated_note_seconds === "number" && (
+                      <DictatedNoteTag visitId={row.v.id} seconds={row.v.dictated_note_seconds} />
+                    )}
                   </span>
                 </div>
               ) : (

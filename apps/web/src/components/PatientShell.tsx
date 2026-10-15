@@ -2,6 +2,7 @@ import { Fragment, useCallback, useEffect, useRef, useState, type ReactNode } fr
 import { api, ApiError, type PatientDetail } from "../api/client";
 import { activeNav, demographicsLine, NAV_ITEMS } from "../lib/patientShell";
 import { navigate } from "../router";
+import { DictationRecorder } from "./DictationRecorder";
 import { DocumentPane, type DocsState } from "./DocumentPane";
 import { PaneProvider, usePane } from "./PaneContext";
 
@@ -87,6 +88,7 @@ function ShellBody({ patientId, route, children }: { patientId: string; route: s
             </Fragment>
           );
         })}
+        <DictationRecorder patientId={patientId} />
       </nav>
       <div className="patient-shell__main">{children}</div>
       <DocumentPane patientId={patientId} docs={docs} onRetry={() => { setDocs({ status: "loading" }); void loadDocs(); }} />

@@ -73,6 +73,8 @@ export interface SessionUser {
   name: string;
   email: string;
   role: UserRole;
+  /** M3-13: dictation is true only for the one pilot oncologist. */
+  features?: { dictation: boolean };
 }
 
 export type Sex = "male" | "female" | "other" | "unknown";
@@ -168,6 +170,15 @@ export interface VisitHistoryEntry {
   document_count: number;
   fact_count: number;
   signed_off_count: number;
+  /** M3-13: only sent to the pilot oncologist; null = no dictated note on this visit. */
+  dictated_note_seconds?: number | null;
+}
+
+export interface DictationEntry {
+  id: string;
+  duration_seconds: number;
+  created_at: string;
+  recorded_by_name: string;
 }
 
 /** AM-03: a visit elsewhere, confirmed by staff (date and facility). Never signed off as a visit. */
@@ -607,7 +618,26 @@ export interface ConflictDetail {
   fact_b: ConflictFact;
 }
 
+/** The audio endpoint's URL, for an <audio src>. Every request to it is written to the access log by the API. */
+export async function dictationAudioUrl(dictationId: string): Promise<string> {
+  return `${await getApiBaseUrl()}/dictations/${dictationId}/audio`;
+}
+
 export const api = {
+  listVisitDictations: (visitId: string) => request<DictationEntry[]>(`/visits/${visitId}/dictations`),
+
+  recordDictation: async (visitId: string, audio: Blob, durationSeconds: number): Promise<{ id: string; duration_seconds: number }> => {
+    const res = await fetch(`${await getApiBaseUrl()}/visits/${visitId}/dictation?duration_seconds=${durationSeconds}`, {
+      method: "POST",
+      credentials: "include",
+      headers: { "Content-Type": audio.type.split(";")[0] || "audio/webm" },
+      body: audio,
+    });
+    const body = await res.json().catch(() => null);
+    if (!res.ok) throw new ApiError(res.status, body?.error ?? "unknown_error", body?.message ?? res.statusText);
+    return body;
+  },
+
   login: (email: string, password: string) =>
     request<SessionUser>("/auth/login", { method: "POST", body: JSON.stringify({ email, password }) }),
 

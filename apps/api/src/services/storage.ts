@@ -45,6 +45,18 @@ export async function saveOcrResult(patientId: string, documentId: string, resul
   return { file_ref: `local://${patientId}/ocr/${documentId}.json` };
 }
 
+// AM-02: dictated-note audio, stored per visit under a dictations/ prefix. Same "abstracted pointer" contract.
+export async function saveDictationFile(visitId: string, ext: string, data: Blob): Promise<StoredFile> {
+  if (driver !== "local") {
+    throw new Error(`Unsupported OBJECT_STORAGE_DRIVER: ${driver}`);
+  }
+  const dir = path.join(localBasePath, "dictations", visitId);
+  await mkdir(dir, { recursive: true });
+  const name = `${crypto.randomUUID()}.${ext}`;
+  await Bun.write(path.join(dir, name), data);
+  return { file_ref: `local://dictations/${visitId}/${name}` };
+}
+
 export function resolveLocalPath(fileRef: string): string {
   if (!fileRef.startsWith("local://")) {
     throw new Error(`Cannot resolve non-local file_ref: ${fileRef}`);

@@ -1,4 +1,5 @@
 import { sql } from "../db/client";
+import { isDictationEnabledFor } from "../services/dictation";
 import { createSession, destroySession, sessionCookieHeader, clearedCookieHeader, getAuthedUser, jsonError } from "../middleware/auth";
 
 interface LoginBody {
@@ -69,7 +70,7 @@ export async function login(req: Request): Promise<Response> {
   clearAttempts(email);
   const { token, expiresAt } = await createSession(row.id);
   return Response.json(
-    { id: row.id, name: row.name, email: row.email, role: row.role },
+    { id: row.id, name: row.name, email: row.email, role: row.role, features: { dictation: isDictationEnabledFor(row) } },
     { status: 200, headers: { "Set-Cookie": sessionCookieHeader(token, expiresAt) } },
   );
 }
@@ -92,5 +93,6 @@ export async function me(req: Request): Promise<Response> {
   if (!user) {
     return jsonError(401, "unauthenticated", "Sign in required.");
   }
-  return Response.json(user);
+  // M3-13: `features.dictation` is true only for the one flagged oncologist.
+  return Response.json({ ...user, features: { dictation: isDictationEnabledFor(user) } });
 }

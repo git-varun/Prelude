@@ -9,6 +9,8 @@ import { getConflict, annotateConflict, resolveConflict } from "./routes/conflic
 import { getPatientPlan, addPlanItem, setPlanItemMatch, requestPlanItemReport, clearPlanItemReportRequest } from "./routes/plan";
 import { getVisitPrep, setVisitPrep } from "./routes/prep";
 import { pinMarker, suggestPin, dismissPinSuggestion } from "./routes/pins";
+import { recordDictation, listVisitDictations, playDictation } from "./routes/dictation";
+import { requireDictation } from "./middleware/dictation";
 import { requireRole } from "./middleware/roles";
 import { cors } from "./middleware/cors";
 
@@ -67,6 +69,16 @@ const server = Bun.serve({
     "/visits/:id/prep": cors({
       GET: requireRole(["staff", "oncologist"], getVisitPrep),
       POST: requireRole(["staff", "oncologist"], setVisitPrep),
+    }),
+    // M3-13 (AM-02): only the flagged oncologist; everyone else gets 404 (not 403) so staff cannot detect the feature.
+    "/visits/:id/dictation": cors({
+      POST: requireDictation(recordDictation),
+    }),
+    "/visits/:id/dictations": cors({
+      GET: requireDictation(listVisitDictations),
+    }),
+    "/dictations/:id/audio": cors({
+      GET: requireDictation(playDictation),
     }),
     "/patients/:id/summary": cors({
       GET: requireRole(["staff", "oncologist"], getPatientSummary),
