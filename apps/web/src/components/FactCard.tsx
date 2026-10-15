@@ -4,6 +4,7 @@ import { api, ApiError, type ReviewFact, type TrackedMarker } from "../api/clien
 import { flagForRange } from "../lib/referenceRange";
 import { navigate } from "../router";
 import { FactCheck } from "./FactCheck";
+import { usePane } from "./PaneContext";
 import { ElsewhereTag } from "./SummaryBits";
 
 const RANGE_FLAG_LABEL: Record<"above" | "below", string> = {
@@ -79,6 +80,7 @@ export function FactCard({ fact, trackedMarkers, onChanged, badge, check, onSign
     }
   }
 
+  const pane = usePane();
   const heading = fact.tracked_marker_name ?? fact.raw_marker_label ?? FIELD_LABELS[fact.field_type] ?? fact.field_type;
   const needsReview = fact.coverage_status === "extraction_uncertain";
   const signOffBlockedReason = fact.has_blocking_conflict
@@ -122,7 +124,7 @@ export function FactCard({ fact, trackedMarkers, onChanged, badge, check, onSign
           <button
             className="btn btn--ghost source-link"
             type="button"
-            onClick={() => navigate(`/documents/${fact.document_id}/source?fact=${fact.id}`)}
+            onClick={() => (pane ? pane.openAtFact(fact.id, fact.document_id) : navigate(`/documents/${fact.document_id}/source?fact=${fact.id}`))}
           >
             📄 View uploaded document
           </button>

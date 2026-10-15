@@ -211,7 +211,22 @@ export interface DocumentRecord {
   outside_encounter?: OutsideEncounterRef | null;
 }
 
-export type CheckState = "unchecked" | "correct" | "incorrect";
+/** M3-11: one row of the document pane's tree (GET /patients/:id/documents; rejected documents are not listed). */
+export interface PatientDocumentEntry {
+  id: string;
+  document_type: string;
+  source_origin: string;
+  lab_name: string | null;
+  identity_status: IdentityStatus | null;
+  extraction_status: DocumentRecord["extraction_status"];
+  uploaded_at: string;
+  has_text: boolean;
+  collected_on: string | null;
+  reported_on: string | null;
+  outside_facility: string | null;
+}
+
+export type CheckState ="unchecked" | "correct" | "incorrect";
 export type CheckErrorType = "value" | "unit" | "marker" | "date" | "range" | "facility" | "not_in_document" | "wrong_patient";
 
 export interface ReviewFact {
@@ -711,6 +726,8 @@ export const api = {
     form.set("file", input.file);
     return request<DocumentRecord>(`/patients/${patientId}/documents`, { method: "POST", body: form });
   },
+
+  listPatientDocuments: (patientId: string) => request<{ documents: PatientDocumentEntry[] }>(`/patients/${patientId}/documents`),
 
   getPatientIdentityDocuments: (patientId: string) =>
     request<PatientIdentityDocuments>(`/patients/${patientId}/documents/identity`),

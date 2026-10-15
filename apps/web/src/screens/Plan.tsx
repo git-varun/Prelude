@@ -4,6 +4,7 @@ import { navigate } from "../router";
 import { ElsewhereTag } from "../components/SummaryBits";
 import { RoleGate } from "../auth/AuthContext";
 import { ReportRequestBanner } from "../components/ReportRequestBanner";
+import { usePane } from "../components/PaneContext";
 
 const TYPE_LABELS: Record<PlanItemType, string> = { test: "Test", procedure: "Procedure", review: "Review" };
 
@@ -35,6 +36,7 @@ function statusText(item: PlanItem): string {
 }
 
 function SourceLink({ item }: { item: PlanItem }) {
+  const pane = usePane();
   if (!item.source_fact_id || !item.source_document_id) return null;
   const href = `/documents/${item.source_document_id}/source?fact=${item.source_fact_id}`;
   return (
@@ -45,7 +47,8 @@ function SourceLink({ item }: { item: PlanItem }) {
         href={`#${href}`}
         onClick={(e) => {
           e.preventDefault();
-          navigate(href);
+          if (pane) pane.openAtFact(item.source_fact_id!, item.source_document_id!);
+          else navigate(href);
         }}
       >
         Source

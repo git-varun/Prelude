@@ -13,6 +13,7 @@ import { MarkerTrendChart } from "../components/MarkerTrendChart";
 import { withThyroglobulinAdjacency } from "../lib/markerOrder";
 import { dueLabel } from "./Plan";
 import { deltaPriority, needsCheck, RULES, type PriorityItem } from "../lib/priorityOrder";
+import { ageFromDob } from "../lib/patientShell";
 import { navigate } from "../router";
 
 const FIELD_LABELS: Record<string, string> = {
@@ -30,19 +31,6 @@ const FIELD_LABELS: Record<string, string> = {
   procedures_planned: "Procedures planned",
   lesion_size: "Lesion size",
 };
-
-function ageFromDob(dob: string | null): number | null {
-  if (dob === null) return null;
-  const birth = new Date(`${dob}T00:00:00Z`);
-  if (Number.isNaN(birth.getTime())) return null;
-  const now = new Date();
-  let age = now.getUTCFullYear() - birth.getUTCFullYear();
-  const hasHadBirthdayThisYear =
-    now.getUTCMonth() > birth.getUTCMonth() ||
-    (now.getUTCMonth() === birth.getUTCMonth() && now.getUTCDate() >= birth.getUTCDate());
-  if (!hasHadBirthdayThisYear) age -= 1;
-  return age;
-}
 
 const DELTA_LABELS: Record<string, string> = {
   new: "New",

@@ -851,3 +851,202 @@ select {
 .report-request .btn {
   white-space: nowrap;
 }
+
+/* Patient shell (M3-11): sidebar, screen, and the document pane (a 48px rail until opened). */
+.app-main--wide {
+  max-width: 1600px;
+}
+
+.patient-shell {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr) auto;
+  gap: var(--space-5);
+  align-items: start;
+}
+
+.patient-shell__side {
+  position: sticky;
+  top: var(--space-4);
+  display: flex;
+  flex-direction: column;
+}
+
+.patient-shell__id {
+  padding-bottom: var(--space-3);
+}
+
+.patient-shell__name {
+  font-size: 17px;
+  font-weight: 800;
+}
+
+.patient-shell__dx {
+  margin-top: var(--space-1);
+  font-size: 13px;
+}
+
+.patient-shell__nav {
+  display: block;
+  width: 100%;
+  padding: var(--space-2) 0;
+  border: 0;
+  border-top: 1px solid var(--color-border);
+  background: none;
+  color: var(--color-text);
+  font: inherit;
+  text-align: left;
+  text-decoration: none;
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.patient-shell__nav:hover {
+  color: var(--color-accent-hover);
+}
+
+.patient-shell__nav--active {
+  font-weight: 800;
+  color: var(--color-accent);
+}
+
+.patient-shell__nav:focus-visible,
+.doc-pane__rail-btn:focus-visible,
+.doc-pane__item:focus-visible {
+  outline: 2px solid var(--color-accent);
+  outline-offset: 2px;
+}
+
+.patient-shell__main {
+  min-width: 0;
+}
+
+.doc-pane {
+  width: 48px;
+  position: sticky;
+  top: var(--space-4);
+}
+
+.doc-pane__rail-btn {
+  width: 48px;
+  height: 48px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-surface);
+  font-size: 20px;
+  cursor: pointer;
+}
+
+.doc-pane--open {
+  width: clamp(320px, 30vw, 400px);
+  max-height: calc(100vh - 2 * var(--space-4));
+  overflow-y: auto;
+  padding: var(--space-3);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-sm);
+  background: var(--color-bg);
+}
+
+.doc-pane__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: var(--space-2);
+}
+
+.doc-pane__title {
+  margin: 0;
+  font-size: 16px;
+}
+
+.doc-pane__group-label {
+  margin: var(--space-3) 0 var(--space-1);
+  font-size: 11px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--color-text-muted);
+}
+
+.doc-pane__item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  width: 100%;
+  padding: var(--space-2);
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: none;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.doc-pane__item--selected {
+  background: var(--color-surface-sunken);
+}
+
+.doc-pane__item-meta {
+  font-size: 12px;
+  color: var(--color-text-muted);
+}
+
+.doc-pane__body {
+  margin-top: var(--space-4);
+}
+
+.doc-pane__actions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: var(--space-3);
+  margin-bottom: var(--space-2);
+}
+
+.doc-pane__page {
+  padding: var(--space-4);
+  background: #fff;
+  box-shadow: var(--shadow-sm);
+  overflow-x: auto;
+}
+
+.doc-pane__page .source-text {
+  margin: 0;
+  font-size: 13px;
+  white-space: pre-wrap;
+}
+
+.doc-pane__page mark {
+  background: var(--color-accent-soft);
+  outline: 2px solid var(--color-accent);
+  color: inherit;
+}
+
+.doc-pane__backdrop {
+  display: none;
+}
+
+@media (max-width: 1179.98px) {
+  .patient-shell {
+    grid-template-columns: 220px minmax(0, 1fr) 48px;
+  }
+
+  .doc-pane--open {
+    position: fixed;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 20;
+    width: min(400px, 92vw);
+    max-height: none;
+    border-radius: 0;
+    box-shadow: var(--shadow-md);
+  }
+
+  .doc-pane__backdrop {
+    display: block;
+    position: fixed;
+    inset: 0;
+    z-index: 10;
+    background: rgba(38, 34, 32, 0.35);
+  }
+}

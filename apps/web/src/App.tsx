@@ -1,6 +1,7 @@
 import type { ReactNode } from "react";
 import { AuthProvider, useAuth } from "./auth/AuthContext";
 import { Shell } from "./components/Shell";
+import { PatientShell } from "./components/PatientShell";
 import { Login } from "./screens/Login";
 import { PatientList } from "./screens/PatientList";
 import { PatientCreate } from "./screens/PatientCreate";
@@ -53,8 +54,11 @@ function Routed() {
   const heldPatientId = matchPatientHeld(route);
 
   let screen: ReactNode;
+  // Patient screens live inside the patient shell (sidebar + document pane); the rest stay full width.
+  let shellPatientId: string | null = null;
   if (uploadPatientId) {
     screen = <Upload patientId={uploadPatientId} />;
+    shellPatientId = uploadPatientId;
   } else if (heldPatientId) {
     screen = <HeldDocuments patientId={heldPatientId} />;
   } else if (conflictId) {
@@ -65,24 +69,38 @@ function Routed() {
     screen = <ExtractionReview documentId={reviewDocumentId} />;
   } else if (editPatientId) {
     screen = <PatientEdit patientId={editPatientId} />;
+    shellPatientId = editPatientId;
   } else if (historyPatientId) {
     screen = <VisitHistory patientId={historyPatientId} />;
+    shellPatientId = historyPatientId;
   } else if (timelinePatientId) {
     screen = <Timeline patientId={timelinePatientId} />;
+    shellPatientId = timelinePatientId;
   } else if (planPatientId) {
     screen = <Plan patientId={planPatientId} />;
+    shellPatientId = planPatientId;
   } else if (summaryPatientId) {
     screen = <Summary patientId={summaryPatientId} />;
+    shellPatientId = summaryPatientId;
   } else if (snapshotPatientId) {
     screen = <Snapshot patientId={snapshotPatientId} />;
+    shellPatientId = snapshotPatientId;
   } else if (markersPatientId) {
     screen = <MarkerManagement patientId={markersPatientId} />;
+    shellPatientId = markersPatientId;
   } else if (route === "/patients/new") {
     screen = <PatientCreate />;
   } else {
     screen = <PatientList />;
   }
 
+  if (shellPatientId) {
+    return (
+      <Shell wide>
+        <PatientShell key={shellPatientId} patientId={shellPatientId} route={route}>{screen}</PatientShell>
+      </Shell>
+    );
+  }
   return <Shell>{screen}</Shell>;
 }
 

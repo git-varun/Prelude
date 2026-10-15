@@ -3,6 +3,7 @@ import { RoleGate } from "../auth/AuthContext";
 import { api, ApiError, type WatchlistEntry, type PatientSnapshot } from "../api/client";
 import { flagForRange, parseReferenceRange } from "../lib/referenceRange";
 import { navigate } from "../router";
+import { usePane } from "./PaneContext";
 import { ElsewhereTag, elsewhereMark, elsewhereSuffix, trustLabel } from "./SummaryBits";
 
 const W = 120;
@@ -51,13 +52,24 @@ export function Sparkline({ entry, outOfRange }: { entry: SparklineEntry; outOfR
   );
 }
 
-// A div with role="link" (as Timeline's chart points do), so block children are valid.
-function CellLink({ href, children }: { href: string; children: React.ReactNode }) {
+// A focusable div (so block children are valid) that opens the document pane at the fact on Enter or Space. A cell
+// with no document opens the pane too, which then says so in plain words.
+function CellLink({ factId, documentId, children }: { factId: string; documentId: string | null; children: React.ReactNode }) {
+  const pane = usePane();
+  const open = () => {
+    if (pane) pane.openAtFact(factId, documentId);
+    else if (documentId) navigate(`/documents/${documentId}/source?fact=${factId}`);
+  };
   return (
     <div
-      className="watch-cell watch-cell--link" data-testid="watch-cell" role="link" tabIndex={0}
-      onClick={() => navigate(href)}
-      onKeyDown={(e) => { if (e.key === "Enter") navigate(href); }}
+      className="watch-cell watch-cell--link" data-testid="watch-cell" role="button" tabIndex={0}
+      onClick={open}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          open();
+        }
+      }}
     >
       {children}
     </div>
@@ -82,8 +94,8 @@ function Cell({ entry }: { entry: WatchlistEntry }) {
         {seen && !seen.document_id && <div className="muted">{NO_DOCUMENT}</div>}
       </>
     );
-    return seen?.document_id
-      ? <CellLink href={`/documents/${seen.document_id}/source?fact=${seen.fact_id}`}>{body}</CellLink>
+    return seen
+      ? <CellLink factId={seen.fact_id} documentId={seen.document_id ?? null}>{body}</CellLink>
       : <div className="watch-cell" data-testid="watch-cell">{body}</div>;
   }
   const flag = entry.conflict || !Number.isFinite(numeric(latest.value)) ? null : flagForRange(latest.value, latest.reference_range);
@@ -120,8 +132,8 @@ function Cell({ entry }: { entry: WatchlistEntry }) {
     </>
   );
   // Same target as a fact's "View uploaded document" link. A conflict cell has its own review link instead.
-  return latest.document_id && !entry.conflict
-    ? <CellLink href={`/documents/${latest.document_id}/source?fact=${latest.fact_id}`}>{body}</CellLink>
+  return !entry.conflict
+    ? <CellLink factId={latest.fact_id} documentId={latest.document_id ?? null}>{body}</CellLink>
     : <div className="watch-cell" data-testid="watch-cell">{body}</div>;
 }
 

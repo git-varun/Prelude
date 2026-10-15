@@ -2,28 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type DocumentFileCheck, type DocumentOcr, type DocumentRecord, type ReviewFact } from "../api/client";
 import { navigate } from "../router";
 import { ElsewhereTag } from "../components/SummaryBits";
+import { HighlightedText } from "../components/SourceText";
+import { pageText } from "../lib/documentPane";
 
-function pageText(ocr: DocumentOcr | null, pageNumber: number | null): string | null {
-  if (!ocr) return null;
-  if (pageNumber === null) return ocr.fullText;
-  return ocr.pages.find((p) => p.pageNumber === pageNumber)?.text ?? ocr.fullText;
-}
-
-// Plain substring search against OCR text, per the Source view's stated constraint: no bounding
-// box or geometry exists to highlight against, only a text match.
-function HighlightedText({ text, snippet }: { text: string; snippet: string | null }) {
-  const idx = snippet ? text.indexOf(snippet) : -1;
-  if (idx === -1 || !snippet) {
-    return <pre className="source-text">{text}</pre>;
-  }
-  return (
-    <pre className="source-text">
-      {text.slice(0, idx)}
-      <mark data-testid="source-highlight">{text.slice(idx, idx + snippet.length)}</mark>
-      {text.slice(idx + snippet.length)}
-    </pre>
-  );
-}
 
 export function OriginalDocument({ fileCheck, sourcePage }: { fileCheck: DocumentFileCheck; sourcePage: number | null }) {
   if (fileCheck.contentType?.startsWith("image/")) {

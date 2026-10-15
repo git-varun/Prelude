@@ -2,7 +2,7 @@ import type { ReactNode } from "react";
 import { useAuth } from "../auth/AuthContext";
 import { navigate } from "../router";
 
-export function Shell({ children }: { children: ReactNode }) {
+export function Shell({ children, wide }: { children: ReactNode; wide?: boolean }) {
   const { user, logout } = useAuth();
 
   return (
@@ -21,7 +21,7 @@ export function Shell({ children }: { children: ReactNode }) {
           </div>
         )}
       </header>
-      <main className="app-main">{children}</main>
+      <main className={`app-main${wide ? " app-main--wide" : ""}`}>{children}</main>
     </div>
   );
 }

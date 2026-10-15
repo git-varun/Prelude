@@ -46,7 +46,49 @@ beforeAll(async () => {
   });
   await waitForServer();
   browser = await chromium.launch();
+  shimShellRequests(browser);
 }, 30_000);
+
+// M3-11: every patient screen now sits in the patient shell, which also reads GET /patients/:id and
+// GET /patients/:id/documents. Older fixtures answer unknown paths with a 404 (a console error), so a 404 on exactly
+// those two paths becomes the default below; a test that answers them itself is untouched.
+const SHELL_PATIENT = {
+  id: "p1", name: "Test Patient", cancer_type: "Breast", sex: "female", date_of_birth: "1970-01-01", mrn: null,
+  diagnosis_text: "Invasive ductal carcinoma", regimen_text: null, tracked_markers: [],
+};
+const SHELL_DOCUMENTS = [
+  { id: "doc1", document_type: "blood", source_origin: "own_hospital", lab_name: "Metro Labs", identity_status: null, extraction_status: "done",
+    uploaded_at: "2026-02-01T10:00:00Z", has_text: true, collected_on: "2026-02-01", reported_on: null, outside_facility: null },
+];
+function shimShellRequests(b: Browser) {
+  const newPage = b.newPage.bind(b);
+  b.newPage = (async (...args: Parameters<Browser["newPage"]>) => {
+    const page = await newPage(...args);
+    const route = page.route.bind(page);
+    page.route = ((url: Parameters<typeof route>[0], handler: (r: any, q: any) => unknown, opts?: any) =>
+      route(url, (r, q) => {
+        const path = new URL(q.url()).pathname;
+        const shell = q.method() === "GET" && /^\/patients\/[^/]+(\/documents)?$/.test(path);
+        const wrapped = new Proxy(r, {
+          get(target, prop) {
+            if (prop === "fulfill" && shell) {
+              return (o: { status?: number; headers?: Record<string, string> }) =>
+                o.status === 404
+                  ? target.fulfill({
+                      status: 200, contentType: "application/json", headers: o.headers,
+                      body: JSON.stringify(path.endsWith("/documents") ? { documents: SHELL_DOCUMENTS } : SHELL_PATIENT),
+                    })
+                  : target.fulfill(o);
+            }
+            const v = (target as any)[prop];
+            return typeof v === "function" ? v.bind(target) : v;
+          },
+        });
+        return handler(wrapped, q);
+      }, opts)) as typeof page.route;
+    return page;
+  }) as Browser["newPage"];
+}
 
 afterAll(async () => {
   await browser?.close();
@@ -2403,7 +2445,7 @@ test("Watchlist: unit change note, non-numeric latest keeps the sparkline and ho
   await page.close();
 }, 30_000);
 
-test("Watchlist: a cell without a document says so and is not a link; Enter on a linked cell opens the source; missing pin links its last value", async () => {
+test("Watchlist: a cell without a document says so and opens the pane with the same words; Enter or Space on a cell opens the pane at that fact; missing pin does too", async () => {
   const noDoc = watchEntry({ latest: { ...watchEntry().latest, document_id: null } });
   const missing = watchEntry({
     tracked_marker_id: "m2", marker_name: "AFP", missing: true, latest: null, sparkline: [],
@@ -2416,22 +2458,32 @@ test("Watchlist: a cell without a document says so and is not a link; Enter on a
       { tracked_marker_id: "m2", marker_name: "AFP", is_pinned: true, suggested: false },
     ],
   });
-  const { page } = await openSnapshot("staff", body);
+  const { page, errors } = await openSnapshot("staff", body, {}, paneRoutes());
   const cells = page.getByTestId("watch-cell");
   await cells.nth(0).getByText("No document available for this value").waitFor();
-  expect(await cells.nth(0).getAttribute("role")).toBeNull();
-  expect(await page.locator("button.watch-cell").count()).toBe(0);
+  await cells.nth(0).click();
+  await page.getByTestId("pane-no-document").getByText("No document is available for this value.").waitFor();
+  expect(await page.getByTestId("pane-provenance").count()).toBe(0);
+  await page.getByRole("button", { name: "Close documents panel" }).click();
   await cells.nth(1).focus();
   await page.keyboard.press("Enter");
-  await page.waitForFunction(() => location.hash.startsWith("#/documents/doc9/source?fact=f9"));
+  await page.getByTestId("pane-provenance").waitFor();
+  await page.getByRole("button", { name: "Close documents panel" }).click();
+  await cells.nth(1).focus();
+  await page.keyboard.press(" ");
+  await page.getByTestId("pane-provenance").waitFor();
+  expect(errors).toEqual([]);
   await page.close();
 }, 30_000);
 
-test("Watchlist: clicking a cell opens that fact's source view", async () => {
+test("Watchlist: clicking a cell opens the pane at that fact, not the full page", async () => {
   const body = snapshotBody({ watchlist: [watchEntry()], pin_options: [{ tracked_marker_id: "m1", marker_name: "CEA", is_pinned: true, suggested: false }] });
-  const { page } = await openSnapshot("staff", body);
+  const { page, errors } = await openSnapshot("staff", body, {}, paneRoutes());
   await page.getByTestId("watch-cell").click();
-  await page.waitForFunction(() => location.hash.startsWith("#/documents/doc1/source?fact=f1"));
+  await page.getByTestId("pane-provenance").waitFor();
+  expect(await page.getByTestId("source-highlight").textContent()).toBe("PSA 1.1 ng/mL");
+  expect(await page.evaluate(() => location.hash)).toBe("#/patients/p1/snapshot");
+  expect(errors).toEqual([]);
   await page.close();
 }, 30_000);
 
@@ -2982,4 +3034,204 @@ test("Ask staff to find report: the oncologist asks once and sees 'Request sent 
   await staffView.page.getByTestId("report-request-banner").waitFor();
   expect(staffView.errors).toEqual([]);
   await staffView.page.close();
+}, 30_000);
+
+// --- M3-11: patient shell and document pane ---
+const PANE_TEXT = "CEA 4.2 ng/mL\nPSA 1.1 ng/mL\nCA-125 30 U/mL";
+
+// Extra API answers for the pane: a document with one page (3) of text, and facts f1/f2/f9 pointing at the PSA line.
+function paneRoutes(overrides: Record<string, unknown> = {}, fact: Record<string, unknown> = {}) {
+  return (path: string) => {
+    if (path in overrides) return overrides[path];
+    const m = path.match(/^\/documents\/([^/]+)(\/facts|\/file)?$/);
+    if (!m) return undefined;
+    const document = {
+      id: m[1], patient_id: "p1", visit_id: "v2", file_ref: "x", document_type: "blood", source_origin: "own_hospital",
+      uploaded_by: "u1", uploaded_at: "2026-02-01T10:00:00Z", ocr_status: "done", ocr_text_ref: "x", needs_manual_date: false,
+      extraction_status: "done", extraction_error: null, identity_status: null, lab_name: "Metro Labs", outside_encounter_id: null,
+    };
+    if (m[2] === "/file") return {};
+    if (m[2] === "/facts") {
+      const facts = ["f1", "f2", "f9"].map((id) => ({
+        id, document_id: m[1], source_page: 3, source_location: null, source_snippet: "PSA 1.1 ng/mL", fallback_level: "exact", ...fact,
+      }));
+      return { document, facts, tracked_markers: [], check_summary: checkSummaryFor([]) };
+    }
+    return { document, ocr: { fullText: PANE_TEXT, pages: [{ pageNumber: 3, text: PANE_TEXT }] } };
+  };
+}
+
+const oneFact = () => snapshotBody({ tumor_markers: [snapshotField({ fact_id: "f1", marker_name: "CEA" })] });
+
+test("pane: collapsed by default; a fact opens it at the highlight with the exact tag; Open full page resolves; close returns focus", async () => {
+  const { page, errors } = await openSnapshot("staff", oneFact(), {}, paneRoutes());
+  const pane = page.getByTestId("doc-pane");
+  expect(await pane.getAttribute("data-open")).toBe("false");
+  expect(await page.getByRole("heading", { name: "Documents · all" }).count()).toBe(0);
+  await page.getByRole("button", { name: "Open documents panel" }).waitFor();
+
+  const opener = page.getByRole("button", { name: "View uploaded document" });
+  await opener.focus();
+  await page.keyboard.press("Enter");
+  await page.getByTestId("pane-provenance").getByText("Exact match · page 3").waitFor();
+  expect(await pane.getAttribute("data-open")).toBe("true");
+  expect(await page.getByTestId("source-highlight").textContent()).toBe("PSA 1.1 ng/mL");
+  // Focus moved into the pane header.
+  expect(await page.evaluate(() => document.activeElement?.textContent)).toBe("Documents · all");
+  // The screen behind did not navigate.
+  expect(await page.evaluate(() => location.hash)).toBe("#/patients/p1/snapshot");
+  // The list item for this document is the selected one.
+  expect(await page.getByTestId("pane-item").first().getAttribute("aria-current")).toBe("true");
+
+  const full = page.getByRole("link", { name: "Open full page" });
+  expect(await full.getAttribute("href")).toBe("#/documents/doc1/source?fact=f1");
+
+  await page.getByRole("button", { name: "Close documents panel" }).click();
+  await page.getByRole("button", { name: "Open documents panel" }).waitFor();
+  expect(await page.evaluate(() => document.activeElement?.textContent)).toContain("View uploaded document");
+  expect(errors).toEqual([]);
+
+  // The link really lands on the full-page view of that fact.
+  await opener.click();
+  await page.getByRole("link", { name: "Open full page" }).click();
+  await page.waitForFunction(() => location.hash === "#/documents/doc1/source?fact=f1");
+  await page.getByRole("heading", { name: "Source document" }).waitFor();
+  await page.close();
+}, 30_000);
+
+test("pane: a snippet not found on the page shows the page without highlight and the Document tag", async () => {
+  const { page, errors } = await openSnapshot("staff", oneFact(), {}, paneRoutes({}, { source_snippet: "not on this page" }));
+  await page.getByRole("button", { name: "View uploaded document" }).click();
+  await page.getByTestId("pane-provenance").getByText("Document · page 3").waitFor();
+  expect(await page.getByTestId("source-highlight").count()).toBe(0);
+  await page.getByTestId("pane-page").getByText("CA-125 30 U/mL", { exact: false }).waitFor();
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("pane: a document with no readable text says so and links the original file", async () => {
+  const routes = paneRoutes();
+  const { page, errors } = await openSnapshot("staff", oneFact(), {}, (path) => {
+    if (path === "/documents/doc1") return { document: (routes(path) as any).document, ocr: null };
+    return routes(path);
+  });
+  await page.getByRole("button", { name: "View uploaded document" }).click();
+  await page.getByText("This document has no readable text; open the original file.").waitFor();
+  expect(await page.getByRole("link", { name: "Open original file" }).getAttribute("href")).toBe(`${API}/documents/doc1/file`);
+  expect(await page.getByTestId("pane-provenance").count()).toBe(0);
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+const TREE_DOCS = [
+  { id: "d1", document_type: "blood", source_origin: "own_hospital", lab_name: "Metro Labs", identity_status: null, extraction_status: "done", uploaded_at: "2026-02-03T10:00:00Z", has_text: true, collected_on: "2026-02-01", reported_on: "2026-02-02", outside_facility: null },
+  { id: "d2", document_type: "radiology", source_origin: "outside_cd", lab_name: null, identity_status: null, extraction_status: "done", uploaded_at: "2026-01-20T10:00:00Z", has_text: true, collected_on: null, reported_on: null, outside_facility: "Apollo" },
+  { id: "d3", document_type: "prescription", source_origin: "own_hospital", lab_name: null, identity_status: null, extraction_status: "done", uploaded_at: "2026-01-10T10:00:00Z", has_text: true, collected_on: null, reported_on: null, outside_facility: null },
+  { id: "d4", document_type: "other", source_origin: "outside_paper", lab_name: "City Lab", identity_status: null, extraction_status: "not_extracted", uploaded_at: "2026-01-05T10:00:00Z", has_text: false, collected_on: null, reported_on: null, outside_facility: null },
+  { id: "d5", document_type: "pathology", source_origin: "own_hospital", lab_name: null, identity_status: null, extraction_status: "done", uploaded_at: "2026-01-04T10:00:00Z", has_text: true, collected_on: null, reported_on: null, outside_facility: null },
+];
+
+test("pane: the sidebar shows the patient and the document count; the tree groups Reports, Radiology, Prescriptions, Other; an Other document says it is not extracted", async () => {
+  const routes = paneRoutes();
+  const { page, errors } = await openSnapshot("staff", oneFact(), {}, (path) => {
+    if (path === "/patients/p1/documents") return { documents: TREE_DOCS };
+    if (path === "/documents/d4") return { document: { ...(routes("/documents/d4") as any).document, id: "d4", document_type: "other", extraction_status: "not_extracted" }, ocr: null };
+    return routes(path);
+  });
+  const side = page.getByRole("navigation", { name: "Patient" });
+  await side.getByText("Test Patient").waitFor();
+  await side.getByText("Invasive ductal carcinoma").waitFor();
+  expect(await side.getByText(/^\d+F$/).count()).toBe(1);
+  await side.getByRole("button", { name: "Documents · 5" }).click();
+
+  const labels = await page.locator(".doc-pane__group-label").allTextContents();
+  expect(labels).toEqual(["Reports", "Radiology", "Prescriptions", "Other"]);
+  const items = page.getByTestId("pane-item");
+  expect(await items.allTextContents()).toEqual([
+    "BloodMetro Labs · 2026-02-02",
+    "Radiology2026-01-20 · Apollo · elsewhere",
+    "Prescription2026-01-10",
+    "OtherCity Lab · 2026-01-05 · outside",
+    "Pathology2026-01-04",
+  ]);
+
+  await items.nth(3).click();
+  await page.getByText("Not extracted in this version").waitFor();
+  await page.getByRole("link", { name: "Open original file" }).waitFor();
+  // No fact is selected from the tree, so there is no full-page link that could be broken.
+  expect(await page.getByRole("link", { name: "Open full page" }).count()).toBe(0);
+  expect(await items.nth(3).getAttribute("aria-current")).toBe("true");
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("pane: below 1180px it is an overlay with a backdrop; Escape and the backdrop close it; above 1180px there is no backdrop", async () => {
+  const { page, errors } = await openSnapshot("staff", oneFact(), {}, paneRoutes());
+  await page.setViewportSize({ width: 1000, height: 800 });
+  await page.getByRole("button", { name: "Open documents panel" }).click();
+  const pane = page.getByTestId("doc-pane");
+  await pane.getByRole("heading", { name: "Documents · all" }).waitFor();
+  const box = (await pane.boundingBox())!;
+  expect(box.width).toBeLessThanOrEqual(400);
+  expect(Math.round(box.x + box.width)).toBe(1000);
+  expect(await pane.evaluate((el) => getComputedStyle(el).position)).toBe("fixed");
+  expect(await page.getByTestId("doc-pane-backdrop").isVisible()).toBe(true);
+  await page.keyboard.press("Escape");
+  await page.getByRole("button", { name: "Open documents panel" }).waitFor();
+
+  await page.getByRole("button", { name: "Open documents panel" }).click();
+  await page.mouse.click(100, 400);
+  await page.getByRole("button", { name: "Open documents panel" }).waitFor();
+
+  await page.setViewportSize({ width: 1400, height: 800 });
+  await page.getByRole("button", { name: "Open documents panel" }).click();
+  await pane.getByRole("heading", { name: "Documents · all" }).waitFor();
+  expect(await pane.evaluate((el) => getComputedStyle(el).position)).not.toBe("fixed");
+  expect(await page.getByTestId("doc-pane-backdrop").isVisible()).toBe(false);
+  await page.keyboard.press("Escape");
+  expect(await pane.getAttribute("data-open")).toBe("true");
+  expect(errors).toEqual([]);
+  await page.close();
+}, 30_000);
+
+test("pane: a failed document list shows Retry and does not block the screen; Retry loads it", async () => {
+  const { page } = await openSnapshot("staff", oneFact(), {}, (path) => (path === "/patients/p1/documents" ? { documents: TREE_DOCS } : paneRoutes()(path)));
+  let calls = 0;
+  const cors = { "Access-Control-Allow-Origin": BASE, "Access-Control-Allow-Credentials": "true" };
+  await page.route(`${API}/patients/p1/documents`, (route) =>
+    ++calls === 1
+      ? route.fulfill({ status: 500, contentType: "application/json", headers: cors, body: JSON.stringify({ error: "boom", message: "Documents could not be loaded." }) })
+      : route.fallback());
+  await page.reload();
+  // The Snapshot is usable while the list failed; the sidebar count is simply absent.
+  await page.getByRole("heading", { name: "Test Patient" }).waitFor();
+  await page.getByRole("navigation", { name: "Patient" }).getByRole("button", { name: "Documents", exact: true }).click();
+  await page.getByText("Documents could not be loaded.").waitFor();
+  await page.getByRole("button", { name: "Retry" }).click();
+  await page.getByTestId("pane-item").first().waitFor();
+  await page.getByRole("button", { name: "Documents · 5" }).waitFor();
+  await page.close();
+}, 30_000);
+
+test("sidebar: links go to the patient's screens and the current one is marked", async () => {
+  const { page, errors } = await openSnapshot("staff", oneFact(), {}, paneRoutes());
+  const side = page.getByRole("navigation", { name: "Patient" });
+  const hrefs = await side.getByRole("link").evaluateAll((els) => els.map((e) => [e.textContent, e.getAttribute("href")]));
+  expect(hrefs).toEqual([
+    ["Summary", "#/patients/p1/summary"],
+    ["Snapshot · this visit", "#/patients/p1/snapshot"],
+    ["History", "#/patients/p1/history"],
+    ["Plan", "#/patients/p1/plan"],
+    ["Markers", "#/patients/p1/markers"],
+    ["Edit info", "#/patients/p1/edit"],
+  ]);
+  expect(await side.locator("[aria-current=page]").allTextContents()).toEqual(["Snapshot · this visit"]);
+  await side.getByRole("link", { name: "Summary" }).click();
+  await page.waitForFunction(() => location.hash === "#/patients/p1/summary");
+  await side.locator("[aria-current=page]").getByText("Summary").waitFor();
+  await side.getByRole("link", { name: "Plan" }).click();
+  await page.waitForFunction(() => location.hash === "#/patients/p1/plan");
+  await side.locator("[aria-current=page]").getByText("Plan").waitFor();
+  expect(errors).toEqual([]);
+  await page.close();
 }, 30_000);

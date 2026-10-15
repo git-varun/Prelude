@@ -387,6 +387,27 @@ export async function runExtraction(
   }
 }
 
+// M3-11: the document pane's tree. Every document of the patient that is not rejected (held ones stay listed, the
+// pane marks them). Explicit columns only: file_ref is a storage path and never leaves the API here.
+export async function listPatientDocuments(req: Request & { params: { id: string } }): Promise<Response> {
+  const patientId = req.params.id;
+  if (!isUuid(patientId)) return jsonError(404, "not_found", "Patient not found.");
+  const [patient] = await sql`SELECT id FROM patients WHERE id = ${patientId}`;
+  if (!patient) return jsonError(404, "not_found", "Patient not found.");
+
+  const documents = await sql`
+    SELECT d.id, d.document_type, d.source_origin, d.lab_name, d.identity_status, d.extraction_status, d.uploaded_at,
+           (d.ocr_text_ref IS NOT NULL) AS has_text,
+           to_char(d.collected_on, 'YYYY-MM-DD') AS collected_on, to_char(d.reported_on, 'YYYY-MM-DD') AS reported_on,
+           oe.facility AS outside_facility
+    FROM documents d
+    LEFT JOIN outside_encounters oe ON oe.id = d.outside_encounter_id
+    WHERE d.patient_id = ${patientId} AND (d.identity_status IS NULL OR d.identity_status <> 'rejected')
+    ORDER BY COALESCE(d.reported_on, d.collected_on, d.uploaded_at::date) DESC, d.uploaded_at DESC, d.id
+  `;
+  return Response.json({ documents });
+}
+
 // For the Source view (apps/web SourceView.tsx): document metadata plus its OCR text, so the
 // screen can pick a page's text to search a fact's source_snippet against. providerRaw is
 // dropped — it's internal OCR-vendor payload, never meant for the browser.
