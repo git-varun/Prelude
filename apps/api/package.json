@@ -9,6 +9,7 @@
     "seed": "bun src/db/seed.ts"
   },
   "dependencies": {
+    "@anthropic-ai/bedrock-sdk": "^0.35.0",
     "@anthropic-ai/sdk": "^0.127.0",
     "@aws-sdk/client-textract": "^3.1137.0",
     "@azure-rest/ai-document-intelligence": "^1.1.0",

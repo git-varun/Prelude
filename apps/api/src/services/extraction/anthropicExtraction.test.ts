@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import type { ExtractedFactCandidate, FieldType, OcrResult } from "@prelude/shared";
-import { AnthropicExtractionProvider, normalizeAsOfDate, promptFor, toExtractedFactCandidate, type RawCandidate } from "./anthropicExtraction";
+import { AnthropicExtractionProvider, ExtractionResultSchema, normalizeAsOfDate, promptFor, toExtractedFactCandidate, type RawCandidate } from "./anthropicExtraction";
 
 function rawCandidate(overrides: Partial<RawCandidate> = {}): RawCandidate {
   return {
@@ -144,6 +144,25 @@ test("reports no failures when every call succeeds, including with nothing extra
   const provider = new FakeProvider({ radiology_impression: "empty", disease_status_trend: "empty", lesion_size: "empty" });
   const result = await provider.extractFacts(ocr, "radiology");
   expect(result).toMatchObject({ candidates: [], failedFieldTypes: [] });
+});
+
+// Bedrock structured outputs reject minimum/maximum, so the schema cannot bound confidence; the bound is enforced here instead.
+test("an out-of-range confidence from the model is clamped to [0,1], not rejected", () => {
+  const parsed = ExtractionResultSchema.parse({ candidates: [rawCandidate({ confidence: 1.4 }), rawCandidate({ confidence: -0.2 })] });
+  const [high, low] = parsed.candidates.map((c) => toExtractedFactCandidate("marker_value", c, ocrResult()));
+  expect(high!.confidence).toBe(1);
+  expect(low!.confidence).toBe(0);
+});
+
+test("a non-finite confidence is treated as 0", () => {
+  const result = toExtractedFactCandidate("marker_value", rawCandidate({ confidence: Number.NaN }), ocrResult());
+  expect(result.confidence).toBe(0);
+});
+
+test("the 0.6 cap for an unverbatim as-written value still applies after clamping", () => {
+  const result = toExtractedFactCandidate("diagnosis", rawCandidate({ value: "not in the document", confidence: 3 }), ocrResult());
+  expect(result.coverageStatus).toBe("extraction_uncertain");
+  expect(result.confidence).toBe(0.6);
 });
 
 test("normalizeAsOfDate keeps valid ISO dates (trimmed) and nulls everything else", () => {

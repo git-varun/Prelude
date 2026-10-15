@@ -17,7 +17,8 @@ export const CandidateSchema = z.object({
   sourceLocation: z.string().nullable(),
   sourceSnippet: z.string().nullable(),
   facility: z.string().nullable(),
-  confidence: z.number().min(0).max(1),
+  // Unbounded on purpose: Bedrock structured outputs reject minimum/maximum. The [0,1] bound is enforced in clampConfidence.
+  confidence: z.number(),
 });
 
 export const ExtractionResultSchema = z.object({
@@ -207,7 +208,12 @@ function isVerbatim(value: string | null, ocr: OcrResult): boolean {
   return value === null || squash(ocr.fullText).includes(squash(value));
 }
 
+function clampConfidence(confidence: number): number {
+  return Number.isFinite(confidence) ? Math.min(1, Math.max(0, confidence)) : 0;
+}
+
 export function toExtractedFactCandidate(fieldType: FieldType, candidate: RawCandidate, ocr: OcrResult): ExtractedFactCandidate {
+  const confidence = clampConfidence(candidate.confidence);
   const unverbatim = AS_WRITTEN_FIELD_TYPES.includes(fieldType) && !isVerbatim(candidate.value, ocr);
   // No verification_state field exists on ExtractedFactCandidate at all —
   // the extraction pass cannot self-authorize trust (docs/02 M2), so there
@@ -223,7 +229,7 @@ export function toExtractedFactCandidate(fieldType: FieldType, candidate: RawCan
     sourcePage: candidate.sourcePage,
     sourceLocation: candidate.sourceLocation,
     sourceSnippet: verifiedSnippet(candidate, ocr),
-    confidence: unverbatim ? Math.min(candidate.confidence, 0.6) : candidate.confidence,
+    confidence: unverbatim ? Math.min(confidence, 0.6) : confidence,
     facility: fieldType === "surgery_procedure" ? candidate.facility : null,
   };
 }
