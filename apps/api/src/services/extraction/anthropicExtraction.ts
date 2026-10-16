@@ -68,8 +68,10 @@ ${ocrText}
     case "marker_value":
       return `${common}
 
-Task: extract tumor marker values (lab test results with a numeric or coded value).
-For each marker found, set trackedMarkerLabel to the marker's name exactly as it appears in the
+Task: extract every lab result row in the document (a test name with a numeric or coded result), including
+ordinary panel tests such as haemoglobin, liver or thyroid function — not only tumor markers. Do not skip, omit or
+filter any row because you judge it irrelevant; which tests matter is decided by a separate deterministic step.
+For each row found, set trackedMarkerLabel to the marker's name exactly as it appears in the
 document — do not try to match, normalize, or map it to any controlled list yourself; a separate
 deterministic step does that matching from the raw label, and it cannot be trusted to agree with a
 judgment call made here. value/unit/referenceRange are that marker's own reported value, unit, and

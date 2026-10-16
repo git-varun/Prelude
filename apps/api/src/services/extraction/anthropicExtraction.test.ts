@@ -84,6 +84,15 @@ test("the marker_value prompt asks for the raw label verbatim, never asking the 
   expect(prompt).toMatch(/exactly as it appears/i);
 });
 
+// A literal "tumor marker" instruction made stricter models return nothing for ordinary panel rows (Hb, ALT, TSH);
+// which rows matter is decided by the deterministic matcher afterwards, never by the model's judgment here.
+test("the marker_value prompt asks for every lab result row, not only tumor markers", () => {
+  const prompt = promptFor("marker_value", "blood", "some ocr text");
+  expect(prompt).toMatch(/every (lab|test) result/i);
+  expect(prompt).toMatch(/do not (skip|omit|filter)/i);
+  expect(prompt).not.toMatch(/extract tumor marker values/i);
+});
+
 function candidate(fieldType: FieldType): ExtractedFactCandidate {
   return {
     fieldType,
