@@ -159,6 +159,15 @@ test("unit aliases: micro sign, case and thousand-per-microlitre spellings are e
   expect(unitsEqual("ng/mL", "pg/mL")).toBe(false);
 });
 
+// OCR often reads the capital I in IU as a lowercase l ("uIU/ml" -> "ulU/ml"); a faithful copy of that must not count as a wrong unit.
+test("unitsEqual tolerates the OCR I/l confusion, but still rejects genuinely different units", () => {
+  expect(unitsEqual("uIU/ml", "ulU/ml")).toBe(true);
+  expect(unitsEqual("mIU/L", "mlU/l")).toBe(true);
+  expect(unitsEqual("g/dL", "mg/dL")).toBe(false);
+  expect(unitsEqual("ng/mL", "pg/mL")).toBe(false);
+  expect(unitsEqual("uIU/ml", null)).toBe(false);
+});
+
 test("alias pass pairs different labels for the same test via the shared table", () => {
   const pair = (el: string, cl: string) => matchFacts([exp({ markerLabel: el })], [cand({ trackedMarkerLabel: cl })]).pairs.length;
   expect(pair("HAEMOGLOBIN (Hb)", "Hb")).toBe(1);

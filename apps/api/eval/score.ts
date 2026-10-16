@@ -24,7 +24,14 @@ export function valuesEqual(a: string | null, b: string | null): boolean {
   return collapse(a) === collapse(b);
 }
 
-export const unitsEqual = unitsEquivalent;
+// OCR reads the capital I of "IU" as a lowercase l ("uIU/ml" -> "ulU/ml"). The model must copy the OCR text, so the
+// scorer (not the shared alias table or the prompt) treats I and l as the same glyph, as a fallback only.
+const foldIl = (unit: string) => unit.replace(/[Il|]/g, "l");
+
+export function unitsEqual(a: string | null, b: string | null): boolean {
+  if (unitsEquivalent(a, b)) return true;
+  return a !== null && b !== null && unitsEquivalent(foldIl(a), foldIl(b));
+}
 
 export function rangesEqual(a: string | null, b: string | null): boolean {
   if (a === null || b === null) return a === b;

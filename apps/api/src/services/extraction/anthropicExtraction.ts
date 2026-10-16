@@ -17,7 +17,8 @@ export const CandidateSchema = z.object({
   sourceLocation: z.string().nullable(),
   sourceSnippet: z.string().nullable(),
   facility: z.string().nullable(),
-  confidence: z.number().min(0).max(1),
+  // Unbounded on purpose: Bedrock structured outputs reject minimum/maximum. The [0,1] bound is enforced in clampConfidence.
+  confidence: z.number(),
 });
 
 export const ExtractionResultSchema = z.object({
@@ -52,7 +53,7 @@ export function promptFor(fieldType: FieldType, documentType: DocumentType, ocrT
 
 Rules:
 - If a field cannot be determined from the text, use null for that field — never fabricate a plausible-looking value.
-- asOfDate must be an ISO date (YYYY-MM-DD) taken from the document (report date, collection date, etc.), or null if none is stated.
+- asOfDate must be an ISO date (YYYY-MM-DD) taken from the document (report date, collection date, etc.), or null if none is stated. Dates in these documents are written day-first (DD/MM/YYYY); convert them to ISO accordingly, never month-first.
 - confidence is your own calibrated confidence (0.0-1.0) that the extracted value is correct and complete.
 - coverageStatus is your own initial assessment: 'value_found' if you extracted a usable value; 'not_assessed' if there's no evidence of this in the document at all; 'not_applicable' if the document explicitly states the test/field was not performed or doesn't apply; 'extraction_uncertain' if the text is ambiguous, low-confidence, or contradictory. This is a signal, not the final answer — a separate deterministic step may override it.
 - The text below is marked with "--- Page N ---" separators. Use these to set sourcePage accurately. sourceSnippet must be copied character-for-character from the OCR text below — including any OCR typos, garbled characters, or odd spacing — never cleaned up, paraphrased, or corrected; a snippet that doesn't match verbatim cannot be highlighted against the source later. Keep it short (under ~120 characters). Use null for sourcePage/sourceLocation/sourceSnippet if you can't determine them — never fabricate a location.
@@ -67,8 +68,10 @@ ${ocrText}
     case "marker_value":
       return `${common}
 
-Task: extract tumor marker values (lab test results with a numeric or coded value).
-For each marker found, set trackedMarkerLabel to the marker's name exactly as it appears in the
+Task: extract every lab result row in the document (a test name with a numeric or coded result), including
+ordinary panel tests such as haemoglobin, liver or thyroid function — not only tumor markers. Do not skip, omit or
+filter any row because you judge it irrelevant; which tests matter is decided by a separate deterministic step.
+For each row found, set trackedMarkerLabel to the marker's name exactly as it appears in the
 document — do not try to match, normalize, or map it to any controlled list yourself; a separate
 deterministic step does that matching from the raw label, and it cannot be trusted to agree with a
 judgment call made here. value/unit/referenceRange are that marker's own reported value, unit, and
@@ -207,7 +210,12 @@ function isVerbatim(value: string | null, ocr: OcrResult): boolean {
   return value === null || squash(ocr.fullText).includes(squash(value));
 }
 
+function clampConfidence(confidence: number): number {
+  return Number.isFinite(confidence) ? Math.min(1, Math.max(0, confidence)) : 0;
+}
+
 export function toExtractedFactCandidate(fieldType: FieldType, candidate: RawCandidate, ocr: OcrResult): ExtractedFactCandidate {
+  const confidence = clampConfidence(candidate.confidence);
   const unverbatim = AS_WRITTEN_FIELD_TYPES.includes(fieldType) && !isVerbatim(candidate.value, ocr);
   // No verification_state field exists on ExtractedFactCandidate at all —
   // the extraction pass cannot self-authorize trust (docs/02 M2), so there
@@ -223,18 +231,28 @@ export function toExtractedFactCandidate(fieldType: FieldType, candidate: RawCan
     sourcePage: candidate.sourcePage,
     sourceLocation: candidate.sourceLocation,
     sourceSnippet: verifiedSnippet(candidate, ocr),
-    confidence: unverbatim ? Math.min(candidate.confidence, 0.6) : candidate.confidence,
+    confidence: unverbatim ? Math.min(confidence, 0.6) : confidence,
     facility: fieldType === "surgery_procedure" ? candidate.facility : null,
   };
 }
 
-export class AnthropicExtractionProvider implements ExtractionProvider {
-  readonly name = "anthropic";
+// The narrowest surface extraction needs; both Anthropic and AnthropicBedrock satisfy it.
+export type MessageParser = { messages: { parse: Anthropic["messages"]["parse"] } };
 
-  constructor(private readonly apiKey: string) {}
+export class AnthropicExtractionProvider implements ExtractionProvider {
+  readonly name: string = "anthropic";
+
+  constructor(
+    private readonly apiKey: string,
+    protected readonly model: string = MODEL,
+  ) {}
+
+  protected makeClient(): MessageParser {
+    return new Anthropic({ apiKey: this.apiKey });
+  }
 
   async extractFacts(ocr: OcrResult, documentType: DocumentType): Promise<ExtractionResult> {
-    const client = new Anthropic({ apiKey: this.apiKey });
+    const client = this.makeClient();
     const ocrText = pageAnnotatedText(ocr);
     const fieldTypes = FIELD_TYPES_BY_DOCUMENT_TYPE[documentType];
 
@@ -262,14 +280,14 @@ export class AnthropicExtractionProvider implements ExtractionProvider {
   }
 
   protected async extractForFieldType(
-    client: Anthropic,
+    client: MessageParser,
     fieldType: FieldType,
     documentType: DocumentType,
     ocrText: string,
     ocr: OcrResult,
   ): Promise<ExtractedFactCandidate[]> {
     const response = await client.messages.parse({
-      model: MODEL,
+      model: this.model,
       max_tokens: 16000,
       messages: [{ role: "user", content: promptFor(fieldType, documentType, ocrText) }],
       output_config: { format: zodOutputFormat(ExtractionResultSchema) },

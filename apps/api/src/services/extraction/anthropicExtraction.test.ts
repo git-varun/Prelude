@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import type { ExtractedFactCandidate, FieldType, OcrResult } from "@prelude/shared";
-import { AnthropicExtractionProvider, normalizeAsOfDate, promptFor, toExtractedFactCandidate, type RawCandidate } from "./anthropicExtraction";
+import { AnthropicExtractionProvider, ExtractionResultSchema, normalizeAsOfDate, promptFor, toExtractedFactCandidate, type RawCandidate } from "./anthropicExtraction";
 
 function rawCandidate(overrides: Partial<RawCandidate> = {}): RawCandidate {
   return {
@@ -84,6 +84,22 @@ test("the marker_value prompt asks for the raw label verbatim, never asking the 
   expect(prompt).toMatch(/exactly as it appears/i);
 });
 
+// A literal "tumor marker" instruction made stricter models return nothing for ordinary panel rows (Hb, ALT, TSH);
+// which rows matter is decided by the deterministic matcher afterwards, never by the model's judgment here.
+test("the marker_value prompt asks for every lab result row, not only tumor markers", () => {
+  const prompt = promptFor("marker_value", "blood", "some ocr text");
+  expect(prompt).toMatch(/every (lab|test) result/i);
+  expect(prompt).toMatch(/do not (skip|omit|filter)/i);
+  expect(prompt).not.toMatch(/extract tumor marker values/i);
+});
+
+// Indian clinical documents write dates day-first; a model defaulting to US order silently swaps day and month when both are <= 12.
+test("the shared prompt says document dates are day-first (DD/MM/YYYY), never month-first", () => {
+  const prompt = promptFor("marker_value", "blood", "some ocr text");
+  expect(prompt).toMatch(/DD\/MM\/YYYY/);
+  expect(prompt).toMatch(/never month-first/i);
+});
+
 function candidate(fieldType: FieldType): ExtractedFactCandidate {
   return {
     fieldType,
@@ -144,6 +160,25 @@ test("reports no failures when every call succeeds, including with nothing extra
   const provider = new FakeProvider({ radiology_impression: "empty", disease_status_trend: "empty", lesion_size: "empty" });
   const result = await provider.extractFacts(ocr, "radiology");
   expect(result).toMatchObject({ candidates: [], failedFieldTypes: [] });
+});
+
+// Bedrock structured outputs reject minimum/maximum, so the schema cannot bound confidence; the bound is enforced here instead.
+test("an out-of-range confidence from the model is clamped to [0,1], not rejected", () => {
+  const parsed = ExtractionResultSchema.parse({ candidates: [rawCandidate({ confidence: 1.4 }), rawCandidate({ confidence: -0.2 })] });
+  const [high, low] = parsed.candidates.map((c) => toExtractedFactCandidate("marker_value", c, ocrResult()));
+  expect(high!.confidence).toBe(1);
+  expect(low!.confidence).toBe(0);
+});
+
+test("a non-finite confidence is treated as 0", () => {
+  const result = toExtractedFactCandidate("marker_value", rawCandidate({ confidence: Number.NaN }), ocrResult());
+  expect(result.confidence).toBe(0);
+});
+
+test("the 0.6 cap for an unverbatim as-written value still applies after clamping", () => {
+  const result = toExtractedFactCandidate("diagnosis", rawCandidate({ value: "not in the document", confidence: 3 }), ocrResult());
+  expect(result.coverageStatus).toBe("extraction_uncertain");
+  expect(result.confidence).toBe(0.6);
 });
 
 test("normalizeAsOfDate keeps valid ISO dates (trimmed) and nulls everything else", () => {
