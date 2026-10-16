@@ -52,6 +52,22 @@ India. Rollout steps: `docs/bedrock-india-rollout.md`.
 - **Not covered by this switch:** OCR (Azure/Google) still receives the documents, and the EC2 host/database must
   also be in India for end-to-end residency.
 
+## Azure OpenAI (India)
+
+Alternative India-resident extraction provider (`services/extraction/azureOpenAiExtraction.ts`,
+`EXTRACTION_PROVIDER=azure_openai`, library `openai`). Env: `AZURE_OPENAI_REGION` (`centralindia` | `southindia`,
+declared by the operator and checked at startup because an Azure hostname does not reveal its region),
+`AZURE_OPENAI_ENDPOINT` (`https://<resource>.openai.azure.com`), `AZURE_OPENAI_API_KEY`, `AZURE_OPENAI_DEPLOYMENT`.
+
+- Create the resource in Central India or South India and use a **Standard** (regional) deployment. Global and Data
+  Zone deployment types can process outside the region and must not be used for patient data.
+- Uses strict `json_schema` structured outputs; numeric bounds are dropped from the schema and enforced after the
+  call (confidence is clamped to [0,1]).
+- Azure retains prompts for abuse monitoring by default; for patient data apply for the modified abuse monitoring
+  exemption and confirm the data-processing terms (the processor is Microsoft, not Anthropic or OpenAI).
+- The OCR resource (Azure Document Intelligence) must also be in an India region, or documents still leave India.
+- Setup steps: `docs/azure-openai-india-setup.md`.
+
 ## Open items
 
 - **No DPA confirmed yet with the LLM vendor (Anthropic)** — per the frozen

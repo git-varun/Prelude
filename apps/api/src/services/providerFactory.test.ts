@@ -35,6 +35,47 @@ test("bedrock refuses any model that is not on the in. India inference profile",
   await expect(bedrockProvider("ap-south-1", undefined)).rejects.toThrow(/EXTRACTION_MODEL must start with 'in\.anthropic\.'/);
 });
 
+const AZURE_VARS = ["AZURE_OPENAI_ENDPOINT", "AZURE_OPENAI_API_KEY", "AZURE_OPENAI_DEPLOYMENT", "AZURE_OPENAI_REGION"] as const;
+
+async function azureProvider(overrides: Partial<Record<(typeof AZURE_VARS)[number], string | undefined>> = {}) {
+  const base = {
+    AZURE_OPENAI_ENDPOINT: "https://prelude-in.openai.azure.com",
+    AZURE_OPENAI_API_KEY: "k",
+    AZURE_OPENAI_DEPLOYMENT: "gpt-extract",
+    AZURE_OPENAI_REGION: "centralindia",
+  };
+  process.env.EXTRACTION_PROVIDER = "azure_openai";
+  for (const v of AZURE_VARS) {
+    const value = v in overrides ? overrides[v] : base[v];
+    if (value === undefined) delete process.env[v]; else process.env[v] = value;
+  }
+  const { getLlmExtractionProvider } = await import(`./providerFactory?azure-${Math.random()}`);
+  try {
+    return getLlmExtractionProvider();
+  } finally {
+    for (const v of AZURE_VARS) delete process.env[v];
+  }
+}
+
+test("EXTRACTION_PROVIDER=azure_openai builds the provider for centralindia and southindia", async () => {
+  expect((await azureProvider()).name).toBe("azure_openai");
+  expect((await azureProvider({ AZURE_OPENAI_REGION: "southindia" })).name).toBe("azure_openai");
+});
+
+test("azure_openai refuses to start outside the India regions", async () => {
+  for (const region of ["eastus", "westeurope", "australiaeast", "", undefined]) {
+    await expect(azureProvider({ AZURE_OPENAI_REGION: region })).rejects.toThrow(/AZURE_OPENAI_REGION must be centralindia or southindia/);
+  }
+});
+
+test("azure_openai requires an https azure endpoint, a key and a deployment", async () => {
+  await expect(azureProvider({ AZURE_OPENAI_ENDPOINT: undefined })).rejects.toThrow(/AZURE_OPENAI_ENDPOINT/);
+  await expect(azureProvider({ AZURE_OPENAI_ENDPOINT: "http://x.openai.azure.com" })).rejects.toThrow(/AZURE_OPENAI_ENDPOINT/);
+  await expect(azureProvider({ AZURE_OPENAI_ENDPOINT: "https://api.openai.com" })).rejects.toThrow(/AZURE_OPENAI_ENDPOINT/);
+  await expect(azureProvider({ AZURE_OPENAI_API_KEY: undefined })).rejects.toThrow(/AZURE_OPENAI_API_KEY/);
+  await expect(azureProvider({ AZURE_OPENAI_DEPLOYMENT: undefined })).rejects.toThrow(/AZURE_OPENAI_DEPLOYMENT/);
+});
+
 test("the unset/unrecognised provider errors list bedrock as a valid choice", async () => {
   delete process.env.EXTRACTION_PROVIDER;
   const { getLlmExtractionProvider } = await import(`./providerFactory?msg-${Math.random()}`);

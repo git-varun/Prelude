@@ -29,12 +29,12 @@ const retryWaitMs = Number(process.env.EVAL_RETRY_WAIT_MS ?? 30_000);
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 const deterministic = process.env.EVAL_PROVIDER === "deterministic";
-// EVAL_PROVIDER=bedrock|anthropic|gemini picks that LLM provider for this run (the factory's own guards still apply,
+// EVAL_PROVIDER=bedrock|azure_openai|anthropic|gemini picks that LLM provider for this run (the factory's own guards still apply,
 // e.g. bedrock requires an India AWS_REGION and an in.anthropic. EXTRACTION_MODEL); unset falls back to EXTRACTION_PROVIDER.
 const llmOverride = process.env.EVAL_PROVIDER;
 if (llmOverride && llmOverride !== "deterministic") {
-  if (!["bedrock", "anthropic", "gemini"].includes(llmOverride)) {
-    throw new Error(`Unrecognized EVAL_PROVIDER: ${llmOverride}. Expected 'bedrock', 'anthropic', 'gemini' or 'deterministic'.`);
+  if (!["bedrock", "azure_openai", "anthropic", "gemini"].includes(llmOverride)) {
+    throw new Error(`Unrecognized EVAL_PROVIDER: ${llmOverride}. Expected 'bedrock', 'azure_openai', 'anthropic', 'gemini' or 'deterministic'.`);
   }
   process.env.EXTRACTION_PROVIDER = llmOverride;
 }
