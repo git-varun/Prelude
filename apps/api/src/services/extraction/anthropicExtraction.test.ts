@@ -93,6 +93,13 @@ test("the marker_value prompt asks for every lab result row, not only tumor mark
   expect(prompt).not.toMatch(/extract tumor marker values/i);
 });
 
+// Indian clinical documents write dates day-first; a model defaulting to US order silently swaps day and month when both are <= 12.
+test("the shared prompt says document dates are day-first (DD/MM/YYYY), never month-first", () => {
+  const prompt = promptFor("marker_value", "blood", "some ocr text");
+  expect(prompt).toMatch(/DD\/MM\/YYYY/);
+  expect(prompt).toMatch(/never month-first/i);
+});
+
 function candidate(fieldType: FieldType): ExtractedFactCandidate {
   return {
     fieldType,

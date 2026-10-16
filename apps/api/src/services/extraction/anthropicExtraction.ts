@@ -53,7 +53,7 @@ export function promptFor(fieldType: FieldType, documentType: DocumentType, ocrT
 
 Rules:
 - If a field cannot be determined from the text, use null for that field — never fabricate a plausible-looking value.
-- asOfDate must be an ISO date (YYYY-MM-DD) taken from the document (report date, collection date, etc.), or null if none is stated.
+- asOfDate must be an ISO date (YYYY-MM-DD) taken from the document (report date, collection date, etc.), or null if none is stated. Dates in these documents are written day-first (DD/MM/YYYY); convert them to ISO accordingly, never month-first.
 - confidence is your own calibrated confidence (0.0-1.0) that the extracted value is correct and complete.
 - coverageStatus is your own initial assessment: 'value_found' if you extracted a usable value; 'not_assessed' if there's no evidence of this in the document at all; 'not_applicable' if the document explicitly states the test/field was not performed or doesn't apply; 'extraction_uncertain' if the text is ambiguous, low-confidence, or contradictory. This is a signal, not the final answer — a separate deterministic step may override it.
 - The text below is marked with "--- Page N ---" separators. Use these to set sourcePage accurately. sourceSnippet must be copied character-for-character from the OCR text below — including any OCR typos, garbled characters, or odd spacing — never cleaned up, paraphrased, or corrected; a snippet that doesn't match verbatim cannot be highlighted against the source later. Keep it short (under ~120 characters). Use null for sourcePage/sourceLocation/sourceSnippet if you can't determine them — never fabricate a location.
