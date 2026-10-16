@@ -17,6 +17,7 @@
     "@google-cloud/documentai": "^10.1.1",
     "@google/genai": "^2.28.0",
     "@prelude/shared": "workspace:*",
+    "openai": "^7.34.0",
     "pdfjs-dist": "4.10.38",
     "zod": "^4.6.5"
   },
