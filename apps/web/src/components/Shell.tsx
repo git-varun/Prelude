@@ -8,9 +8,9 @@ export function Shell({ children, wide }: { children: ReactNode; wide?: boolean 
   return (
     <div className="app-shell">
       <header className="app-header">
-        <div className="app-header__brand" onClick={() => navigate("/patients")} style={{ cursor: "pointer" }}>
+        <a className="app-header__brand" href="#/patients" onClick={(e) => { e.preventDefault(); navigate("/patients"); }}>
           <span className="app-header__brand-mark">Prelude</span>
-        </div>
+        </a>
         {user && (
           <div className="app-header__user">
             <span>{user.name}</span>

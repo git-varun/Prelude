@@ -14,7 +14,7 @@ function Section({ title, children }: { title: string; children: ReactNode }) {
 
 function KeyedRows({ rows }: { rows: { key: string; items: SummaryItem[] | "not_extracted" }[] }) {
   return (
-    <div className="card" style={{ padding: 0 }}>
+    <div className="rows">
       {rows.map((r) => {
         if (r.items === "not_extracted" || r.items.length === 0) {
           return (
@@ -126,7 +126,7 @@ export function Summary({ patientId }: { patientId: string }) {
         {data.what_happened.length === 0 ? (
           <p className="muted">{NOT_FOUND_TEXT}</p>
         ) : (
-          <div className="card" style={{ padding: 0 }}>
+          <div className="rows">
             {data.what_happened.map((item) => (
               <div className={`summary-row summary-row--dated${item.outside_encounter ? " is-elsewhere" : ""}`} key={item.fact_id}>
                 <span className="muted">{item.as_of_date}</span>
@@ -172,7 +172,7 @@ export function Summary({ patientId }: { patientId: string }) {
         {data.procedures.length === 0 ? (
           <p className="muted">{NOT_FOUND_TEXT}</p>
         ) : (
-          <div className="card" style={{ padding: 0 }}>
+          <div className="rows">
             {data.procedures.map((item) => (
               <div className={`summary-row summary-row--procedure${item.outside_encounter ? " is-elsewhere" : ""}`} key={item.fact_id}>
                 <span className="muted">{item.as_of_date ?? "No date"}</span>
@@ -197,7 +197,7 @@ export function Summary({ patientId }: { patientId: string }) {
         {data.prescriptions.length === 0 ? (
           <p className="muted">{NOT_FOUND_TEXT}</p>
         ) : (
-          <div className="card" style={{ padding: 0 }}>
+          <div className="rows">
             {data.prescriptions.map((p) => (
               <div className="summary-prescription" key={p.document_id}>
                 <div className="summary-prescription__head">
@@ -215,7 +215,7 @@ export function Summary({ patientId }: { patientId: string }) {
       </Section>
 
       <Section title="Medicines on the latest prescription">
-        <div className="card">
+        <div className="rows" style={{ padding: "var(--space-3) 0", borderBottom: "1px solid var(--color-border)" }}>
           <span className="muted">{NOT_EXTRACTED_TEXT}</span>
           {latestPrescription && latestPrescription.date && (
             <span className="summary-row__source">latest prescription {latestPrescription.date}</span>

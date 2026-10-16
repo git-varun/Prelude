@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
 import { RoleGate } from "../auth/AuthContext";
 import { api, ApiError, type IdentityDocument, type CompareMode, type BatchFailure, type PatientSnapshot, type PlanItem, type ReviewFact, type SnapshotField } from "../api/client";
 import { FactCard } from "../components/FactCard";
@@ -105,7 +105,7 @@ function DeltaSummary({ fields, rank }: { fields: SnapshotField[]; rank: Map<str
   const rankOf = (f: SnapshotField) => (f.fact_id !== null ? rank.get(f.fact_id) : undefined) ?? Infinity;
   const sorted = [...fields].sort((a, b) => (rankOf(a) === rankOf(b) ? 0 : rankOf(a) < rankOf(b) ? -1 : 1));
   return (
-    <div className="card" style={{ padding: 0 }}>
+    <div className="rows">
       {sorted.map((f, i) => {
         const heading = f.marker_name ?? FIELD_LABELS[f.field_type] ?? f.field_type;
         return (
@@ -147,6 +147,17 @@ interface Batch {
   onSignedOff: (factId: string) => void;
 }
 
+// The trend chart loads only when its row's "Trend" is opened, so a long list of rows makes no extra requests.
+function TrendToggle({ patientId, trackedMarkerId }: { patientId: string; trackedMarkerId: string }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <details className="fact-trend" onToggle={(e) => setOpen(e.currentTarget.open)}>
+      <summary>Trend</summary>
+      {open && <MarkerTrendChart patientId={patientId} trackedMarkerId={trackedMarkerId} />}
+    </details>
+  );
+}
+
 function FieldEntry({
   field,
   patientId,
@@ -154,6 +165,7 @@ function FieldEntry({
   onChanged,
   showTrend,
   batch,
+  ruleTag,
 }: {
   field: SnapshotField;
   patientId: string;
@@ -161,14 +173,20 @@ function FieldEntry({
   onChanged: () => void;
   showTrend?: boolean;
   batch: Batch;
+  ruleTag?: ReactNode;
 }) {
   const heading = field.marker_name ?? FIELD_LABELS[field.field_type] ?? field.field_type;
 
   if (field.fact_id === null) {
     return (
-      <div className="card">
-        <div className="page-heading" style={{ marginBottom: 0 }}>
-          <h2 style={{ margin: 0 }}>{heading}</h2>
+      <div className="fact-row">
+        <div className="fact-row__lead" />
+        <div className="fact-row__main">
+          <div className="fact-row__line">
+            <h3 className="fact-row__title">{heading}</h3>
+          </div>
+        </div>
+        <div className="fact-row__aside">
           <span className="tag">{COVERAGE_LABELS[field.coverage_status] ?? field.coverage_status}</span>
         </div>
       </div>
@@ -178,31 +196,28 @@ function FieldEntry({
   const state = batchState(field);
   const picked = batch.selected.has(field.fact_id);
   return (
-    <div className={`snapshot-field${picked ? " snapshot-field--selected" : ""}${state.kind === "signed" ? " snapshot-field--signed" : ""}`}>
-      <RoleGate roles={["oncologist"]}>
-        {state.kind === "eligible" && (
-          <label className="batch-pick">
-            <input type="checkbox" checked={picked} onChange={() => batch.toggle(field.fact_id!)} />
-            Select {heading} for sign-off
-          </label>
-        )}
-        {state.kind === "signed" && (
-          <div className="batch-pick"><span className="tag">Signed off</span></div>
-        )}
-        {state.kind === "blocked" && state.reason && <div className="batch-pick muted">{state.reason}</div>}
-      </RoleGate>
+    <div className={`snapshot-field${picked ? " snapshot-field--selected" : ""}`}>
       <FactCard
+        variant="row"
         fact={toReviewFact(field, patientId, visitId)}
         trackedMarkers={[]}
         onChanged={onChanged}
         onSignedOff={batch.onSignedOff}
         badge={field.imaging_modality && <span className="tag">{field.imaging_modality.replace(/_/g, " ")}</span>}
+        ruleTag={ruleTag}
+        blockedReason={state.kind === "blocked" ? state.reason : null}
+        lead={
+          <RoleGate roles={["oncologist"]}>
+            {state.kind === "eligible" && (
+              <input
+                type="checkbox" checked={picked} onChange={() => batch.toggle(field.fact_id!)}
+                aria-label={`Select ${heading} for sign-off`}
+              />
+            )}
+          </RoleGate>
+        }
+        below={showTrend && field.tracked_marker_id ? <TrendToggle patientId={patientId} trackedMarkerId={field.tracked_marker_id} /> : null}
       />
-      {showTrend && field.tracked_marker_id && (
-        <div className="snapshot-field__trend">
-          <MarkerTrendChart patientId={patientId} trackedMarkerId={field.tracked_marker_id} />
-        </div>
-      )}
     </div>
   );
 }
@@ -215,18 +230,19 @@ function PriorityRow({ item, ...rest }: { item: PriorityItem; patientId: string;
   );
   if (item.kind === "plan") {
     return (
-      <div className="priority-row">
-        {tag}
-        <div className="card">
-          <div className="page-heading" style={{ marginBottom: 0 }}>
-            <div>
-              <strong>{item.plan.text}</strong>
-              <div className="muted">
-                Advised {item.plan.advised_at} · Past advised date{dueLabel(item.plan) ? ` · ${dueLabel(item.plan)}` : ""}, no report seen
-              </div>
-            </div>
-            <button className="btn btn--ghost" type="button" onClick={() => navigate(`/patients/${rest.patientId}/plan`)}>Open plan</button>
+      <div className="fact-row">
+        <div className="fact-row__lead" />
+        <div className="fact-row__main">
+          <div className="fact-row__line">
+            <h3 className="fact-row__title">{item.plan.text}</h3>
           </div>
+          <div className="fact-row__meta">
+            Advised {item.plan.advised_at} · Past advised date{dueLabel(item.plan) ? ` · ${dueLabel(item.plan)}` : ""}, no report seen
+          </div>
+        </div>
+        <div className="fact-row__aside">
+          {tag}
+          <button className="btn btn--secondary" type="button" onClick={() => navigate(`/patients/${rest.patientId}/plan`)}>Open plan</button>
         </div>
       </div>
     );
@@ -234,23 +250,22 @@ function PriorityRow({ item, ...rest }: { item: PriorityItem; patientId: string;
   if (item.kind === "missing_pin") {
     const seen = item.entry.last_seen;
     return (
-      <div className="priority-row">
-        {tag}
-        <div className="card">
-          <strong>{item.entry.marker_name}</strong>
-          <div className="muted">
+      <div className="fact-row">
+        <div className="fact-row__lead" />
+        <div className="fact-row__main">
+          <div className="fact-row__line">
+            <h3 className="fact-row__title">{item.entry.marker_name}</h3>
+            <span className="fact-row__value fact-row__value--missing">—</span>
+          </div>
+          <div className="fact-row__meta">
             Not in this visit · {seen ? `last ${seen.value}${seen.unit ? ` ${seen.unit}` : ""} on ${seen.as_of_date}` : "no earlier value"}
           </div>
         </div>
+        <div className="fact-row__aside">{tag}</div>
       </div>
     );
   }
-  return (
-    <div className="priority-row">
-      {tag}
-      <FieldEntry field={item.field} showTrend={item.section === "marker"} {...rest} />
-    </div>
-  );
+  return <FieldEntry field={item.field} showTrend={item.section === "marker"} ruleTag={tag} {...rest} />;
 }
 
 // AM-03: "Last visit here" is the default and the only choice that is ever pre-selected; "Latest anywhere" is opt-in.
@@ -259,14 +274,16 @@ function CompareControl({ data, mode, onChange }: { data: PatientSnapshot; mode:
   return (
     <div className="compare-toggle" role="group" aria-label="Compare with">
       <span className="muted">Compare with</span>
-      <button className="btn btn--ghost" type="button" aria-pressed={mode === "here"} onClick={() => onChange("here")}>
-        Last visit here{last_here ? ` · ${last_here.date}` : ""}
-      </button>
-      {(latest_any || mode === "any") && (
-        <button className="btn btn--ghost" type="button" aria-pressed={mode === "any"} onClick={() => onChange("any")}>
-          Latest anywhere{latest_any ? ` · ${latest_any.facility} ${latest_any.date}` : ""}
+      <span className="seg">
+        <button className="seg__opt" type="button" aria-pressed={mode === "here"} onClick={() => onChange("here")}>
+          Last visit here{last_here ? ` · ${last_here.date}` : ""}
         </button>
-      )}
+        {(latest_any || mode === "any") && (
+          <button className="seg__opt" type="button" aria-pressed={mode === "any"} onClick={() => onChange("any")}>
+            Latest anywhere{latest_any ? ` · ${latest_any.facility} ${latest_any.date}` : ""}
+          </button>
+        )}
+      </span>
     </div>
   );
 }
@@ -445,51 +462,11 @@ export function Snapshot({ patientId }: { patientId: string }) {
     }
   }
 
+  const prep = <PrepPanel visitId={data.current_visit.id} refreshKey={data} />;
+
   return (
     <div>
-      <div className="page-heading">
-        <div>
-          <h1>{patient.name || "(unnamed patient)"}</h1>
-          <p className="muted" style={{ margin: 0, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-            <span>
-              {patient.cancer_type || "cancer type not set"} · visit {data.current_visit.visit_date}
-              {age !== null && ` · ${age}y`}
-              {patient.sex && patient.sex !== "unknown" && ` ${patient.sex}`}
-              {patient.mrn && ` · MRN ${patient.mrn}`}
-              {patient.stage && ` · Stage ${patient.stage}`}
-            </span>
-            {patient.patient_origin === "referral" && (
-              <span className="tag">Referral{patient.referring_physician ? ` · ${patient.referring_physician}` : ""}</span>
-            )}
-            <button className="btn btn--ghost" type="button" onClick={() => navigate(`/patients/${patient.id}/summary`)}>
-              Summary
-            </button>
-            <button className="btn btn--ghost" type="button" onClick={() => navigate(`/patients/${patient.id}/plan`)}>
-              Plan
-            </button>
-            <button className="btn btn--ghost" type="button" onClick={() => navigate(`/patients/${patient.id}/edit`)}>
-              Edit info
-            </button>
-            <button className="btn btn--ghost" type="button" onClick={() => navigate(`/patients/${patient.id}/history`)}>
-              Visit history
-            </button>
-            <button className="btn btn--ghost" type="button" onClick={() => navigate(`/patients/${patient.id}/timeline`)}>
-              Timeline
-            </button>
-          </p>
-        </div>
-        <button className="btn btn--ghost" onClick={() => navigate("/")}>
-          Back to patients
-        </button>
-      </div>
-
       {error && <div className="error-banner">{error}</div>}
-
-      <DictationNotes visitId={data.current_visit.id} />
-
-      <PrepPanel visitId={data.current_visit.id} refreshKey={data} />
-
-      <ReportRequestBanner items={planItems} onChanged={() => void load()} />
 
       <HeldReportBanner
         patientId={patient.id}
@@ -500,25 +477,49 @@ export function Snapshot({ patientId }: { patientId: string }) {
         }}
       />
 
+      <ReportRequestBanner items={planItems} onChanged={() => void load()} />
+
+      <DictationNotes visitId={data.current_visit.id} />
+
       <SummaryStrip patientId={patient.id} />
 
-      <div style={{ marginBottom: 16 }}>
+      <div className="page-heading snapshot-heading">
+        <div>
+          <h6 className="muted">Visit {data.current_visit.visit_date} · this hospital</h6>
+          <h1>
+            <span className="visually-hidden">{patient.name || "(unnamed patient)"} — </span>Snapshot
+          </h1>
+          <p className="muted" style={{ margin: 0, display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
+            <span>
+              {patient.cancer_type || "cancer type not set"}
+              {age !== null && ` · ${age}y`}
+              {patient.sex && patient.sex !== "unknown" && ` ${patient.sex}`}
+              {patient.mrn && ` · MRN ${patient.mrn}`}
+              {patient.stage && ` · Stage ${patient.stage}`}
+            </span>
+            {patient.patient_origin === "referral" && (
+              <span className="tag">Referral{patient.referring_physician ? ` · ${patient.referring_physician}` : ""}</span>
+            )}
+          </p>
+        </div>
         <CompareControl data={data} mode={compare} onChange={setCompare} />
       </div>
 
       {(data.previous_visit.id !== null || (data.compare.mode === "any" && data.compare.latest_any !== null)) && (
-        <section aria-labelledby="section-since-last-visit" style={{ marginBottom: 32 }}>
-          <h2 id="section-since-last-visit">{data.compare.mode === "any" ? "Since latest visit anywhere" : "Since last visit here"}</h2>
+        <section aria-labelledby="section-since-last-visit" className="snapshot-section">
+          <h6 id="section-since-last-visit" className="section-title">{data.compare.mode === "any" ? "Since latest visit anywhere" : "Since last visit here"}</h6>
           <p className="muted" data-testid="compare-baseline" style={{ marginTop: 0 }}>Compared with: {baselineText(data)}</p>
           <DeltaSummary fields={data.since_last_visit} rank={rank} />
         </section>
       )}
 
+      <RoleGate roles={["staff"]}>{prep}</RoleGate>
+
       <Watchlist data={data} onChanged={load} />
 
-      <section aria-labelledby="section-for-this-visit" style={{ marginBottom: 32 }}>
-        <div className="page-heading" style={{ marginBottom: 8 }}>
-          <h2 id="section-for-this-visit" style={{ margin: 0 }}>For this visit · {ruled.length}</h2>
+      <section aria-labelledby="section-for-this-visit" className="snapshot-section">
+        <div className="page-heading section-heading">
+          <h6 id="section-for-this-visit" className="section-title" style={{ margin: 0 }}>For this visit · {ruled.length}</h6>
           <span className="muted">{signedCount} signed off this visit</span>
           <span style={{ display: "flex", alignItems: "center", gap: 12 }}>
             <button
@@ -540,7 +541,7 @@ export function Snapshot({ patientId }: { patientId: string }) {
           </span>
         </div>
         {showRules && (
-          <div className="card" data-testid="how-ordered">
+          <div className="card how-ordered" data-testid="how-ordered">
             <ol style={{ margin: 0, paddingLeft: 20 }}>
               {RULES.map((r) => <li key={r.rule}>{r.label}</li>)}
             </ol>
@@ -577,7 +578,7 @@ export function Snapshot({ patientId }: { patientId: string }) {
         {!hasFacts("marker") && <p className="muted">No tumor marker values recorded for this visit.</p>}
         {!hasFacts("radiology") && <p className="muted">No radiology facts recorded for this visit.</p>}
         {foldedCount + placeholders.length > 0 && (
-          <div style={{ marginTop: 16 }}>
+          <div className="fold">
             <button className="btn btn--ghost" type="button" aria-expanded={showFolded} onClick={() => setFoldChoice(!showFolded)}>
               Unchanged since last signed-off value {data.compare.mode === "any" ? "anywhere" : "here"} · {foldedCount}{checkCount > 0 && ` · ${checkCount} need a check`} {showFolded ? "▾" : "▸"}
             </button>
@@ -587,15 +588,15 @@ export function Snapshot({ patientId }: { patientId: string }) {
                   <PriorityRow key={`${item.kind}-${item.id}`} item={item} {...rowProps} />
                 ))}
                 {placeholders.map((f, i) => (
-                  <div className="priority-row" key={`ph-${f.tracked_marker_id ?? f.field_type}-${i}`}>
-                    <FieldEntry field={f} showTrend={false} {...rowProps} />
-                  </div>
+                  <FieldEntry key={`ph-${f.tracked_marker_id ?? f.field_type}-${i}`} field={f} showTrend={false} {...rowProps} />
                 ))}
               </div>
             )}
           </div>
         )}
       </section>
+
+      <RoleGate roles={["oncologist"]}>{prep}</RoleGate>
 
       <MarkerDisclaimerFooter />
 

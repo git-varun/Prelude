@@ -56,6 +56,7 @@ function Routed() {
   let screen: ReactNode;
   // Patient screens live inside the patient shell (sidebar + document pane); the rest stay full width.
   let shellPatientId: string | null = null;
+  let listScreen = false;
   if (uploadPatientId) {
     screen = <Upload patientId={uploadPatientId} />;
     shellPatientId = uploadPatientId;
@@ -92,6 +93,8 @@ function Routed() {
     screen = <PatientCreate />;
   } else {
     screen = <PatientList />;
+    // Today uses the 1200px column of the design handoff (its own max-width), not the 880px form column.
+    listScreen = true;
   }
 
   if (shellPatientId) {
@@ -101,7 +104,7 @@ function Routed() {
       </Shell>
     );
   }
-  return <Shell>{screen}</Shell>;
+  return <Shell wide={listScreen}>{screen}</Shell>;
 }
 
 export default function App() {

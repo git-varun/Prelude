@@ -9,6 +9,7 @@ import {
   type Visit,
 } from "../api/client";
 import { documentTypeLabel } from "../lib/documentTypeLabel";
+import { ReprocessPanel } from "../components/ReprocessPanel";
 import { navigate } from "../router";
 import { usePane } from "../components/PaneContext";
 
@@ -249,6 +250,7 @@ export function Upload({ patientId }: { patientId: string }) {
               </span>
               <span style={{ display: "flex", gap: 8, alignItems: "center" }}>
                 <span className="tag tag--pending">OCR: {doc.ocr_status}</span>
+                <ReprocessPanel compact document={doc} onDone={(updated) => setUploaded((prev) => prev.map((d) => (d.id === updated.id ? updated : d)))} />
                 <button
                   className="btn btn--ghost source-link"
                   type="button"

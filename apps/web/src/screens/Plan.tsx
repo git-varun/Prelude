@@ -194,12 +194,13 @@ export function Plan({ patientId }: { patientId: string }) {
     <div>
       <div className="page-heading">
         <div>
-          <h6 className="muted" style={{ margin: 0 }}>Plan</h6>
+          {review && <h6 className="muted" style={{ margin: 0 }}>Plan</h6>}
           <h1>
             {review
               ? `Next review ${review.text}${dueLabel(review, true) ? ` · ${dueLabel(review, true)}` : ""}`
-              : "No next review found in documents"}
+              : "Plan"}
           </h1>
+          {!review && <p className="muted" style={{ margin: 0 }}>No next review found in documents</p>}
           {review && <span className="summary-row__source">advised {shortDate(review.advised_at, true)}</span>}
           {review && <SourceLink item={review} />}
         </div>
@@ -217,7 +218,7 @@ export function Plan({ patientId }: { patientId: string }) {
         {data.items.length === 0 ? (
           <p className="muted">Not found in documents</p>
         ) : (
-          <div className="card" style={{ padding: 0 }}>
+          <div className="rows">
             {data.items.map((item) => (
               <div className="plan-row" key={item.id} data-testid="plan-row">
                 <span className="tag">{TYPE_LABELS[item.type]}</span>

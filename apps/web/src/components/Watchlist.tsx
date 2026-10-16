@@ -210,7 +210,7 @@ export function Watchlist({ data, onChanged }: { data: PatientSnapshot; onChange
       </RoleGate>
 
       {watchlist.length === 0 ? (
-        <p className="muted">No pinned markers.</p>
+        <p className="muted">No pinned markers. Tracked markers are listed under Markers; use Edit pins to watch some of them here.</p>
       ) : (
         <div className="watch-grid">
           {watchlist.map((w) => <Cell key={w.tracked_marker_id} entry={w} />)}

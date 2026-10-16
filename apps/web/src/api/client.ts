@@ -734,6 +734,9 @@ export const api = {
 
   listOutsideEncounters: (patientId: string) => request<OutsideEncounterEntry[]>(`/patients/${patientId}/outside-encounters`),
 
+  /** Re-runs the failed OCR / extraction step from the file already on record. */
+  reprocessDocument: (documentId: string) => request<DocumentRecord>(`/documents/${documentId}/reprocess`, { method: "POST" }),
+
   uploadDocument: (
     patientId: string,
     input: {

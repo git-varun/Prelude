@@ -14,33 +14,36 @@ export const TODAY_GROUPS: readonly { key: TodayGroup; title: string }[] = [
 export interface GroupInput {
   id: string;
   name: string | null;
-  last_visit_date: string | null;
   prep_status: PrepStatus | null;
   /** Marked ready, but a prep check fails now. */
   changed_since_ready: boolean;
   current_visit_document_count: number;
   sign_off_count: number;
+  unchecked_fact_count: number;
+  needs_attention_count: number;
+  held_document_count: number;
   change_summary_items: ChangeSummaryItem[];
   has_plan_items_expected: boolean;
 }
 
-export function todayGroupOf(p: GroupInput, today: string): TodayGroup {
-  // Only a visit opened today counts for the three visit groups; an older visit is history.
-  if (p.last_visit_date !== today) return p.has_plan_items_expected ? "expected" : "nothing_new";
+// Groups follow the state of the patient's latest visit (prep_status is null when there is none), not whether it was opened today.
+export function todayGroupOf(p: GroupInput): TodayGroup {
   // A ready visit whose checks fail now is not shown as ready: staff are preparing it again.
-  if (p.prep_status === "ready") return p.changed_since_ready ? "preparing" : "ready";
+  if (p.prep_status === "ready" && !p.changed_since_ready) return "ready";
   // Plan-date and visit-elsewhere items only appear in the change line; they do not make a visit "in preparation".
-  const hasSomething = p.current_visit_document_count > 0 || p.sign_off_count > 0 ||
-    p.change_summary_items.some((i) => i.kind !== "plan_past" && i.kind !== "elsewhere");
-  return hasSomething ? "preparing" : "nothing_new";
+  const hasSomething = p.changed_since_ready || p.sign_off_count > 0 || p.needs_attention_count > 0 || p.held_document_count > 0 ||
+    (p.current_visit_document_count > 0 && (p.unchecked_fact_count > 0 || p.prep_status === "preparing")) ||
+    p.change_summary_items.some((i) => i.kind === "marker_changed" || i.kind === "new_report" || i.kind === "sources_disagree");
+  if (hasSomething) return "preparing";
+  return p.has_plan_items_expected ? "expected" : "nothing_new";
 }
 
 const byName = (a: GroupInput, b: GroupInput) =>
   (a.name ?? "").localeCompare(b.name ?? "", "en", { sensitivity: "base" }) || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0);
 
-export function groupPatients<T extends GroupInput>(patients: T[], today: string): Record<TodayGroup, T[]> {
+export function groupPatients<T extends GroupInput>(patients: T[]): Record<TodayGroup, T[]> {
   const groups: Record<TodayGroup, T[]> = { ready: [], preparing: [], nothing_new: [], expected: [] };
-  for (const p of patients) groups[todayGroupOf(p, today)].push(p);
+  for (const p of patients) groups[todayGroupOf(p)].push(p);
   for (const list of Object.values(groups)) list.sort(byName);
   return groups;
 }

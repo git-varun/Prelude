@@ -2,7 +2,7 @@ import { login, logout, me } from "./routes/auth";
 import { createUser } from "./routes/users";
 import { createPatient, listPatients, getPatient, updatePatient, addMarker, getPatientSnapshot, getMarkerTrend, getPatientTimeline, getPatientSummary, getPatientDocumentIdentity } from "./routes/patients";
 import { createOrOpenVisit, listVisits, listOutsideEncounters } from "./routes/visits";
-import { uploadDocument, getDocument, getDocumentFile, setDocumentIdentityStatus, flagDocumentIdentity, getIdentityPreview, listPatientDocuments } from "./routes/documents";
+import { uploadDocument, getDocument, getDocumentFile, setDocumentIdentityStatus, flagDocumentIdentity, getIdentityPreview, listPatientDocuments, reprocessDocument } from "./routes/documents";
 import { getDocumentFacts, patchFact, checkFactRoute, signOffFact, reopenFact, signOffFactsBatch, undoSignOffFactsBatch } from "./routes/facts";
 import { getDocumentCheckSummary, getLabCheckSummary } from "./routes/checks";
 import { getConflict, annotateConflict, resolveConflict } from "./routes/conflicts";
@@ -111,6 +111,9 @@ const server = Bun.serve({
     }),
     "/documents/:id/check-summary": cors({ GET: requireRole(["staff", "oncologist"], getDocumentCheckSummary) }),
     "/checks/by-lab": cors({ GET: requireRole(["staff", "oncologist"], getLabCheckSummary) }),
+    "/documents/:id/reprocess": cors({
+      POST: requireRole(["staff", "oncologist"], reprocessDocument),
+    }),
     "/documents/:id/identity": cors({
       POST: requireRole(["oncologist"], setDocumentIdentityStatus),
     }),

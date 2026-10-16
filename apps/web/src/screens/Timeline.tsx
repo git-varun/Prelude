@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { api, ApiError, type TimelineEvent, type TimelineResponse } from "../api/client";
 import { buildMultiSeriesModel, type MultiSeriesLine } from "../lib/trendChart";
 import { navigate } from "../router";
+import { HistoryTabs } from "../components/HistoryTabs";
 import { elsewhereMark, elsewhereSuffix } from "../components/SummaryBits";
 
 const WIDTH = 760;
@@ -125,9 +126,7 @@ export function Timeline({ patientId }: { patientId: string }) {
             {data.patient.cancer_type || "cancer type not set"} · Timeline
           </p>
         </div>
-        <button className="btn btn--ghost" onClick={() => navigate(`/patients/${patientId}/snapshot`)}>
-          Back to snapshot
-        </button>
+        <HistoryTabs patientId={patientId} active="trends" />
       </div>
 
       {error && <div className="error-banner">{error}</div>}

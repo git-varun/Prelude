@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { api, ApiError, dictationAudioUrl, type DictationEntry, type OutsideEncounterEntry, type VisitHistoryEntry } from "../api/client";
 import { navigate } from "../router";
 import { ElsewhereTag } from "../components/SummaryBits";
+import { HistoryTabs, JourneyStrip } from "../components/HistoryTabs";
 import { useAuth } from "../auth/AuthContext";
 import { formatDuration } from "../lib/dictation";
 
@@ -71,23 +72,24 @@ export function VisitHistory({ patientId }: { patientId: string }) {
     };
   }, [patientId]);
 
+  const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? "" : "s"}`;
   return (
     <div>
       <div className="page-heading">
-        <h1>Visit history</h1>
-        <button className="btn btn--ghost" onClick={() => navigate(`/patients/${patientId}/snapshot`)}>
-          Back to Snapshot
-        </button>
+        <h1>History</h1>
+        <HistoryTabs patientId={patientId} active="visits" />
       </div>
 
       {error && <div className="error-banner">{error}</div>}
+
+      <JourneyStrip patientId={patientId} />
 
       {visits === null ? (
         <p className="muted">Loading...</p>
       ) : visits.length === 0 && outside.length === 0 ? (
         <div className="empty-state">No visits recorded yet.</div>
       ) : (
-        <div className="card" style={{ padding: 0 }}>
+        <div className="rows">
           {[
             ...visits.map((v) => ({ kind: "here" as const, date: v.visit_date, id: v.id, v })),
             ...outside.map((o) => ({ kind: "elsewhere" as const, date: o.encounter_date, id: o.id, o })),
@@ -95,33 +97,33 @@ export function VisitHistory({ patientId }: { patientId: string }) {
             .sort((a, b) => (a.date === b.date ? 0 : a.date < b.date ? 1 : -1))
             .map((row) =>
               row.kind === "here" ? (
-                <div className="delta-row" key={row.id}>
-                  <span className="delta-row__name">{row.date}</span>
-                  <span className="delta-row__meta">
-                    <span className="tag">
-                      {row.v.document_count} document{row.v.document_count === 1 ? "" : "s"}
-                    </span>
-                    <span className="tag">
-                      {row.v.fact_count} fact{row.v.fact_count === 1 ? "" : "s"}
-                    </span>
-                    <span className="tag">
-                      {row.v.signed_off_count} signed off
-                    </span>
-                    {canDictate && typeof row.v.dictated_note_seconds === "number" && (
-                      <DictatedNoteTag visitId={row.v.id} seconds={row.v.dictated_note_seconds} />
-                    )}
-                  </span>
+                <div className="visit-row" key={row.id}>
+                  <div>
+                    <div className="visit-row__date">{row.date}</div>
+                    <div className="muted">this hospital</div>
+                  </div>
+                  <div>
+                    <div>
+                      {plural(row.v.document_count, "document")} · {plural(row.v.fact_count, "fact")}
+                    </div>
+                    <div className="visit-row__tags">
+                      <span className={`tag${row.v.signed_off_count > 0 ? " tag--outline" : ""}`}>{row.v.signed_off_count} signed off</span>
+                      {canDictate && typeof row.v.dictated_note_seconds === "number" && (
+                        <DictatedNoteTag visitId={row.v.id} seconds={row.v.dictated_note_seconds} />
+                      )}
+                    </div>
+                  </div>
                 </div>
               ) : (
-                <div className="delta-row is-elsewhere" key={row.id} data-testid="elsewhere-row">
-                  <span className="delta-row__name">{row.date}</span>
-                  <span>{row.o.facility} · elsewhere</span>
-                  <span className="delta-row__meta">
+                <div className="visit-row is-elsewhere" key={row.id} data-testid="elsewhere-row">
+                  <div>
+                    <div className="visit-row__date">{row.date}</div>
+                    <div className="muted">{row.o.facility} · elsewhere</div>
+                  </div>
+                  <div className="visit-row__tags" style={{ marginTop: 0 }}>
                     <ElsewhereTag encounter={{ id: row.o.id, facility: row.o.facility, date: row.o.encounter_date }} />
-                    <span className="tag">
-                      {row.o.document_count} document{row.o.document_count === 1 ? "" : "s"}
-                    </span>
-                  </span>
+                    <span className="tag">{plural(row.o.document_count, "document")}</span>
+                  </div>
                 </div>
               ),
             )}

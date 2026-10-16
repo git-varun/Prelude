@@ -2,7 +2,7 @@ import { sql } from "../db/client";
 import { isDictationEnabledFor } from "../services/dictation";
 import { createSession, destroySession, sessionCookieHeader, clearedCookieHeader, getAuthedUser, jsonError } from "../middleware/auth";
 
-const featuresFor = (u: { id: string; role: string }) => (isDictationEnabledFor(u) ? { features: { dictation: true } } : {});
+const featuresFor = (u: { id: string; role: string; email?: string | null }) => (isDictationEnabledFor(u) ? { features: { dictation: true } } : {});
 
 interface LoginBody {
   email?: string;
