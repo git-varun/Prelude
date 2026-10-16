@@ -4,9 +4,9 @@ Hand-off for switching production extraction to Claude on Amazon Bedrock via the
 (`in.anthropic.claude-sonnet-5`, routes only between ap-south-1 and ap-south-2). Nothing here has been run for you:
 every command below changes AWS or the production server. Background: `docs/third-party-services.md`, "Bedrock (India)".
 
-Facts as audited on 2026-10-16 (account `143853719763`):
+Facts as audited on 2026-10-16 (account `<ACCOUNT_ID>`):
 
-- EC2 instance `prelude-mvp` = `i-0b276b5fc0e8f561b`, **ap-southeast-2 (Sydney)**, `t3.small`, role/profile
+- EC2 instance `prelude-mvp` = `<OLD_INSTANCE_ID>`, **ap-southeast-2 (Sydney)**, `t3.small`, role/profile
   `prelude-ec2-backup-role`, IMDSv2 required, hop limit already 2.
 - `in.anthropic.claude-sonnet-5` is ACTIVE in ap-south-1 (routes to ap-south-1 + ap-south-2).
 - **Model agreement is not accepted**: `GetFoundationModelAvailability` shows `agreementAvailability: NOT_AVAILABLE`
@@ -39,7 +39,7 @@ cat > bedrock-india-policy.json <<'EOF'
     "Effect": "Allow",
     "Action": ["bedrock:InvokeModel"],
     "Resource": [
-      "arn:aws:bedrock:ap-south-1:143853719763:inference-profile/in.anthropic.claude-sonnet-5",
+      "arn:aws:bedrock:ap-south-1:<ACCOUNT_ID>:inference-profile/in.anthropic.claude-sonnet-5",
       "arn:aws:bedrock:ap-south-1::foundation-model/anthropic.claude-sonnet-5",
       "arn:aws:bedrock:ap-south-2::foundation-model/anthropic.claude-sonnet-5"
     ]
@@ -53,12 +53,12 @@ For the local eval, the profile you use needs the same permissions.
 
 ## 2. Metadata hop limit (so the Docker container can read the instance role)
 
-Already 2 on `i-0b276b5fc0e8f561b`; verify rather than change:
+Already 2 on `<OLD_INSTANCE_ID>`; verify rather than change:
 
 ```sh
-aws ec2 describe-instances --region ap-southeast-2 --instance-ids i-0b276b5fc0e8f561b --query 'Reservations[].Instances[].MetadataOptions'
+aws ec2 describe-instances --region ap-southeast-2 --instance-ids <OLD_INSTANCE_ID> --query 'Reservations[].Instances[].MetadataOptions'
 # only if HttpPutResponseHopLimit is 1:
-aws ec2 modify-instance-metadata-options --region ap-southeast-2 --instance-id i-0b276b5fc0e8f561b --http-put-response-hop-limit 2 --http-tokens required
+aws ec2 modify-instance-metadata-options --region ap-southeast-2 --instance-id <OLD_INSTANCE_ID> --http-put-response-hop-limit 2 --http-tokens required
 ```
 
 ## 3. Quota for Sonnet 5 cross-region tokens/minute in ap-south-1
